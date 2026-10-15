@@ -1,0 +1,918 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#0f1117">
+<title>Expense Logger</title>
+<style>
+  :root {
+    --bg: #0f1117;
+    --card: #181b24;
+    --card-2: #1f232e;
+    --border: #2a2f3d;
+    --text: #e8ecf3;
+    --text-dim: #8b93a7;
+    --accent: #4dabf7;
+    --accent-press: #3d94dd;
+    --danger: #ff6b6b;
+    --radius: 14px;
+  }
+
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    font-size: 16px;
+    -webkit-text-size-adjust: 100%;
+    -webkit-font-smoothing: antialiased;
+    min-height: 100%;
+    overflow-x: hidden;
+  }
+
+  body {
+    padding: calc(env(safe-area-inset-top, 0px) + 16px) 16px calc(env(safe-area-inset-bottom, 0px) + 32px);
+    max-width: 640px;
+    margin: 0 auto;
+  }
+
+  h1 {
+    font-size: 22px;
+    font-weight: 700;
+    margin: 0 0 4px;
+    letter-spacing: -0.3px;
+  }
+  .subtitle {
+    color: var(--text-dim);
+    font-size: 13px;
+    margin: 0 0 20px;
+  }
+
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 16px;
+    margin-bottom: 16px;
+  }
+
+  label {
+    display: block;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-dim);
+    margin-bottom: 6px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+
+  input[type="number"],
+  input[type="text"] {
+    width: 100%;
+    background: var(--card-2);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 14px;
+    color: var(--text);
+    font-size: 16px; /* prevents iOS auto-zoom */
+    font-family: inherit;
+    outline: none;
+    -webkit-appearance: none;
+    appearance: none;
+  }
+  input:focus { border-color: var(--accent); }
+
+  input[type="number"]::-webkit-outer-spin-button,
+  input[type="number"]::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+  }
+
+  .field { margin-bottom: 14px; }
+
+  .amount-wrap { position: relative; }
+  .amount-wrap .dollar {
+    position: absolute;
+    left: 14px;
+    top: 50%;
+    transform: translateY(-50%);
+    color: var(--text-dim);
+    font-size: 16px;
+    pointer-events: none;
+  }
+  .amount-wrap input { padding-left: 28px; }
+
+  /* Category chips — big tap targets */
+  .cats {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 8px;
+  }
+  .cat-btn {
+    background: var(--card-2);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 14px 6px;
+    color: var(--text);
+    font-size: 13px;
+    font-weight: 600;
+    font-family: inherit;
+    cursor: pointer;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    transition: background 0.15s, border-color 0.15s, transform 0.05s;
+    min-height: 64px;
+    justify-content: center;
+  }
+  .cat-btn:active { transform: scale(0.97); }
+  .cat-btn .emoji { font-size: 20px; line-height: 1; }
+  .cat-btn.selected {
+    background: rgba(77, 171, 247, 0.15);
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+
+  .save-btn {
+    width: 100%;
+    background: var(--accent);
+    color: #0b1220;
+    border: none;
+    border-radius: 12px;
+    padding: 16px;
+    font-size: 17px;
+    font-weight: 700;
+    font-family: inherit;
+    cursor: pointer;
+    min-height: 54px;
+    transition: background 0.15s, transform 0.05s;
+    -webkit-appearance: none;
+    appearance: none;
+  }
+  .save-btn:active { background: var(--accent-press); transform: scale(0.98); }
+  .save-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+  h2 {
+    font-size: 15px;
+    font-weight: 700;
+    margin: 0 0 12px;
+    color: var(--text);
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+  }
+  h2 .month-label {
+    color: var(--text-dim);
+    font-weight: 500;
+    text-transform: none;
+    letter-spacing: 0;
+    font-size: 13px;
+    margin-left: 6px;
+  }
+
+  #total-display {
+    font-size: 32px;
+    font-weight: 800;
+    letter-spacing: -1px;
+    margin: 0 0 16px;
+  }
+  #total-display .cur {
+    color: var(--text-dim);
+    font-weight: 600;
+    font-size: 20px;
+    margin-right: 2px;
+  }
+
+  canvas#chart {
+    width: 100%;
+    height: auto;
+    display: block;
+    border-radius: 8px;
+  }
+
+  .cat-legend {
+    margin-top: 12px;
+    font-size: 13px;
+  }
+  .legend-row {
+    display: flex;
+    justify-content: space-between;
+    padding: 8px 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .legend-row:last-child { border-bottom: none; }
+  .legend-row .name { color: var(--text-dim); display: flex; align-items: center; gap: 8px; }
+  .legend-row .dot {
+    width: 10px; height: 10px;
+    border-radius: 50%;
+    display: inline-block;
+    flex-shrink: 0;
+  }
+  .legend-row .amt { font-variant-numeric: tabular-nums; font-weight: 600; }
+
+  .entry {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 12px 0;
+    border-bottom: 1px solid var(--border);
+    gap: 10px;
+  }
+  .entry:last-child { border-bottom: none; }
+  .entry-info { min-width: 0; flex: 1; }
+  .entry-info .top {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 2px;
+  }
+  .entry-info .cat-label {
+    font-weight: 600;
+    font-size: 15px;
+  }
+  .entry-info .cat-pill {
+    font-size: 11px;
+    padding: 1px 7px;
+    border-radius: 20px;
+    background: var(--card-2);
+    color: var(--text-dim);
+    border: 1px solid var(--border);
+  }
+  .entry-info .note {
+    font-size: 13px;
+    color: var(--text-dim);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .entry-info .date {
+    font-size: 12px;
+    color: var(--text-dim);
+    margin-top: 2px;
+  }
+  .entry-right {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-shrink: 0;
+  }
+  .entry-amt {
+    font-variant-numeric: tabular-nums;
+    font-weight: 700;
+    font-size: 16px;
+  }
+  .del-btn {
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--danger);
+    width: 40px;
+    height: 40px;
+    border-radius: 10px;
+    font-size: 18px;
+    line-height: 1;
+    cursor: pointer;
+    font-family: inherit;
+    padding: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.15s;
+  }
+  .del-btn:active { background: rgba(255, 107, 107, 0.15); }
+
+  .empty {
+    text-align: center;
+    color: var(--text-dim);
+    font-size: 14px;
+    padding: 24px 8px;
+  }
+
+  .export-btn {
+    width: 100%;
+    background: var(--card-2);
+    border: 1px solid var(--border);
+    color: var(--text);
+    border-radius: 12px;
+    padding: 15px;
+    font-size: 15px;
+    font-weight: 600;
+    font-family: inherit;
+    cursor: pointer;
+    min-height: 52px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    transition: background 0.15s, transform 0.05s;
+  }
+  .export-btn:active { transform: scale(0.98); background: #262b38; }
+
+  .toast {
+    position: fixed;
+    left: 50%;
+    bottom: calc(env(safe-area-inset-bottom, 0px) + 24px);
+    transform: translateX(-50%) translateY(20px);
+    background: #2a3242;
+    color: #fff;
+    padding: 12px 20px;
+    border-radius: 30px;
+    font-size: 14px;
+    font-weight: 600;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.25s, transform 0.25s;
+    z-index: 1000;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+    border: 1px solid var(--border);
+    max-width: 85vw;
+    text-align: center;
+  }
+  .toast.show {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
+</style>
+</head>
+<body>
+
+<h1>Expense Logger</h1>
+<p class="subtitle">Quick entries, saved on this device</p>
+
+<!-- ADD FORM -->
+<div class="card">
+  <div class="field">
+    <label for="amount">Amount</label>
+    <div class="amount-wrap">
+      <span class="dollar">$</span>
+      <input type="number" id="amount" inputmode="decimal" step="0.01" min="0" placeholder="0.00" autocomplete="off">
+    </div>
+  </div>
+
+  <div class="field">
+    <label>Category</label>
+    <div class="cats" id="cats"></div>
+  </div>
+
+  <div class="field" style="margin-bottom:16px;">
+    <label for="note">Note (optional)</label>
+    <input type="text" id="note" placeholder="e.g. lunch with Sam" autocomplete="off" maxlength="80">
+  </div>
+
+  <button class="save-btn" id="saveBtn" disabled>Save Expense</button>
+</div>
+
+<!-- TOTAL + CHART -->
+<div class="card">
+  <h2>This Month <span class="month-label" id="monthLabel"></span></h2>
+  <p id="total-display"><span class="cur">$</span><span id="totalVal">0.00</span></p>
+  <canvas id="chart" width="600" height="200"></canvas>
+  <div class="cat-legend" id="legend"></div>
+</div>
+
+<!-- ENTRIES -->
+<div class="card">
+  <h2>Entries <span class="month-label" id="entriesCount"></span></h2>
+  <div id="entries"></div>
+</div>
+
+<!-- EXPORT -->
+<div class="card">
+  <button class="export-btn" id="exportBtn">
+    <span>⬇</span> Export all as CSV
+  </button>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+(function () {
+  'use strict';
+
+  var STORAGE_KEY = 'expenseLogger.entries.v1';
+
+  var CATEGORIES = [
+    { id: 'groceries', name: 'Groceries', emoji: '🛒', color: '#4dabf7' },
+    { id: 'dining',    name: 'Dining',    emoji: '🍽️', color: '#ff922b' },
+    { id: 'gas',       name: 'Gas',       emoji: '⛽', color: '#51cf66' },
+    { id: 'bills',     name: 'Bills',     emoji: '📄', color: '#cc5de8' },
+    { id: 'fun',       name: 'Fun',       emoji: '🎉', color: '#f783ac' },
+    { id: 'other',     name: 'Other',     emoji: '📦', color: '#adb5bd' }
+  ];
+  var CAT_MAP = {};
+  CATEGORIES.forEach(function (c) { CAT_MAP[c.id] = c; });
+
+  // ---------- State ----------
+  var entries = [];           // { id, amount, categoryId, note, ts }
+  var selectedCat = null;
+
+  // ---------- Elements ----------
+  var $amount    = document.getElementById('amount');
+  var $note      = document.getElementById('note');
+  var $cats      = document.getElementById('cats');
+  var $saveBtn   = document.getElementById('saveBtn');
+  var $totalVal  = document.getElementById('totalVal');
+  var $monthLbl  = document.getElementById('monthLabel');
+  var $entriesCt = document.getElementById('entriesCount');
+  var $entriesEl = document.getElementById('entries');
+  var $legendEl  = document.getElementById('legend');
+  var $chart     = document.getElementById('chart');
+  var $exportBtn = document.getElementById('exportBtn');
+  var $toast     = document.getElementById('toast');
+
+  // ---------- Helpers ----------
+  function uid() {
+    return Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+  }
+  function fmtMoney(n) {
+    return (Math.round(n * 100) / 100).toFixed(2);
+  }
+  function startOfMonth(d) {
+    return new Date(d.getFullYear(), d.getMonth(), 1, 0, 0, 0, 0);
+  }
+  function monthName(d) {
+    return d.toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
+  }
+  function isThisMonth(ts) {
+    var now = new Date();
+    var then = new Date(ts);
+    return now.getFullYear() === then.getFullYear() && now.getMonth() === then.getMonth();
+  }
+  function dateLabel(ts) {
+    var d = new Date(ts);
+    var today = new Date();
+    var isToday =
+      d.getFullYear() === today.getFullYear() &&
+      d.getMonth() === today.getMonth() &&
+      d.getDate() === today.getDate();
+    var time = d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+    if (isToday) return 'Today, ' + time;
+    return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) + ', ' + time;
+  }
+
+  var toastTimer = null;
+  function toast(msg) {
+    $toast.textContent = msg;
+    $toast.classList.add('show');
+    if (toastTimer) clearTimeout(toastTimer);
+    toastTimer = setTimeout(function () {
+      $toast.classList.remove('show');
+    }, 1800);
+  }
+
+  // ---------- localStorage ----------
+  function load() {
+    try {
+      var raw = localStorage.getItem(STORAGE_KEY);
+      if (!raw) return [];
+      var parsed = JSON.parse(raw);
+      if (!Array.isArray(parsed)) return [];
+      // sanitize
+      return parsed.filter(function (e) {
+        return e && typeof e.amount === 'number' && CAT_MAP[e.categoryId];
+      });
+    } catch (err) {
+      return [];
+    }
+  }
+
+  function save() {
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(entries));
+      return true;
+    } catch (err) {
+      toast('Could not save — storage is full or blocked');
+      return false;
+    }
+  }
+
+  // ---------- Render: category chips ----------
+  function buildCategoryButtons() {
+    $cats.innerHTML = '';
+    CATEGORIES.forEach(function (c) {
+      var btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'cat-btn';
+      btn.dataset.id = c.id;
+      btn.innerHTML = '<span class="emoji">' + c.emoji + '</span><span>' + c.name + '</span>';
+      btn.addEventListener('click', function () {
+        selectedCat = c.id;
+        Array.prototype.forEach.call($cats.children, function (el) {
+          el.classList.toggle('selected', el.dataset.id === c.id);
+        });
+        updateSaveState();
+      });
+      $cats.appendChild(btn);
+    });
+  }
+
+  function updateSaveState() {
+    var v = parseFloat($amount.value);
+    var ok = !isNaN(v) && v > 0 && selectedCat !== null;
+    $saveBtn.disabled = !ok;
+  }
+
+  // ---------- Render: entries list ----------
+  function renderEntries() {
+    var monthEntries = entries.filter(function (e) { return isThisMonth(e.ts); });
+    // newest first
+    monthEntries.sort(function (a, b) { return b.ts - a.ts; });
+
+    $entriesCt.textContent = monthEntries.length === 1
+      ? '1 item'
+      : monthEntries.length + ' items';
+
+    if (monthEntries.length === 0) {
+      $entriesEl.innerHTML = '<div class="empty">No expenses this month yet.<br>Add one above ↑</div>';
+      return;
+    }
+
+    var frag = document.createDocumentFragment();
+    monthEntries.forEach(function (e) {
+      var cat = CAT_MAP[e.categoryId];
+      var row = document.createElement('div');
+      row.className = 'entry';
+
+      var info = document.createElement('div');
+      info.className = 'entry-info';
+
+      var top = document.createElement('div');
+      top.className = 'top';
+
+      var pill = document.createElement('span');
+      pill.className = 'cat-pill';
+      pill.textContent = cat.emoji + ' ' + cat.name;
+      pill.style.color = cat.color;
+      pill.style.borderColor = cat.color + '55';
+
+      top.appendChild(pill);
+      info.appendChild(top);
+
+      if (e.note) {
+        var note = document.createElement('div');
+        note.className = 'note';
+        note.textContent = e.note;
+        info.appendChild(note);
+      }
+
+      var date = document.createElement('div');
+      date.className = 'date';
+      date.textContent = dateLabel(e.ts);
+      info.appendChild(date);
+
+      var right = document.createElement('div');
+      right.className = 'entry-right';
+
+      var amt = document.createElement('span');
+      amt.className = 'entry-amt';
+      amt.textContent = '$' + fmtMoney(e.amount);
+      right.appendChild(amt);
+
+      var del = document.createElement('button');
+      del.type = 'button';
+      del.className = 'del-btn';
+      del.setAttribute('aria-label', 'Delete');
+      del.textContent = '✕';
+      del.addEventListener('click', function () {
+        deleteEntry(e.id);
+      });
+      right.appendChild(del);
+
+      row.appendChild(info);
+      row.appendChild(right);
+      frag.appendChild(row);
+    });
+
+    $entriesEl.innerHTML = '';
+    $entriesEl.appendChild(frag);
+  }
+
+  function deleteEntry(id) {
+    entries = entries.filter(function (e) { return e.id !== id; });
+    save();
+    renderAll();
+    toast('Deleted');
+  }
+
+  // ---------- Render: total + chart + legend ----------
+  function renderTotals() {
+    var monthEntries = entries.filter(function (e) { return isThisMonth(e.ts); });
+
+    var total = 0;
+    var byCat = {};
+    CATEGORIES.forEach(function (c) { byCat[c.id] = 0; });
+    monthEntries.forEach(function (e) {
+      total += e.amount;
+      byCat[e.categoryId] = (byCat[e.categoryId] || 0) + e.amount;
+    });
+
+    $totalVal.textContent = fmtMoney(total);
+    $monthLbl.textContent = '· ' + monthName(new Date());
+
+    drawChart(byCat, total);
+    renderLegend(byCat, total);
+  }
+
+  function renderLegend(byCat, total) {
+    if (total === 0) {
+      $legendEl.innerHTML = '';
+      return;
+    }
+    var rows = CATEGORIES
+      .map(function (c) { return { c: c, amt: byCat[c.id] || 0 }; })
+      .filter(function (r) { return r.amt > 0; })
+      .sort(function (a, b) { return b.amt - a.amt; });
+
+    var html = '';
+    rows.forEach(function (r) {
+      var pct = total > 0 ? Math.round((r.amt / total) * 100) : 0;
+      html +=
+        '<div class="legend-row">' +
+          '<span class="name">' +
+            '<span class="dot" style="background:' + r.c.color + '"></span>' +
+            r.c.name + ' <span style="opacity:0.6">· ' + pct + '%</span>' +
+          '</span>' +
+          '<span class="amt">$' + fmtMoney(r.amt) + '</span>' +
+        '</div>';
+    });
+    $legendEl.innerHTML = html;
+  }
+
+  // ---------- Canvas bar chart ----------
+  var chartCtx = $chart.getContext('2d');
+  var dpr = Math.min(window.devicePixelRatio || 1, 2);
+
+  function sizeCanvas() {
+    var cssW = $chart.clientWidth || 320;
+    var cssH = 180;
+    $chart.style.height = cssH + 'px';
+    $chart.width  = Math.round(cssW * dpr);
+    $chart.height = Math.round(cssH * dpr);
+    chartCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+
+  function drawChart(byCat, total) {
+    sizeCanvas();
+    var W = $chart.clientWidth || 320;
+    var H = 180;
+
+    chartCtx.clearRect(0, 0, W, H);
+
+    if (total === 0) {
+      chartCtx.fillStyle = '#4a5268';
+      chartCtx.font = '14px -apple-system, sans-serif';
+      chartCtx.textAlign = 'center';
+      chartCtx.textBaseline = 'middle';
+      chartCtx.fillText('No spending yet this month', W / 2, H / 2);
+      return;
+    }
+
+    // Horizontal bar chart
+    var rows = CATEGORIES
+      .map(function (c) { return { c: c, amt: byCat[c.id] || 0 }; })
+      .filter(function (r) { return r.amt > 0; })
+      .sort(function (a, b) { return b.amt - a.amt; });
+
+    var padTop = 8;
+    var padBottom = 8;
+    var rowH = Math.max(22, Math.floor((H - padTop - padBottom) / rows.length));
+    var labelW = 92;
+    var valueW = 68;
+    var barX = labelW;
+    var barMaxW = W - labelW - valueW;
+    var max = rows[0].amt || 1;
+
+    chartCtx.font = '13px -apple-system, BlinkMacSystemFont, sans-serif';
+    chartCtx.textBaseline = 'middle';
+
+    rows.forEach(function (r, i) {
+      var y = padTop + i * rowH;
+      var barH = Math.min(rowH - 8, 18);
+      var barY = y + (rowH - barH) / 2;
+
+      // label
+      chartCtx.fillStyle = '#8b93a7';
+      chartCtx.textAlign = 'left';
+      chartCtx.fillText(r.c.name, 6, y + rowH / 2);
+
+      // track background
+      chartCtx.fillStyle = '#222836';
+      roundRect(chartCtx, barX, barY, barMaxW, barH, 5);
+      chartCtx.fill();
+
+      // bar
+      var w = Math.max(3, (r.amt / max) * barMaxW);
+      var grad = chartCtx.createLinearGradient(barX, 0, barX + w, 0);
+      grad.addColorStop(0, r.c.color);
+      grad.addColorStop(1, hexLighten(r.c.color, 0.18));
+      chartCtx.fillStyle = grad;
+      roundRect(chartCtx, barX, barY, w, barH, 5);
+      chartCtx.fill();
+
+      // value
+      chartCtx.fillStyle = '#e8ecf3';
+      chartCtx.textAlign = 'right';
+      chartCtx.font = '600 13px -apple-system, BlinkMacSystemFont, sans-serif';
+      chartCtx.fillText('$' + fmtMoney(r.amt), W - 6, y + rowH / 2);
+      chartCtx.font = '13px -apple-system, BlinkMacSystemFont, sans-serif';
+    });
+  }
+
+  function roundRect(ctx, x, y, w, h, r) {
+    if (w < r * 2) r = w / 2;
+    if (h < r * 2) r = h / 2;
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.arcTo(x + w, y,     x + w, y + h, r);
+    ctx.arcTo(x + w, y + h, x,     y + h, r);
+    ctx.arcTo(x,     y + h, x,     y,     r);
+    ctx.arcTo(x,     y,     x + w, y,     r);
+    ctx.closePath();
+  }
+
+  function hexLighten(hex, amt) {
+    var h = hex.replace('#', '');
+    if (h.length === 3) h = h.split('').map(function (c) { return c + c; }).join('');
+    var r = parseInt(h.slice(0, 2), 16);
+    var g = parseInt(h.slice(2, 4), 16);
+    var b = parseInt(h.slice(4, 6), 16);
+    r = Math.min(255, Math.round(r + (255 - r) * amt));
+    g = Math.min(255, Math.round(g + (255 - g) * amt));
+    b = Math.min(255, Math.round(b + (255 - b) * amt));
+    return 'rgb(' + r + ',' + g + ',' + b + ')';
+  }
+
+  // ---------- Actions ----------
+  function addEntry() {
+    var v = parseFloat($amount.value);
+    if (isNaN(v) || v <= 0) { toast('Enter a valid amount'); return; }
+    if (!selectedCat) { toast('Pick a category'); return; }
+
+    var entry = {
+      id: uid(),
+      amount: Math.round(v * 100) / 100,
+      categoryId: selectedCat,
+      note: $note.value.trim(),
+      ts: Date.now()
+    };
+
+    entries.push(entry);
+    if (!save()) return;
+
+    // reset form
+    $amount.value = '';
+    $note.value = '';
+    selectedCat = null;
+    Array.prototype.forEach.call($cats.children, function (el) {
+      el.classList.remove('selected');
+    });
+    updateSaveState();
+
+    renderAll();
+    toast('Saved $' + fmtMoney(entry.amount));
+
+    // blur to dismiss keyboard on iOS
+    $amount.blur();
+    $note.blur();
+  }
+
+  function exportCSV() {
+    if (entries.length === 0) {
+      toast('Nothing to export yet');
+      return;
+    }
+
+    var sorted = entries.slice().sort(function (a, b) { return a.ts - b.ts; });
+
+    var lines = [];
+    lines.push(['Date', 'Time', 'Category', 'Amount', 'Note'].join(','));
+
+    sorted.forEach(function (e) {
+      var d = new Date(e.ts);
+      var dateStr = d.getFullYear() + '-' +
+        pad2(d.getMonth() + 1) + '-' +
+        pad2(d.getDate());
+      var timeStr = pad2(d.getHours()) + ':' + pad2(d.getMinutes());
+      var cat = CAT_MAP[e.categoryId];
+      lines.push([
+        dateStr,
+        timeStr,
+        csvField(cat ? cat.name : e.categoryId),
+        e.amount.toFixed(2),
+        csvField(e.note || '')
+      ].join(','));
+    });
+
+    var total = sorted.reduce(function (s, e) { return s + e.amount; }, 0);
+    lines.push('');
+    lines.push(['TOTAL', '', '', total.toFixed(2), ''].join(','));
+
+    var csv = lines.join('\r\n');
+    var blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+    var filename = 'expenses-' + new Date().toISOString().slice(0, 10) + '.csv';
+
+    // iOS Safari: use a data URL fallback and share if available
+    var nav = window.navigator;
+    var file = new File([blob], filename, { type: 'text/csv' });
+
+    if (nav.canShare && nav.canShare({ files: [file] })) {
+      nav.share({
+        files: [file],
+        title: 'Expense Export',
+        text: 'My expenses'
+      }).catch(function () {
+        downloadBlob(blob, filename);
+      });
+      return;
+    }
+
+    downloadBlob(blob, filename);
+  }
+
+  function downloadBlob(blob, filename) {
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    a.rel = 'noopener';
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(function () {
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }, 1500);
+    toast('Exported ' + filename);
+  }
+
+  function pad2(n) { return n < 10 ? '0' + n : '' + n; }
+  function csvField(s) {
+    s = String(s);
+    if (/[",\r\n]/.test(s)) {
+      return '"' + s.replace(/"/g, '""') + '"';
+    }
+    return s;
+  }
+
+  // ---------- Render orchestration ----------
+  function renderAll() {
+    renderEntries();
+    renderTotals();
+  }
+
+  // ---------- Wire up ----------
+  buildCategoryButtons();
+
+  $amount.addEventListener('input', updateSaveState);
+  $saveBtn.addEventListener('click', addEntry);
+  $exportBtn.addEventListener('click', exportCSV);
+
+  // Enter key on note field also saves
+  $note.addEventListener('keydown', function (e) {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      if (!$saveBtn.disabled) addEntry();
+    }
+  });
+  $amount.addEventListener('keydown', function (e) {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      $note.focus();
+    }
+  });
+
+  // re-render on resize (chart needs re-measuring)
+  var resizeTimer = null;
+  window.addEventListener('resize', function () {
+    if (resizeTimer) clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(function () {
+      renderTotals();
+    }, 120);
+  });
+  window.addEventListener('orientationchange', function () {
+    setTimeout(renderTotals, 200);
+  });
+
+  // Detect midnight rollover (so "this month" stays accurate if app is left open)
+  var lastDay = new Date().getDate();
+  setInterval(function () {
+    var d = new Date().getDate();
+    if (d !== lastDay) {
+      lastDay = d;
+      renderAll();
+    }
+  }, 60000);
+
+  // ---------- Boot ----------
+  entries = load();
+  renderAll();
+  updateSaveState();
+
+})();
+</script>
+</body>
+</html>
