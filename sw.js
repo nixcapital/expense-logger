@@ -1,11 +1,8 @@
-/* Expense Logger — service worker
-   Strategy:
-   - App shell (HTML/CSS/JS/manifest/icons): cache-first, update in background.
-   - Navigation requests: network-first, fall back to cached index.html.
-   - Bump CACHE_VERSION on each release to force a clean update.
-*/
-const CACHE_VERSION = 'expense-logger-v1.0.0';
-const SHELL = [
+/* ============================================================
+   Expense Logger — service worker
+   ============================================================ */
+var CACHE_VERSION = 'expense-logger-v1.0.1';
+var ASSETS = [
   './',
   './index.html',
   './styles.css',
@@ -15,55 +12,53 @@ const SHELL = [
   './icon-512.png'
 ];
 
-self.addEventListener('install', (event) => {
+self.addEventListener('install', function (event) {
   event.waitUntil(
-    caches.open(CACHE_VERSION).then((cache) => cache.addAll(SHELL))
-      .then(() => self.skipWaiting())
+    caches.open(CACHE_VERSION).then(function (cache) {
+      return cache.addAll(ASSETS).catch(function () {
+        // If an optional asset is missing, don't fail install
+      });
+    }).then(function () { return self.skipWaiting(); })
   );
 });
 
-self.addEventListener('activate', (event) => {
+self.addEventListener('activate', function (event) {
   event.waitUntil(
-    caches.keys().then((keys) => Promise.all(
-      keys.filter((k) => k !== CACHE_VERSION).map((k) => caches.delete(k))
-    )).then(() => self.clients.claim())
+    caches.keys().then(function (keys) {
+      return Promise.all(keys.map(function (k) {
+        if (k !== CACHE_VERSION) return caches.delete(k);
+      }));
+    }).then(function () { return self.clients.claim(); })
   );
 });
 
-self.addEventListener('fetch', (event) => {
-  const req = event.request;
+self.addEventListener('fetch', function (event) {
+  var req = event.request;
   if (req.method !== 'GET') return;
-
-  const url = new URL(req.url);
+  var url = new URL(req.url);
   if (url.origin !== self.location.origin) return;
 
-  // Navigations: network-first, fall back to cache.
-  if (req.mode === 'navigate') {
-    event.respondWith(
-      fetch(req).then((res) => {
-        const copy = res.clone();
-        caches.open(CACHE_VERSION).then((c) => c.put('./index.html', copy));
-        return res;
-      }).catch(() => caches.match('./index.html'))
-    );
-    return;
-  }
-
-  // Everything else: cache-first, revalidate in background.
+  // Cache-first for app shell, network-first for everything else
   event.respondWith(
-    caches.match(req).then((cached) => {
-      const network = fetch(req).then((res) => {
-        if (res && res.status === 200 && res.type === 'basic') {
-          const copy = res.clone();
-          caches.open(CACHE_VERSION).then((c) => c.put(req, copy));
+    caches.match(req).then(function (cached) {
+      if (cached) {
+        // Refresh cache in background
+        fetch(req).then(function (res) {
+          if (res && res.ok) {
+            caches.open(CACHE_VERSION).then(function (cache) { cache.put(req, res.clone()); });
+          }
+        }).catch(function () {});
+        return cached;
+      }
+      return fetch(req).then(function (res) {
+        if (res && res.ok && (res.type === 'basic' || res.type === 'default')) {
+          var clone = res.clone();
+          caches.open(CACHE_VERSION).then(function (cache) { cache.put(req, clone); });
         }
         return res;
-      }).catch(() => cached);
-      return cached || network;
+      }).catch(function () {
+        return caches.match('./index.html');
+      });
     })
   );
-});
-
-self.addEventListener('message', (event) => {
-  if (event.data === 'SKIP_WAITING') self.skipWaiting();
 });
