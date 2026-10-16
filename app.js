@@ -1344,10 +1344,23 @@
     main.className = 'row-main';
     var title = document.createElement('div');
     title.className = 'row-title';
-    var hasNote = !!(e.note && String(e.note).trim());
-    title.textContent = hasNote ? String(e.note).trim() : cat.name;
+    var noteRaw = String(e.note || '').trim();
+    var hasNote = !!noteRaw;
     var subBits = [];
-    if (hasNote) subBits.push(cat.name);
+    if (hasNote) {
+      var noteParts = noteRaw.split(/\s*\u00B7\s*|\s*\u2022\s*/);
+      if (noteParts.length >= 2) {
+        title.textContent = noteParts[0].trim();
+        subBits.push(cat.name);
+        subBits.push(noteParts.slice(1).join(' \u00B7 ').trim());
+      } else {
+        title.textContent = noteRaw;
+        subBits.push(cat.name);
+        subBits.push(noteRaw);
+      }
+    } else {
+      title.textContent = cat.name;
+    }
     if (e.recurringId) subBits.push('Recurring');
     if (e.hasReceipt) subBits.push(uiIcon('ui-camera', 'xs'));
     main.appendChild(title);
@@ -1414,17 +1427,20 @@
 
   function appendActivityDayGroup(parent, dayKey, dayEntries) {
     var dayTotal = dayEntries.reduce(function (s, e) { return s + entrySpendingAmount(e); }, 0);
-    var group = document.createElement('div');
-    group.className = 'activity-group';
+    var block = document.createElement('div');
+    block.className = 'activity-day-block';
     var hdr = document.createElement('div');
     hdr.className = 'activity-day-header';
     hdr.innerHTML = '<span>' + dayGroupTitle(dayKey) + '</span><span class="day-total">' + fmtMoneyDisplay(dayTotal) + '</span>';
-    group.appendChild(hdr);
+    block.appendChild(hdr);
+    var group = document.createElement('div');
+    group.className = 'activity-group';
     var rowsWrap = document.createElement('div');
     rowsWrap.className = 'activity-day-rows';
     dayEntries.forEach(function (e) { rowsWrap.appendChild(createActivityRow(e)); });
     group.appendChild(rowsWrap);
-    parent.appendChild(group);
+    block.appendChild(group);
+    parent.appendChild(block);
   }
 
   function renderEntries() {
