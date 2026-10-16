@@ -49,6 +49,22 @@ const appCsv = [
 ].join('\r\n');
 writeFileSync(join(OUT, 'sample-app-export.csv'), appCsv, 'utf8');
 
+// --- Bank checking CSV (deposits + debits for dedupe tests) ---
+const bankCheckingCsv = [
+  'Account Number,Post Date,Check,Description,Debit,Credit,Status,Balance',
+  ',03/15/2025,,PAYROLL DEP PPD,,2100.00,Posted,2100.00',
+  ',03/15/2025,,MOBILE DEPOSIT REF 100,,500.00,Posted,2600.00',
+  ',03/15/2025,,MOBILE DEPOSIT REF 100,,500.00,Posted,3100.00',
+  ',03/14/2025,,COFFEE SHOP,5.25,,Posted,500.00',
+].join('\r\n');
+writeFileSync(join(OUT, 'sample-bank-checking.csv'), bankCheckingCsv, 'utf8');
+
+const bankSavingsDepositCsv = [
+  'Account Number,Post Date,Check,Description,Debit,Credit,Status,Balance',
+  ',03/15/2025,,MOBILE DEPOSIT REF 100,,500.00,Posted,500.00',
+].join('\r\n');
+writeFileSync(join(OUT, 'sample-bank-savings-deposit.csv'), bankSavingsDepositCsv, 'utf8');
+
 function excelSerial(y, m, d) {
   const utc = Date.UTC(y, m - 1, d);
   const epoch = Date.UTC(1899, 11, 30);
