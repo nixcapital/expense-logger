@@ -1328,6 +1328,28 @@
     return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
   }
 
+  function parseActivityNoteForRow(noteRaw, catName) {
+    var note = String(noteRaw || '').trim();
+    if (!note) return { title: catName, noteTag: null };
+    var parts = note.split(/\s*\u00B7\s*|\s*\u2022\s*/);
+    if (parts.length >= 2) {
+      return {
+        title: parts[0].trim(),
+        noteTag: parts.slice(1).join(' \u00B7 ').trim()
+      };
+    }
+    return { title: note, noteTag: note };
+  }
+
+  function activitySubtitleLine(catName, titleText, noteTag) {
+    catName = String(catName || '').trim();
+    titleText = String(titleText || '').trim();
+    var tag = noteTag != null ? String(noteTag).trim() : '';
+    if (!tag) return catName;
+    if (tag.toLowerCase() === titleText.toLowerCase()) return catName;
+    return catName + ' \u00B7 ' + tag;
+  }
+
   function createActivityRow(e) {
     var cat = getCat(e.categoryId);
     var row = document.createElement('div');
@@ -1348,16 +1370,9 @@
     var hasNote = !!noteRaw;
     var subBits = [];
     if (hasNote) {
-      var noteParts = noteRaw.split(/\s*\u00B7\s*|\s*\u2022\s*/);
-      if (noteParts.length >= 2) {
-        title.textContent = noteParts[0].trim();
-        subBits.push(cat.name);
-        subBits.push(noteParts.slice(1).join(' \u00B7 ').trim());
-      } else {
-        title.textContent = noteRaw;
-        subBits.push(cat.name);
-        subBits.push(noteRaw);
-      }
+      var parsed = parseActivityNoteForRow(noteRaw, cat.name);
+      title.textContent = parsed.title;
+      subBits.push(activitySubtitleLine(cat.name, parsed.title, parsed.noteTag));
     } else {
       title.textContent = cat.name;
     }
