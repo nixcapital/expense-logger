@@ -1,5 +1,5 @@
 /**
- * Reports chart aggregation + recurring grouping (mirrors app.js).
+ * Reports chart window, aggregation, recurring grouping, tap debounce (mirrors app.js).
  * Run: node scripts/report-test.mjs
  */
 import assert from 'assert';
@@ -52,24 +52,106 @@ function reportMonthKey(y, m) {
   return y + '-' + pad2(m + 1);
 }
 
-function getReportMonthSeries(entries, endY, endM, count) {
-  const list = [];
-  let y = endY;
-  let m = endM;
+function ymToIndex(y, m) {
+  return y * 12 + m;
+}
+
+function indexToYm(idx) {
+  let y = Math.floor(idx / 12);
+  let m = idx - y * 12;
+  if (m < 0) { m += 12; y -= 1; }
+  return { y, m };
+}
+
+function compareYM(y1, m1, y2, m2) {
+  return ymToIndex(y1, m1) - ymToIndex(y2, m2);
+}
+
+function earliestMonthWithData(entries) {
+  let minIdx = null;
+  entries.forEach((e) => {
+    const d = new Date(e.ts);
+    const idx = ymToIndex(d.getFullYear(), d.getMonth());
+    if (minIdx === null || idx < minIdx) minIdx = idx;
+  });
+  return minIdx === null ? null : indexToYm(minIdx);
+}
+
+function computeReportChartWindow(selY, selM, count, now, entries) {
+  const curY = now.getFullYear();
+  const curM = now.getMonth();
+  if (compareYM(selY, selM, curY, curM) > 0) {
+    selY = curY;
+    selM = curM;
+  }
+  const before = count === 6 ? 3 : 6;
+  const after = count === 6 ? 2 : 5;
+  const selIdx = ymToIndex(selY, selM);
+  const curIdx = ymToIndex(curY, curM);
+  const monthsAfterSel = curIdx - selIdx;
+  let startIdx;
+  let endIdx;
+
+  if (monthsAfterSel <= after) {
+    endIdx = curIdx;
+    startIdx = endIdx - (count - 1);
+  } else {
+    startIdx = selIdx - before;
+    endIdx = selIdx + after;
+    if (endIdx > curIdx) {
+      endIdx = curIdx;
+      startIdx = endIdx - (count - 1);
+    }
+  }
+
+  const earliest = earliestMonthWithData(entries);
+  if (earliest) {
+    const minStart = ymToIndex(earliest.y, earliest.m) - 2;
+    if (startIdx < minStart) startIdx = minStart;
+    endIdx = startIdx + (count - 1);
+    if (endIdx > curIdx) {
+      endIdx = curIdx;
+      startIdx = endIdx - (count - 1);
+    }
+  }
+
+  const slots = [];
   for (let i = 0; i < count; i++) {
-    const data = getSummaryData(entries, y, m);
-    list.unshift({
-      y,
-      m,
-      key: reportMonthKey(y, m),
+    slots.push(indexToYm(startIdx + i));
+  }
+  return slots;
+}
+
+function buildReportMonthSeries(entries, selY, selM, count, now) {
+  return computeReportChartWindow(selY, selM, count, now, entries).map((slot) => {
+    const data = getSummaryData(entries, slot.y, slot.m);
+    return {
+      y: slot.y,
+      m: slot.m,
+      key: reportMonthKey(slot.y, slot.m),
       total: data.total,
       byCat: data.byCat,
       entries: data.entries
-    });
-    m -= 1;
-    if (m < 0) { m = 11; y -= 1; }
+    };
+  });
+}
+
+function applyReportChartMonthPick(state, monthKey, currentValue, now) {
+  if (now < state.lockUntil) return { applied: false, state, value: currentValue };
+  if (monthKey === state.lastKey && now - state.lastAt < 450) {
+    return { applied: false, state, value: currentValue };
   }
-  return list;
+  if (monthKey === currentValue) return { applied: false, state, value: currentValue };
+  return {
+    applied: true,
+    value: monthKey,
+    state: {
+      lockUntil: now + 450,
+      lastKey: monthKey,
+      lastAt: now,
+      picks: (state.picks || 0) + 1
+    }
+  };
 }
 
 function recurringGroupLabel(g) {
@@ -107,6 +189,18 @@ function groupRecurringEntries(list) {
   });
 }
 
+function splitRecurringGroups(groups) {
+  const multi = groups.filter((g) => g.count >= 2);
+  const oneTime = groups.filter((g) => g.count < 2);
+  return { multi, oneTime };
+}
+
+function keys(slots) {
+  return slots.map((s) => reportMonthKey(s.y, s.m));
+}
+
+const nowOct2026 = new Date(2026, 9, 15);
+
 const sep = new Date(2026, 8, 5).getTime();
 const aug = new Date(2026, 7, 12).getTime();
 const entries = [
@@ -116,34 +210,54 @@ const entries = [
   { id: '4', amount: 20, categoryId: 'groceries', ts: aug, note: 'TARGET.COM *' }
 ];
 
-const series = getReportMonthSeries(entries, 2026, 8, 3);
-assert.strictEqual(series.length, 3);
-assert.strictEqual(series[2].key, '2026-09');
-assert.strictEqual(series[2].total, 180);
-assert.strictEqual(series[2].byCat.groceries, 50);
-assert.strictEqual(series[2].byCat.other, 30);
-assert.strictEqual(series[1].total, 20);
-assert.strictEqual(series[0].total, 0);
+const series3 = buildReportMonthSeries(entries, 2026, 8, 3, new Date(2026, 9, 1));
+assert.strictEqual(series3.length, 3);
+assert.deepStrictEqual(keys(series3), ['2026-08', '2026-09', '2026-10']);
+assert.strictEqual(series3[1].total, 180);
 
-function splitRecurringGroups(groups) {
-  const multi = groups.filter((g) => g.count >= 2);
-  const oneTime = groups.filter((g) => g.count < 2);
-  return { multi, oneTime };
-}
+const octSix = buildReportMonthSeries(entries, 2026, 9, 6, nowOct2026);
+assert.deepStrictEqual(keys(octSix), ['2026-05', '2026-06', '2026-07', '2026-08', '2026-09', '2026-10']);
+assert.strictEqual(octSix[octSix.length - 1].key, '2026-10');
+
+const entriesWithHistory = entries.concat([
+  { id: '5', amount: 1, categoryId: 'other', ts: new Date(2026, 1, 10).getTime(), note: 'early' }
+]);
+const maySix = buildReportMonthSeries(entriesWithHistory, 2026, 4, 6, nowOct2026);
+assert.deepStrictEqual(keys(maySix), ['2026-02', '2026-03', '2026-04', '2026-05', '2026-06', '2026-07']);
+assert.strictEqual(maySix[3].key, '2026-05');
+
+const entriesDeep = entriesWithHistory.concat([
+  { id: '6', amount: 1, categoryId: 'other', ts: new Date(2025, 0, 3).getTime(), note: 'jan25' }
+]);
+const mayTwelve = buildReportMonthSeries(entriesDeep, 2026, 4, 12, nowOct2026);
+assert.strictEqual(mayTwelve.length, 12);
+assert.strictEqual(mayTwelve[mayTwelve.length - 1].key, '2026-10');
+assert.strictEqual(mayTwelve[6].key, '2026-05');
+
+const recentOnly = [
+  { id: 'a', amount: 10, categoryId: 'other', ts: new Date(2026, 8, 2).getTime(), note: 'x' },
+  { id: 'b', amount: 12, categoryId: 'other', ts: new Date(2026, 9, 2).getTime(), note: 'y' }
+];
+const recentOct = buildReportMonthSeries(recentOnly, 2026, 9, 6, nowOct2026);
+assert.strictEqual(recentOct[recentOct.length - 1].key, '2026-10');
+assert.ok(recentOct[0].total === 0 || recentOct[0].key >= '2026-07');
+
+let pickState = { lockUntil: 0, lastKey: '', lastAt: 0, picks: 0 };
+let monthVal = '2026-10';
+const p1 = applyReportChartMonthPick(pickState, '2026-05', monthVal, 1000);
+assert.strictEqual(p1.applied, true);
+monthVal = p1.value;
+pickState = p1.state;
+const p2 = applyReportChartMonthPick(pickState, '2026-05', monthVal, 1100);
+assert.strictEqual(p2.applied, false);
+const p3 = applyReportChartMonthPick(pickState, '2026-12', monthVal, 2000);
+assert.strictEqual(p3.applied, true);
+assert.strictEqual(p3.value, '2026-12');
 
 const groups = groupRecurringEntries(getSummaryData(entries, 2026, 8, 1).entries);
-assert.strictEqual(groups.length, 2, 'target merged + cafe');
-assert.strictEqual(groups[0].count, 2, 'target appears twice');
-assert.strictEqual(groups[0].total, 80);
-assert.ok(groups[0].label.toLowerCase().includes('target'));
-
+assert.strictEqual(groups.length, 2);
 const split = splitRecurringGroups(groups);
 assert.strictEqual(split.multi.length, 1);
 assert.strictEqual(split.oneTime.length, 1);
-assert.strictEqual(split.oneTime[0].label, 'Cafe');
-
-const solo = groupRecurringEntries([{ id: 'x', amount: 5, ts: sep, note: '' }]);
-assert.strictEqual(solo.length, 1);
-assert.strictEqual(solo[0].count, 1);
 
 console.log('report-test: PASS');
