@@ -29,6 +29,8 @@ assert.strictEqual(EW.normalizeMerchantName('Starbucks Store 55'), 'Starbucks');
 assert.strictEqual(EW.normalizeMerchantName('SQ * Sweetgreen NYC'), 'Sweetgreen');
 assert.strictEqual(EW.normalizeMerchantName('TST* JOE\'S PIZZA'), 'Joe\'s Pizza');
 assert.strictEqual(EW.normalizeMerchantName('PAYPAL * NETFLIX'), 'Netflix');
+assert.strictEqual(EW.canonicalMerchantKey('Blue Bottle Coffee'), EW.canonicalMerchantKey('Blue Bottle'));
+assert.strictEqual(EW.normalizeMerchantName('Blue Bottle Coffee'), 'Blue Bottle');
 
 const transfer = { id: 't1', amount: 100, categoryId: 'bills', note: 'Payment', ts: ts(2026, 8, 1), isTransfer: true };
 const incomeLike = { id: 'x', amount: 50, categoryId: 'other', note: 'Refund', ts: ts(2026, 8, 2), countAsSpending: false };
@@ -44,6 +46,8 @@ const entries = [
   { id: '6', amount: 16.99, categoryId: 'fun', note: 'Max', ts: ts(2026, 8, 4), accountId: 'acct-chase' },
   { id: '7', amount: 45, categoryId: 'groceries', note: 'Trader Joe\'s', ts: ts(2026, 8, 10), accountId: 'acct-checking' },
   { id: '8', amount: 30, categoryId: 'dining', note: 'Sweetgreen', ts: ts(2026, 8, 11), accountId: 'acct-chase' },
+  { id: '8b', amount: 4.5, categoryId: 'dining', note: 'Blue Bottle Coffee', ts: ts(2026, 8, 12), accountId: 'acct-chase' },
+  { id: '8c', amount: 4.75, categoryId: 'dining', note: 'Blue Bottle', ts: ts(2026, 8, 18), accountId: 'acct-chase' },
   { id: '9', amount: 20, categoryId: 'gas', note: 'Shell', ts: ts(2026, 7, 15), accountId: 'acct-chase' },
   { id: '10', amount: 40, categoryId: 'gas', note: 'Shell', ts: ts(2026, 8, 15), accountId: 'acct-chase' },
   { id: '11', amount: 100, categoryId: 'groceries', note: 'Costco', ts: ts(2026, 6, 13), accountId: 'acct-chase' },
@@ -73,6 +77,8 @@ assert.ok(reg.regular);
 assert.strictEqual(reg.regular.name, 'Starbucks');
 assert.ok(reg.regular.visits >= 3);
 assert.ok(reg.newPlaces.includes('Sweetgreen'));
+assert.ok(!reg.newPlaces.some((n) => /starbucks/i.test(n)));
+assert.strictEqual(reg.newPlaces.filter((n) => /blue bottle/i.test(n)).length, 1);
 assert.ok(sep.parts.recurring);
 const newCharge = sep.parts.recurring.worthLook.find((w) => w.type === 'new');
 assert.ok(newCharge && newCharge.item.name === 'Max');

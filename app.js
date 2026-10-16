@@ -379,6 +379,12 @@
       return '$' + fmtMoney(n);
     }
   }
+  function fmtMoneySigned(n) {
+    if (n == null || isNaN(n)) return fmtMoneyDisplay(0);
+    if (n < 0) return '\u2212' + fmtMoneyDisplay(Math.abs(n));
+    if (n > 0) return '+' + fmtMoneyDisplay(n);
+    return fmtMoneyDisplay(0);
+  }
   function pad2(n) { return n < 10 ? '0' + n : '' + n; }
   function localDateStamp() {
     var d = new Date();
@@ -3844,23 +3850,23 @@
       var maxBar = 0;
       d.bars.forEach(function (b) { if (b.total > maxBar) maxBar = b.total; });
       var barsHtml = d.bars.map(function (b, i) {
-        var h = maxBar > 0 ? Math.max(8, Math.round((b.total / maxBar) * 72)) : 8;
+        var h = maxBar > 0 ? Math.max(12, Math.round((b.total / maxBar) * 112)) : 12;
         var cls = b.isCurrent ? ' wrapped-bar-current' : '';
-        return '<div class="wrapped-mini-bar' + cls + '" style="--h:' + h + 'px" data-bar-idx="' + i + '">'
+        return '<div class="wrapped-mini-bar' + cls + '">'
           + '<span class="wrapped-mini-bar-val">' + fmtMoneyDisplay(b.total) + '</span>'
-          + '<span class="wrapped-mini-bar-fill"></span>'
+          + '<span class="wrapped-mini-bar-fill" style="--h:' + h + 'px" data-bar-idx="' + i + '"></span>'
           + '<span class="wrapped-mini-bar-label">' + escHtml(b.label) + '</span></div>';
       }).join('');
       var vsLeft = '';
       var vsRight = '';
       if (d.compare && d.vsLast) {
         vsLeft = '<div class="wrapped-split-stat"><span class="wrapped-kicker">Vs. ' + monthShort(new Date(d.bars[d.bars.length - 2].y, d.bars[d.bars.length - 2].m, 1)) + '</span>'
-          + '<span class="wrapped-stat-lg wrapped-good" data-count="' + d.vsLast.pct + '" data-count-suffix="%" data-count-decimals="0">' + wrappedPctLabel(d.vsLast.pct) + '</span>'
+          + '<span class="wrapped-stat-lg wrapped-good" data-count="' + d.vsLast.pct + '" data-count-suffix="%" data-count-decimals="0" data-count-skip="1">' + wrappedPctLabel(d.vsLast.pct) + '</span>'
           + '<span class="wrapped-stat-sub">was ' + fmtMoneyDisplay(d.vsLast.prevTotal) + '</span></div>';
       }
       if (d.vsAvg3) {
         vsRight = '<div class="wrapped-split-stat"><span class="wrapped-kicker">Vs. 3-month avg</span>'
-          + '<span class="wrapped-stat-lg wrapped-good" data-count="' + d.vsAvg3.diff + '" data-count-prefix="$" data-count-decimals="0">' + (d.vsAvg3.diff < 0 ? '-' : '+') + fmtMoneyDisplay(Math.abs(d.vsAvg3.diff)) + '</span>'
+          + '<span class="wrapped-stat-lg wrapped-good" data-count="' + d.vsAvg3.diff + '" data-count-money="signed">' + fmtMoneySigned(d.vsAvg3.diff) + '</span>'
           + '<span class="wrapped-stat-sub">avg ' + fmtMoneyDisplay(d.vsAvg3.avg) + '</span></div>';
       }
       var splitHtml = (vsLeft || vsRight)
@@ -3870,7 +3876,7 @@
         + '<span class="wrapped-kicker">' + monthShort(new Date(parts.y, parts.m, 1)).toUpperCase() + ' ' + parts.y + '</span>'
         + '<h2 class="wrapped-hero-title">Your month, wrapped.</h2>'
         + '<p class="wrapped-hero-lead">You spent</p>'
-        + '<p class="wrapped-hero-num" data-count="' + d.total + '" data-count-prefix="$" data-count-decimals="2">' + fmtMoneyDisplay(d.total) + '</p>'
+        + '<p class="wrapped-hero-num" data-count="' + d.total + '" data-count-money="1">' + fmtMoneyDisplay(d.total) + '</p>'
         + cmpLine
         + '<div class="wrapped-mini-bars">' + barsHtml + '</div></div>'
         + splitHtml
@@ -3903,7 +3909,7 @@
         + '<span class="wrapped-kicker">Top category</span>'
         + '<span class="wrapped-hero-icon">' + iconBadge(top.cat, 'md') + '</span>'
         + '<h2 class="wrapped-hero-title">' + escHtml(top.cat.name) + ' took the lead.</h2>'
-        + '<p class="wrapped-hero-num" data-count="' + top.amount + '" data-count-prefix="$" data-count-decimals="2">' + fmtMoneyDisplay(top.amount) + '</p>'
+        + '<p class="wrapped-hero-num" data-count="' + top.amount + '" data-count-money="1">' + fmtMoneyDisplay(top.amount) + '</p>'
         + '<p class="wrapped-hero-sub">' + escHtml(chLine) + '</p></div>'
         + '<div class="wrapped-card wrapped-card--dim"><span class="wrapped-kicker">Where it all went</span>'
         + '<div class="wrapped-stack-bar" data-animate-stack>' + stack + '</div>'
@@ -3930,10 +3936,13 @@
       }
       var chips = '';
       if (d.newPlaces && d.newPlaces.length) {
-        chips = '<div class="wrapped-card wrapped-card--dim"><span class="wrapped-kicker">' + d.newPlaces.length + ' new places this month</span>'
+        var newCount = d.newPlaces.length + (d.newPlacesOverflow || 0);
+        chips = '<div class="wrapped-card wrapped-card--dim"><span class="wrapped-kicker">' + newCount + ' new places this month</span>'
           + '<div class="wrapped-chips">' + d.newPlaces.map(function (n) {
             return '<span class="wrapped-chip" data-chip>' + escHtml(n) + '</span>';
-          }).join('') + '</div>'
+          }).join('')
+          + (d.newPlacesOverflow ? '<span class="wrapped-chip wrapped-chip--more" data-chip>+' + d.newPlacesOverflow + ' more</span>' : '')
+          + '</div>'
           + '<p class="wrapped-stat-sub">First time they\'ve shown up in your history.</p></div>';
       }
       return '<div class="wrapped-slide" data-slide="regulars">' + hero + fun + chips + '</div>';
@@ -3988,11 +3997,11 @@
         + '<span class="wrapped-kicker">On repeat</span>'
         + '<span class="wrapped-hero-icon">' + uiIcon('ui-repeat', 'md') + '</span>'
         + '<h2 class="wrapped-hero-title">Your recurring charges.</h2>'
-        + '<p class="wrapped-hero-num" data-count="' + d.total + '" data-count-prefix="$" data-count-decimals="2">' + fmtMoneyDisplay(d.total) + '</p>'
+        + '<p class="wrapped-hero-num" data-count="' + d.total + '" data-count-money="1">' + fmtMoneyDisplay(d.total) + '</p>'
         + '<p class="wrapped-hero-sub">' + d.count + ' charges · ' + d.sharePct + '% of your month</p></div>'
         + (worth ? '<div class="wrapped-card wrapped-card--dim"><span class="wrapped-kicker">Worth a look</span>' + worth + '</div>' : '')
         + '<div class="wrapped-card wrapped-card--dim wrapped-row-card"><span class="wrapped-row-icon wrapped-row-icon--ok">' + uiIcon('ui-trend-down', 'sm') + '</span>'
-        + '<div><strong>' + d.steady.count + ' steady, same as last month</strong>'
+        + '<div><strong class="wrapped-steady-line">' + d.steady.count + ' steady, same as last month</strong>'
         + '<p class="wrapped-stat-sub">' + escHtml(steadyNames) + '</p></div>'
         + '<span class="wrapped-cat-amt">' + fmtMoneyDisplay(d.steady.total) + '</span></div></div>';
     }
@@ -4011,6 +4020,7 @@
       return '<div class="wrapped-slide" data-slide="budgets">'
         + '<div class="wrapped-card wrapped-hero wrapped-hero--green">'
         + '<span class="wrapped-kicker">Budgets</span>'
+        + '<span class="wrapped-hero-icon">' + uiIcon('ui-insight', 'md') + '</span>'
         + '<h2 class="wrapped-hero-title">You stayed on budget in</h2>'
         + '<p class="wrapped-hero-num" data-count="' + d.onTrack + '" data-count-suffix=" of ' + d.totalCategories + '" data-count-decimals="0">' + d.onTrack + ' of ' + d.totalCategories + '</p>'
         + '<p class="wrapped-hero-sub">' + fmtMoneyDisplay(Math.abs(d.totalDelta)) + (under ? ' under' : ' over') + ' your ' + fmtMoneyDisplay(d.totalLimit) + ' total</p></div>'
@@ -4059,7 +4069,7 @@
         + '<div class="wrapped-summary-card">'
         + '<p class="wrapped-summary-head"><span data-ui-icon="ui-sparkles" data-ui-icon-size="sm"></span> My '
         + monthShort(new Date(parts.y, parts.m, 1)) + ', wrapped</p>'
-        + '<p class="wrapped-summary-total" data-count="' + d.total + '" data-count-prefix="$" data-count-decimals="2">' + fmtMoneyDisplay(d.total) + '</p>'
+        + '<p class="wrapped-summary-total" data-count="' + d.total + '" data-count-money="1">' + fmtMoneyDisplay(d.total) + '</p>'
         + cmp
         + '<div class="wrapped-summary-grid">' + tiles + '</div>'
         + '<div class="wrapped-summary-foot"><span>Expense Logger</span><span>'
@@ -4125,13 +4135,20 @@
     });
 
     slideEl.querySelectorAll('[data-count]').forEach(function (el) {
+      if (el.getAttribute('data-count-skip') === '1') return;
       var end = parseFloat(el.getAttribute('data-count'), 10);
       if (isNaN(end)) return;
-      var prefix = el.getAttribute('data-count-prefix') || '';
+      var moneyMode = el.getAttribute('data-count-money');
       var suffix = el.getAttribute('data-count-suffix') || '';
       var dec = parseInt(el.getAttribute('data-count-decimals') || '0', 10);
+      function formatVal(val) {
+        if (moneyMode === '1') return fmtMoneyDisplay(val);
+        if (moneyMode === 'signed') return fmtMoneySigned(val);
+        if (dec) return val.toFixed(dec) + suffix;
+        return String(Math.round(val)) + suffix;
+      }
       if (reduced) {
-        el.textContent = prefix + (dec ? end.toFixed(dec) : String(Math.round(end))) + suffix;
+        el.textContent = formatVal(end);
         return;
       }
       var start = 0;
@@ -4141,7 +4158,7 @@
         var p = Math.min(1, (now - t0) / dur);
         var eased = 1 - Math.pow(1 - p, 3);
         var val = start + (end - start) * eased;
-        el.textContent = prefix + (dec ? val.toFixed(dec) : String(Math.round(val))) + suffix;
+        el.textContent = formatVal(val);
         if (p < 1) requestAnimationFrame(tick);
       }
       requestAnimationFrame(tick);
@@ -4160,19 +4177,26 @@
         return;
       }
       if (el.classList.contains('wrapped-budget-fill')) {
-        var pct = el.getAttribute('data-bar-pct') || el.style.width;
-        el.style.width = reduced ? pct : '0%';
+        var pctRaw = el.getAttribute('data-bar-pct') || '0';
+        var pctW = String(pctRaw).indexOf('%') >= 0 ? String(pctRaw) : pctRaw + '%';
+        el.style.width = reduced ? pctW : '0%';
         setTimeout(function () {
           el.style.transition = 'width ' + barDur + 'ms ease-out';
-          el.style.width = pct;
+          el.style.width = pctW;
         }, i * barDelay);
         return;
       }
       var h = el.style.getPropertyValue('--h');
-      if (h) {
+      if (h && el.classList.contains('wrapped-mini-bar-fill')) {
+        el.style.height = reduced ? h : '0px';
+        setTimeout(function () {
+          el.style.transition = 'height ' + barDur + 'ms ease-out';
+          el.style.height = h;
+        }, i * barDelay);
+      } else if (h) {
         el.style.setProperty('--h-anim', reduced ? h : '0px');
         setTimeout(function () {
-          el.style.transition = 'height ' + barDur + 'ms ease-out, --h-anim ' + barDur + 'ms ease-out';
+          el.style.transition = 'height ' + barDur + 'ms ease-out';
           el.style.setProperty('--h-anim', h);
         }, i * barDelay);
       }
@@ -4254,28 +4278,30 @@
     }
 
     var tiles = summary.tiles;
-    var tx = 36;
-    var ty = 156;
-    var tw = (w - 72 - 12) / 2;
-    var th = 72;
+    var tx = 32;
+    var tw = (w - 64 - 14) / 2;
+    var th = 92;
+    var rowGap = 14;
+    var gridH = 3 * th + 2 * rowGap;
+    var ty = 148 + Math.max(0, (h - 148 - 72 - gridH) / 2);
     tiles.forEach(function (t, i) {
       if (!t) return;
       var col = i % 2;
       var row = Math.floor(i / 2);
-      var x = tx + col * (tw + 12);
-      var y = ty + row * (th + 10);
+      var x = tx + col * (tw + 14);
+      var y = ty + row * (th + rowGap);
       ctx.fillStyle = 'rgba(0,0,0,0.22)';
       roundRect(ctx, x, y, tw, th, 14);
       ctx.fill();
       ctx.fillStyle = 'rgba(255,255,255,0.65)';
-      ctx.font = '500 10px -apple-system, sans-serif';
-      ctx.fillText(t.label.toUpperCase(), x + 12, y + 22);
+      ctx.font = '600 11px -apple-system, BlinkMacSystemFont, sans-serif';
+      ctx.fillText(t.label.toUpperCase(), x + 14, y + 26);
       ctx.fillStyle = '#fff';
-      ctx.font = '700 15px -apple-system, sans-serif';
-      ctx.fillText(t.title, x + 12, y + 42);
-      ctx.fillStyle = 'rgba(255,255,255,0.75)';
-      ctx.font = '500 12px -apple-system, sans-serif';
-      ctx.fillText(t.sub, x + 12, y + 60);
+      ctx.font = '700 17px -apple-system, BlinkMacSystemFont, sans-serif';
+      ctx.fillText(t.title, x + 14, y + 50);
+      ctx.fillStyle = 'rgba(255,255,255,0.8)';
+      ctx.font = '500 13px -apple-system, BlinkMacSystemFont, sans-serif';
+      ctx.fillText(t.sub, x + 14, y + 72);
     });
 
     ctx.fillStyle = 'rgba(255,255,255,0.9)';

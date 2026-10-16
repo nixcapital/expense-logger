@@ -8,10 +8,8 @@ import { readFileSync, existsSync, mkdirSync, writeFileSync } from 'fs';
 import { join, extname } from 'path';
 
 const PORT = 8898;
-const OUT_DIRS = [
-  '/opt/cursor/artifacts/wrapped-17',
-  '/cursor/stores/self/artifacts/wrapped-17'
-];
+const OUT_DIRS = ['/cursor/stores/self/artifacts/wrapped-17'];
+
 const MIME = {
   '.html': 'text/html',
   '.js': 'text/javascript',
@@ -73,52 +71,100 @@ const recurringItems = [
   { id: 'r-spotify', amount: 12.99, categoryId: 'fun', dayOfMonth: 4 }
 ];
 
-function starbucks(i, day) {
-  return { id: 'sb' + i, amount: 5.61, categoryId: 'dining', note: 'STARBUCKS #' + (4400 + i), ts: ts(2026, 8, day), accountId: 'acct-chase' };
+/** Realistic ~$2.5k/mo with comparable category mix (±30% MoM). */
+function buildFixtureEntries() {
+  const entries = [
+    { id: 'xfer-c', amount: 1250, categoryId: 'bills', note: 'CHASE CRD AUTOPAY', ts: ts(2026, 8, 15), isTransfer: true, accountId: 'acct-checking' },
+    { id: 'xfer-ch', amount: 1250, categoryId: 'bills', note: 'Payment Thank You', ts: ts(2026, 8, 16), isTransfer: true, accountId: 'acct-chase' }
+  ];
+
+  const months = [
+    { y: 2026, m: 5, scale: 1.0, sb: 3 },
+    { y: 2026, m: 6, scale: 1.02, sb: 4 },
+    { y: 2026, m: 7, scale: 1.08, sb: 5 },
+    { y: 2026, m: 8, scale: 1.0, sb: 14 }
+  ];
+
+  const base = {
+    dining: 612.3,
+    groceries: 471.85,
+    bills: 584.47,
+    gas: 138.4,
+    fun: 296.18,
+    other: 383.2
+  };
+
+  months.forEach((mo) => {
+    const s = mo.scale;
+    const chase = 'acct-chase';
+    const checking = 'acct-checking';
+    let id = 0;
+    const add = (amount, categoryId, note, day, accountId) => {
+      entries.push({
+        id: 'e-' + mo.m + '-' + (id++),
+        amount: Math.round(amount * s * 100) / 100,
+        categoryId,
+        note,
+        ts: ts(mo.y, mo.m, day),
+        accountId: accountId || chase
+      });
+    };
+
+    for (let i = 0; i < mo.sb; i++) {
+      add(5.61, 'dining', 'STARBUCKS #' + (4400 + i), 2 + i * 2, chase);
+    }
+
+    add(base.bills * 0.24, 'bills', 'Duke Energy', 15, checking);
+    add(base.bills * 0.15, 'bills', 'Verizon', 8, checking);
+    add(base.bills * 0.61, 'bills', 'Rent · ACH', 1, checking);
+
+    if (mo.m === 8) {
+      add(12.99, 'fun', 'Spotify', 4, chase);
+      add(16.99, 'fun', 'Max', 4, chase);
+      add(15.99, 'fun', 'Netflix', 12, chase);
+    } else {
+      add(mo.m === 7 ? 11.99 : 11.99, 'fun', 'Spotify', 4, chase);
+      add(15.99, 'fun', 'Netflix', 12, chase);
+    }
+
+    add(base.groceries * 0.55, 'groceries', 'Costco', 13, chase);
+    add(base.groceries * 0.25, 'groceries', "Trader Joe's", 6, chase);
+    add(base.groceries * 0.2, 'groceries', 'Target', 18, chase);
+
+    add(base.dining * 0.35, 'dining', 'Chipotle', 9, chase);
+    add(base.dining * 0.2, 'dining', 'Sweetgreen', 7, chase);
+    add(base.dining * 0.15, 'dining', "Joe's Pizza", 11, chase);
+    if (mo.m === 8) {
+      add(4.5, 'dining', 'Blue Bottle Coffee', 5, chase);
+      add(4.75, 'dining', 'Blue Bottle', 19, chase);
+    }
+
+    add(base.gas * 0.5, 'gas', 'Shell', 13, chase);
+    add(base.gas * 0.5, 'gas', 'Costco Gas', 20, chase);
+
+    add(base.fun * 0.4, 'fun', 'AMC Theatres', 14, chase);
+    add(base.other * 0.35, 'other', 'REI', 9, chase);
+    add(base.other * 0.3, 'other', 'Lyft', 13, chase);
+    add(base.other * 0.35, 'other', 'Amazon', 22, chase);
+
+    if (mo.m === 8) {
+      add(286.14, 'groceries', 'Costco', 13, chase);
+      add(35.06, 'gas', 'Shell', 13, chase);
+      add(20, 'dining', 'Chipotle', 13, chase);
+    }
+  });
+
+  entries.forEach((e) => {
+    if (e.note === 'Duke Energy' && e.ts >= ts(2026, 6, 1)) e.recurringId = 'r-duke';
+    if (e.note === 'Verizon') e.recurringId = 'r-verizon';
+    if (e.note === 'Netflix') e.recurringId = 'r-netflix';
+    if (e.note === 'Spotify') e.recurringId = 'r-spotify';
+  });
+
+  return entries;
 }
 
-const entries = [
-  { id: 'xfer-c', amount: 1250, categoryId: 'bills', note: 'CHASE CRD AUTOPAY', ts: ts(2026, 8, 15), isTransfer: true, accountId: 'acct-checking' },
-  { id: 'xfer-ch', amount: 1250, categoryId: 'bills', note: 'Payment Thank You', ts: ts(2026, 8, 16), isTransfer: true, accountId: 'acct-chase' },
-  starbucks(1, 2), starbucks(2, 4), starbucks(3, 6), starbucks(4, 8), starbucks(5, 10),
-  starbucks(6, 12), starbucks(7, 14), starbucks(8, 16), starbucks(9, 18), starbucks(10, 20),
-  starbucks(11, 22), starbucks(12, 24), starbucks(13, 26), starbucks(14, 28),
-  { id: 'coffee1', amount: 4.5, categoryId: 'dining', note: 'Blue Bottle Coffee', ts: ts(2026, 8, 5), accountId: 'acct-chase' },
-  { id: 'coffee2', amount: 4.75, categoryId: 'dining', note: 'Blue Bottle', ts: ts(2026, 8, 19), accountId: 'acct-chase' },
-  { id: 'coffee3', amount: 5.2, categoryId: 'dining', note: 'Dunkin', ts: ts(2026, 8, 21), accountId: 'acct-chase' },
-  { id: 'coffee4', amount: 5.9, categoryId: 'dining', note: 'Peet\'s Coffee', ts: ts(2026, 8, 25), accountId: 'acct-chase' },
-  { id: 'sg', amount: 14.2, categoryId: 'dining', note: 'Sweetgreen', ts: ts(2026, 8, 7), accountId: 'acct-chase' },
-  { id: 'rei', amount: 89.5, categoryId: 'other', note: 'REI', ts: ts(2026, 8, 9), accountId: 'acct-chase' },
-  { id: 'joe', amount: 18.5, categoryId: 'dining', note: 'Joe\'s Pizza', ts: ts(2026, 8, 11), accountId: 'acct-chase' },
-  { id: 'lyft', amount: 22.4, categoryId: 'other', note: 'Lyft', ts: ts(2026, 8, 13), accountId: 'acct-chase' },
-  { id: 'costco', amount: 286.14, categoryId: 'groceries', note: 'Costco', ts: ts(2026, 8, 13), accountId: 'acct-chase' },
-  { id: 'shell', amount: 35.06, categoryId: 'gas', note: 'Shell', ts: ts(2026, 8, 13), accountId: 'acct-chase' },
-  { id: 'chip', amount: 20, categoryId: 'dining', note: 'Chipotle', ts: ts(2026, 8, 13), accountId: 'acct-chase' },
-  { id: 'max', amount: 16.99, categoryId: 'fun', note: 'Max', ts: ts(2026, 8, 4), accountId: 'acct-chase' },
-  { id: 'spot-sep', amount: 12.99, categoryId: 'fun', note: 'Spotify', ts: ts(2026, 8, 4), recurringId: 'r-spotify', accountId: 'acct-chase' },
-  { id: 'spot-aug', amount: 11.99, categoryId: 'fun', note: 'Spotify', ts: ts(2026, 7, 4), recurringId: 'r-spotify', accountId: 'acct-chase' },
-  { id: 'duke-sep', amount: 142.4, categoryId: 'bills', note: 'Duke Energy', ts: ts(2026, 8, 15), recurringId: 'r-duke', accountId: 'acct-checking' },
-  { id: 'duke-aug', amount: 142.4, categoryId: 'bills', note: 'Duke Energy', ts: ts(2026, 7, 15), recurringId: 'r-duke', accountId: 'acct-checking' },
-  { id: 'ver-sep', amount: 89.99, categoryId: 'bills', note: 'Verizon', ts: ts(2026, 8, 8), recurringId: 'r-verizon', accountId: 'acct-checking' },
-  { id: 'ver-aug', amount: 89.99, categoryId: 'bills', note: 'Verizon', ts: ts(2026, 7, 8), recurringId: 'r-verizon', accountId: 'acct-checking' },
-  { id: 'nf-sep', amount: 15.99, categoryId: 'fun', note: 'Netflix', ts: ts(2026, 8, 12), recurringId: 'r-netflix', accountId: 'acct-chase' },
-  { id: 'nf-aug', amount: 15.99, categoryId: 'fun', note: 'Netflix', ts: ts(2026, 7, 12), recurringId: 'r-netflix', accountId: 'acct-chase' }
-];
-
-// Scale prior months for bar chart / comparisons
-['dining', 'groceries', 'bills', 'gas', 'fun', 'other'].forEach((cat, ci) => {
-  [5, 6, 7].forEach((mo, mi) => {
-    const base = 400 + ci * 80 + mi * 35;
-    entries.push({
-      id: 'bulk-' + mo + '-' + cat,
-      amount: Math.round(base * 10) / 10,
-      categoryId: cat,
-      note: 'Month spread ' + cat,
-      ts: ts(2026, mo, 10 + ci),
-      accountId: ci % 2 ? 'acct-chase' : 'acct-checking'
-    });
-  });
-});
+const entries = buildFixtureEntries();
 
 for (const dir of OUT_DIRS) mkdirSync(dir, { recursive: true });
 
@@ -150,7 +196,7 @@ await page.waitForFunction(() => {
 
 async function shot(name, scheme) {
   if (scheme) await page.emulateMedia({ colorScheme: scheme });
-  await page.waitForTimeout(350);
+  await page.waitForTimeout(550);
   for (const dir of OUT_DIRS) {
     await page.screenshot({ path: join(dir, name), fullPage: false });
   }
@@ -164,7 +210,7 @@ await page.evaluate(() => {
 });
 await page.click('#openWrappedBtn');
 await page.waitForSelector('#wrappedModal.show');
-await page.waitForTimeout(500);
+await page.waitForTimeout(700);
 
 const slideCount = await page.evaluate(() => {
   return window.ExpenseWrapped.buildWrappedData({
@@ -180,7 +226,7 @@ const slideCount = await page.evaluate(() => {
 
 for (let i = 0; i < slideCount; i++) {
   if (i > 0) await page.click('#wrappedTapNext');
-  await page.waitForTimeout(600);
+  await page.waitForTimeout(700);
   await shot(`slide-${String(i + 1).padStart(2, '0')}-dark.png`, 'dark');
 }
 
@@ -220,6 +266,7 @@ await page.addInitScript(() => {
   Date.parse = RealDate.parse;
 });
 await page.reload({ waitUntil: 'networkidle' });
+await page.waitForTimeout(1200);
 await page.click('[data-tab="summary"]');
 await page.waitForSelector('#homeRecapCard:not([hidden])', { timeout: 8000 });
 await shot('home-teaser-dark.png', 'dark');
@@ -227,7 +274,7 @@ await shot('home-teaser-dark.png', 'dark');
 await page.emulateMedia({ colorScheme: 'light' });
 await page.click('[data-tab="report"]');
 await page.click('#openWrappedBtn');
-await page.waitForTimeout(500);
+await page.waitForTimeout(700);
 await shot('slide-01-light.png', 'light');
 
 await browser.close();

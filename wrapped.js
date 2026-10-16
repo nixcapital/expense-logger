@@ -65,15 +65,46 @@
     s = s.replace(/\s+[A-Z]{2,4}\s*$/g, '');
     s = s.replace(/\s+/g, ' ').trim();
     if (!s) return '';
-    return s.split(' ').map(function (word) {
+    var titled = s.split(' ').map(function (word) {
       if (!word) return '';
       if (word.length <= 3 && word === word.toUpperCase()) return word;
       return word.charAt(0).toUpperCase() + word.slice(1).toLowerCase();
     }).join(' ');
+    var canonWords = normText(titled).split(' ').filter(Boolean);
+    while (canonWords.length > 1 && MERCHANT_GENERIC_SUFFIXES.indexOf(canonWords[canonWords.length - 1]) >= 0) {
+      canonWords.pop();
+    }
+    if (canonWords.length && canonWords.length < normText(titled).split(' ').filter(Boolean).length) {
+      return canonWords.map(function (word) {
+        return word.charAt(0).toUpperCase() + word.slice(1);
+      }).join(' ');
+    }
+    return titled;
+  }
+
+  var MERCHANT_GENERIC_SUFFIXES = [
+    'coffee', 'cafe', 'café', 'store', 'shop', 'inc', 'llc', 'co', 'corp', 'ltd', 'market'
+  ];
+
+  function canonicalMerchantKey(note) {
+    var name = normalizeMerchantName(note);
+    var words = normText(name).split(' ').filter(Boolean);
+    while (words.length > 1 && MERCHANT_GENERIC_SUFFIXES.indexOf(words[words.length - 1]) >= 0) {
+      words.pop();
+    }
+    return words.join(' ');
   }
 
   function merchantKey(note) {
+    var key = canonicalMerchantKey(note);
+    if (key) return key;
     return normText(normalizeMerchantName(note));
+  }
+
+  function pickMerchantDisplayName(a, b) {
+    if (!a) return b || '';
+    if (!b) return a;
+    return a.length <= b.length ? a : b;
   }
 
   function filterSpending(entries) {
@@ -136,6 +167,7 @@
       var key = merchantKey(e.note);
       if (!key) return;
       if (!map[key]) map[key] = { key: key, name: normalizeMerchantName(e.note), entries: [] };
+      else map[key].name = pickMerchantDisplayName(map[key].name, normalizeMerchantName(e.note));
       map[key].entries.push(e);
     });
     return map;
@@ -228,18 +260,29 @@
       var k = merchantKey(e.note);
       if (k) priorKeys[k] = true;
     });
+    var regularKey = best ? merchantKey(best.name) : null;
     var newPlaces = [];
     Object.keys(byMerch).forEach(function (k) {
-      if (!priorKeys[k] && byMerch[k].entries.length >= 1) {
-        newPlaces.push(byMerch[k].name);
-      }
+      if (regularKey && k === regularKey) return;
+      if (priorKeys[k]) return;
+      newPlaces.push(byMerch[k].name);
     });
     newPlaces.sort();
+    var newPlacesOverflow = 0;
+    if (newPlaces.length > 6) {
+      newPlacesOverflow = newPlaces.length - 6;
+      newPlaces = newPlaces.slice(0, 6);
+    }
 
     var fun = computeCoffeeFunStat(entries, y, m);
 
     if (!best && !fun && newPlaces.length === 0) return null;
-    return { regular: best, fun: fun, newPlaces: newPlaces };
+    return {
+      regular: best,
+      fun: fun,
+      newPlaces: newPlaces,
+      newPlacesOverflow: newPlacesOverflow
+    };
   }
 
   function computeTotalSlide(entries, y, m) {
@@ -718,6 +761,7 @@
   var api = {
     MS_DAY: MS_DAY,
     normalizeMerchantName: normalizeMerchantName,
+    canonicalMerchantKey: canonicalMerchantKey,
     merchantKey: merchantKey,
     entryCountsAsSpending: entryCountsAsSpending,
     buildWrappedData: buildWrappedData,
