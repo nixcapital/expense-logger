@@ -4,6 +4,7 @@
  */
 import { createRequire } from 'module';
 import assert from 'assert';
+import { buildForecastFixture164, FIXTURE_NOW } from './forecast-fixture-164.mjs';
 
 const require = createRequire(import.meta.url);
 const FC = require('../forecast.js');
@@ -306,5 +307,86 @@ var badForecast = FC.runForecast({
 });
 assert.ok(badForecast && typeof badForecast.ok === 'boolean', 'invalid ts must not throw');
 assert.ok(!FC.isBankHoliday(NaN), 'NaN ts is not a bank holiday');
+
+console.log('forecast-test: 1.6.4 owner-shaped fake fixture');
+const fx = buildForecastFixture164();
+const fxRun = FC.runForecast({
+  nowMs: fx.nowMs,
+  checkingId: fx.checkingId,
+  chaseId: fx.chaseId,
+  balance: fx.balance,
+  balanceAsOfMs: fx.nowMs,
+  entries: fx.entries,
+  transferPairs: fx.transferPairs,
+  chartDays: 30,
+  maxLookaheadDays: 365,
+  cushion: 600
+});
+assert.ok(fxRun.ok, 'fixture forecast ok');
+assert.ok(fxRun.dailySpend < 20, 'daily spend ~small, got ' + fxRun.dailySpend);
+assert.strictEqual(fxRun.noIncomeDetected, true, 'no income flag');
+
+function schedAmt(labelRe) {
+  const s = (fxRun.schedules || []).find((x) => labelRe.test(x.label));
+  return s;
+}
+function nextOccurrence(sched) {
+  return FC.expandSchedule(sched, FIXTURE_NOW, FC.addDays(FIXTURE_NOW, 120))[0];
+}
+
+const mort = schedAmt(/MORTGAGE/i);
+assert.ok(mort && mort.amount === 1117, 'mortgage latest amount');
+const mortNext = nextOccurrence(mort);
+assert.ok(mortNext && mortNext.amount === 1117);
+assert.ok(new Date(mortNext.ts).getDate() <= 3, 'mortgage near 1st with weekend shift');
+
+assert.ok(schedAmt(/TOYOTA/i).amount === 385);
+assert.ok(schedAmt(/TUITION/i).amount === 450);
+assert.ok(schedAmt(/NELNET/i).amount === 220);
+assert.ok(schedAmt(/STATE FARM/i).scheduleType === 'semiannual');
+assert.ok(schedAmt(/VERIZON/i).amount === 166);
+assert.ok(!schedAmt(/PLANET FITNESS/i), 'stale gym not projected');
+assert.ok(schedAmt(/DISCOVER/i), 'discover e-payment projected');
+
+const chase = schedAmt(/Chase card/i);
+assert.ok(chase && chase.amount >= 3500);
+
+const fxSim = FC.simulateBalanceTimeline({
+  nowMs: fx.nowMs,
+  startingBalance: fxRun.startingBalance,
+  entries: fx.entries,
+  checkingId: fx.checkingId,
+  chaseId: fx.chaseId,
+  transferPairs: fx.transferPairs,
+  chartDays: 30,
+  cushion: 600
+});
+assert.ok(fxSim.lowestInWindow.balance > -25000 && fxSim.lowestInWindow.balance < 5000, '30d low sane');
+
+console.log('forecast-test: fixture with biweekly paychecks stays positive');
+const fxPay = buildForecastFixture164({ withIncome: true, balance: 12000 });
+const payRun = FC.runForecast({
+  nowMs: fxPay.nowMs,
+  checkingId: fxPay.checkingId,
+  chaseId: fxPay.chaseId,
+  balance: fxPay.balance,
+  balanceAsOfMs: fxPay.nowMs,
+  entries: fxPay.entries,
+  transferPairs: fxPay.transferPairs,
+  chartDays: 60,
+  cushion: 600
+});
+assert.strictEqual(payRun.noIncomeDetected, false);
+const paySim = FC.simulateBalanceTimeline({
+  nowMs: fxPay.nowMs,
+  startingBalance: payRun.startingBalance,
+  entries: fxPay.entries,
+  checkingId: fxPay.checkingId,
+  chaseId: fxPay.chaseId,
+  transferPairs: fxPay.transferPairs,
+  chartDays: 60,
+  cushion: 600
+});
+assert.ok(paySim.lowestInWindow.balance >= 0, 'with paychecks 60d window stays positive');
 
 console.log('PASS');

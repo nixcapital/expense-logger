@@ -187,6 +187,75 @@
     return sum / slice.length;
   }
 
+  function amountTolerance(amt) {
+    return Math.max(5, amt * 0.10);
+  }
+
+  function pickScheduleCluster(list) {
+    if (!list || list.length < 2) return null;
+    var sorted = list.slice().sort(function (a, b) { return a.ts - b.ts; });
+    var recent = sorted.slice(-Math.min(3, sorted.length));
+    var recentMed = median(recent.map(function (e) { return e.amount; }));
+    var cluster = sorted.filter(function (e) {
+      return Math.abs(e.amount - recentMed) <= amountTolerance(recentMed);
+    });
+    if (cluster.length < 2) {
+      var bestCluster = [];
+      sorted.forEach(function (seed) {
+        var group = sorted.filter(function (e) {
+          return Math.abs(e.amount - seed.amount) <= amountTolerance(seed.amount);
+        });
+        if (group.length > bestCluster.length) bestCluster = group;
+      });
+      cluster = bestCluster;
+    }
+    if (cluster.length < 2) return null;
+    cluster.sort(function (a, b) { return a.ts - b.ts; });
+    return {
+      cluster: cluster,
+      projectedAmount: cluster[cluster.length - 1].amount
+    };
+  }
+
+  function scheduleStale(lastTs, nowMs, scheduleType) {
+    if (!validMs(lastTs) || !validMs(nowMs)) return true;
+    var gap = nowMs - startOfDay(lastTs);
+    var maxGap;
+    if (scheduleType === 'weekly') maxGap = 14 * MS_DAY;
+    else if (scheduleType === 'biweekly') maxGap = 28 * MS_DAY;
+    else if (scheduleType === 'semimonthly') maxGap = 35 * MS_DAY;
+    else if (scheduleType === 'quarterly') maxGap = 200 * MS_DAY;
+    else if (scheduleType === 'semiannual') maxGap = 400 * MS_DAY;
+    else maxGap = 62 * MS_DAY;
+    return gap > maxGap;
+  }
+
+  function addCalendarMonths(y, m, add) {
+    var total = y * 12 + m + add;
+    return { y: Math.floor(total / 12), m: ((total % 12) + 12) % 12 };
+  }
+
+  function isUnpairedCheckingTransfer(entry, paired) {
+    if (!entry || entry.isTransfer === false) return false;
+    if (isDepositEntry(entry)) return false;
+    if (isOtherAccountTransfer(entry)) return false;
+    if (paired && paired[entry.id]) return false;
+    return true;
+  }
+
+  function hasCheckingIncome(entries, checkingId, sinceMs, nowMs) {
+    var found = false;
+    (entries || []).forEach(function (e) {
+      if (found) return;
+      if (e.accountId !== checkingId) return;
+      if (!isDepositEntry(e) || e.isTransfer) return;
+      if (sinceMs != null && e.ts < sinceMs) return;
+      if (nowMs != null && startOfDay(e.ts) > nowMs) return;
+      found = true;
+    });
+    return found;
+  }
+
   function ordinal(n) {
     var s = ['th', 'st', 'nd', 'rd'];
     var v = n % 100;
@@ -469,6 +538,38 @@
       };
     }
 
+    if (medGap >= 80 && medGap <= 100) {
+      var domQ = Math.round(median(doms));
+      var shiftQ = learnShiftRule(ts, function (y, m) {
+        var dim = new Date(y, m + 1, 0).getDate();
+        return dateMs(y, m, Math.min(domQ, dim));
+      });
+      return {
+        scheduleType: 'quarterly',
+        dayOfMonth: domQ,
+        anchorMs: ts[0],
+        shiftRule: shiftQ,
+        inferenceDetail: 'About every 3 months on the ' + ordinal(domQ) + shiftHint(shiftQ),
+        lastTs: ts[ts.length - 1]
+      };
+    }
+
+    if (medGap >= 170 && medGap <= 200) {
+      var domS = Math.round(median(doms));
+      var shiftS = learnShiftRule(ts, function (y, m) {
+        var dim = new Date(y, m + 1, 0).getDate();
+        return dateMs(y, m, Math.min(domS, dim));
+      });
+      return {
+        scheduleType: 'semiannual',
+        dayOfMonth: domS,
+        anchorMs: ts[0],
+        shiftRule: shiftS,
+        inferenceDetail: 'About every 6 months on the ' + ordinal(domS) + shiftHint(shiftS),
+        lastTs: ts[ts.length - 1]
+      };
+    }
+
     return null;
   }
 
@@ -506,29 +607,26 @@
     Object.keys(groups).forEach(function (key) {
       var list = groups[key].sort(function (a, b) { return a.ts - b.ts; });
       if (list.length < 2) return;
-      var amounts = list.map(function (e) { return e.amount; });
-      var medAmt = median(amounts);
-      var similar = list.filter(function (e) {
-        return Math.abs(e.amount - medAmt) <= Math.max(5, medAmt * 0.10);
-      });
-      if (similar.length < 2) return;
-      var sample = similar[0];
+      var picked = pickScheduleCluster(list);
+      if (!picked) return;
+      var cluster = picked.cluster;
+      var sample = cluster[cluster.length - 1];
+      var projAmt = picked.projectedAmount;
       var isIn = isDepositEntry(sample);
       if (kind === 'inflow' && !isIn) return;
       if (kind === 'outflow' && isIn) return;
       if (kind === 'transfer-other' && !isOtherAccountTransfer(sample)) return;
-      if (kind === 'outflow' && medAmt < 25) return;
-      if (kind === 'transfer-other' && medAmt < 25) return;
-      var amtSpread = Math.max.apply(null, amounts) - Math.min.apply(null, amounts);
-      if ((kind === 'outflow' || kind === 'transfer-other') && amtSpread > Math.max(5, medAmt * 0.10)) return;
+      if (kind === 'outflow' && projAmt < 25) return;
+      if (kind === 'transfer-other' && projAmt < 25) return;
 
-      var fit = fitSchedule(similar.map(function (e) { return e.ts; }), isIn);
+      var fit = fitSchedule(cluster.map(function (e) { return e.ts; }), isIn);
       if (!fit) return;
+      if (nowMs != null && scheduleStale(fit.lastTs, nowMs, fit.scheduleType)) return;
 
       out.push({
         itemKey: key,
         label: (sample.note || key).slice(0, 48),
-        amount: Math.round(medAmt * 100) / 100,
+        amount: Math.round(projAmt * 100) / 100,
         kind: isOtherAccountTransfer(sample) ? 'transfer-other' : (isIn ? 'inflow' : 'outflow'),
         inflow: !!isIn,
         categoryId: sample.categoryId,
@@ -541,7 +639,62 @@
         shiftRule: fit.shiftRule,
         inferenceDetail: fit.inferenceDetail,
         lastTs: fit.lastTs,
-        confidence: fit.confidence || 'high'
+        confidence: fit.confidence || 'high',
+        merchantKey: key
+      });
+    });
+    return out;
+  }
+
+  function detectUnpairedTransferSchedules(entries, opts) {
+    opts = opts || {};
+    var checkingId = opts.checkingId;
+    var sinceMs = opts.sinceMs || 0;
+    var nowMs = opts.nowMs != null ? startOfDay(opts.nowMs) : null;
+    var paired = pairedEntryIds(opts.transferPairs);
+    var groups = {};
+    (entries || []).forEach(function (e) {
+      if (e.accountId !== checkingId) return;
+      if (e.ts < sinceMs) return;
+      if (nowMs != null && startOfDay(e.ts) > nowMs) return;
+      if (!isUnpairedCheckingTransfer(e, paired)) return;
+      var key = descriptionKey(e.note || '');
+      if (!key) return;
+      if (!groups[key]) groups[key] = [];
+      groups[key].push(e);
+    });
+
+    var out = [];
+    Object.keys(groups).forEach(function (key) {
+      var list = groups[key].sort(function (a, b) { return a.ts - b.ts; });
+      if (list.length < 2) return;
+      var picked = pickScheduleCluster(list);
+      if (!picked) return;
+      var cluster = picked.cluster;
+      var sample = cluster[cluster.length - 1];
+      var projAmt = picked.projectedAmount;
+      if (projAmt < 25) return;
+      var fit = fitSchedule(cluster.map(function (e) { return e.ts; }), false);
+      if (!fit) return;
+      if (nowMs != null && scheduleStale(fit.lastTs, nowMs, fit.scheduleType)) return;
+      out.push({
+        itemKey: key,
+        label: (sample.note || key).slice(0, 48),
+        amount: Math.round(projAmt * 100) / 100,
+        kind: 'outflow',
+        inflow: false,
+        categoryId: sample.categoryId,
+        scheduleType: fit.scheduleType,
+        dayOfMonth: fit.dayOfMonth,
+        daysOfMonth: fit.daysOfMonth,
+        anchorMs: fit.anchorMs,
+        weekday: fit.weekday,
+        nth: fit.nth,
+        shiftRule: fit.shiftRule,
+        inferenceDetail: (fit.inferenceDetail || 'Recurring payment') + ' (to another account)',
+        lastTs: fit.lastTs,
+        confidence: fit.confidence || 'high',
+        merchantKey: key
       });
     });
     return out;
@@ -605,6 +758,9 @@
       }
       return out;
     }
+    if (schedule.scheduleType === 'quarterly' || schedule.scheduleType === 'semiannual') {
+      return generateQuarterlySemiannualDates(schedule, afterMs, untilMs);
+    }
 
     var start = new Date(afterMs);
     var y = start.getFullYear();
@@ -626,6 +782,25 @@
       nominals.forEach(function (nom) {
         if (nom > afterMs && nom <= untilMs) out.push(nom);
       });
+      guard++;
+    }
+    return out;
+  }
+
+  function generateQuarterlySemiannualDates(schedule, afterMs, untilMs) {
+    var out = [];
+    var stepMo = schedule.scheduleType === 'semiannual' ? 6 : 3;
+    var anchor = startOfDay(schedule.anchorMs || schedule.lastTs);
+    if (!validMs(anchor)) return out;
+    var dom = schedule.dayOfMonth || new Date(anchor).getDate();
+    var cur = { y: new Date(anchor).getFullYear(), m: new Date(anchor).getMonth() };
+    var guard = 0;
+    while (guard < 80) {
+      var dim = new Date(cur.y, cur.m + 1, 0).getDate();
+      var nom = dateMs(cur.y, cur.m, Math.min(dom, dim));
+      if (validMs(nom) && nom > afterMs && nom <= untilMs) out.push(nom);
+      if (validMs(nom) && nom > untilMs) break;
+      cur = addCalendarMonths(cur.y, cur.m, stepMo);
       guard++;
     }
     return out;
@@ -689,23 +864,40 @@
   }
 
   function estimateDailySpend(entries, checkingId, transferPairs, nowMs, schedules) {
-    var since = addDays(nowMs, -75);
+    var windowDays = 75;
+    var since = addDays(nowMs, -windowDays);
     var paired = pairedEntryIds(transferPairs);
     var recurringKeys = {};
-    (schedules || []).forEach(function (s) { recurringKeys[s.itemKey] = true; });
-    var byDay = {};
+    (schedules || []).forEach(function (s) {
+      if (s.merchantKey) recurringKeys[s.merchantKey] = true;
+      recurringKeys[s.itemKey] = true;
+    });
+    var eligible = [];
     (entries || []).forEach(function (e) {
       if (e.accountId !== checkingId) return;
       if (e.ts < since || e.ts > nowMs) return;
       if (isDepositEntry(e) || isOtherAccountTransfer(e)) return;
       if (e.isTransfer) return;
-      if (recurringKeys[descriptionKey(e.note || '')]) return;
-      var dk = dayKey(e.ts);
-      byDay[dk] = (byDay[dk] || 0) + e.amount;
+      var mk = descriptionKey(e.note || '');
+      if (recurringKeys[mk]) return;
+      eligible.push(e);
     });
-    var days = Object.keys(byDay).map(function (k) { return byDay[k]; });
-    if (days.length < 7) return 0;
-    return Math.round(trimmedMean(days, 0.1) * 100) / 100;
+    if (eligible.length < 7) return 0;
+    var rowMed = median(eligible.map(function (e) { return e.amount; }));
+    var total = 0;
+    eligible.forEach(function (e) {
+      var thresh = Math.max(300, rowMed * 5);
+      if (e.amount > thresh) {
+        var repeats = 0;
+        for (var i = 0; i < eligible.length; i++) {
+          if (eligible[i] === e) continue;
+          if (Math.abs(eligible[i].amount - e.amount) <= Math.max(5, e.amount * 0.05)) repeats++;
+        }
+        if (repeats === 0) return;
+      }
+      total += e.amount;
+    });
+    return Math.round((total / windowDays) * 100) / 100;
   }
 
   function detectCardPaymentSchedule(entries, transferPairs, checkingId) {
@@ -728,10 +920,11 @@
       })
       : 'next';
     var confNote = debits.length < 2 ? ' (1 post — lower confidence)' : '';
+    var recentAmt = debits[debits.length - 1].amount;
     return {
       itemKey: 'card-payment|chase',
       label: 'Chase card payment',
-      amount: Math.round(median(amounts) * 100) / 100,
+      amount: Math.round(recentAmt * 100) / 100,
       kind: 'card-payment',
       inflow: false,
       categoryId: null,
@@ -793,6 +986,18 @@
         schedules.push(s);
         events = events.concat(expandSchedule(s, nowMs, untilMs));
       });
+    });
+
+    detectUnpairedTransferSchedules(input.entries, {
+      checkingId: checkingId,
+      sinceMs: addDays(nowMs, -400),
+      nowMs: nowMs,
+      transferPairs: input.transferPairs
+    }).forEach(function (s) {
+      var dup = schedules.some(function (x) { return x.itemKey === s.itemKey; });
+      if (dup) return;
+      schedules.push(s);
+      events = events.concat(expandSchedule(s, nowMs, untilMs));
     });
 
     var cardSched = detectCardPaymentSchedule(input.entries, input.transferPairs, checkingId);
@@ -989,6 +1194,23 @@
     var neverRunsOut = lastsUntil == null;
     var daysAway = lastsUntil != null ? Math.round((lastsUntil - nowMs) / MS_DAY) : null;
 
+    var peekPastWindow = null;
+    events.forEach(function (ev) {
+      if (ev.daily || ev.kind === 'inflow') return;
+      if (ev.ts <= chartEnd || ev.ts > lookaheadEnd) return;
+      if (ev.amount < 500) return;
+      if (!peekPastWindow || ev.ts < peekPastWindow.ts) {
+        peekPastWindow = {
+          ts: ev.ts,
+          amount: ev.amount,
+          label: ev.label,
+          kind: ev.kind,
+          itemKey: ev.itemKey,
+          categoryId: ev.categoryId
+        };
+      }
+    });
+
     return {
       ok: true,
       startingBalance: startBal,
@@ -1002,7 +1224,9 @@
       dailySpend: scheduled.dailySpend,
       cushion: cushion,
       schedules: scheduled.schedules,
-      partialTimeline: partialTimeline
+      partialTimeline: partialTimeline,
+      peekPastWindow: peekPastWindow,
+      chartDays: horizon
     };
   }
 
@@ -1118,6 +1342,8 @@
       overrides: input.overrides
     });
     if (!sim.ok) return sim;
+    var incomeSince = addDays(nowMs, -400);
+    var noIncomeDetected = !hasCheckingIncome(input.entries, checkingId, incomeSince, nowMs);
     return {
       ok: true,
       startingBalance: startBal,
@@ -1128,7 +1354,9 @@
       neverRunsOut: sim.neverRunsOut,
       daysAway: sim.daysAway,
       dailySpend: sim.dailySpend,
-      schedules: sim.schedules
+      schedules: sim.schedules,
+      noIncomeDetected: noIncomeDetected,
+      peekPastWindow: sim.peekPastWindow
     };
   }
 
@@ -1155,6 +1383,7 @@
     detectRecurrences: detectRecurrences,
     detectRecurringSchedules: detectRecurringSchedules,
     detectCardPaymentSchedule: detectCardPaymentSchedule,
+    detectUnpairedTransferSchedules: detectUnpairedTransferSchedules,
     isBusinessDay: isBusinessDay,
     isBankHoliday: isBankHoliday,
     adjustToBusinessDay: adjustToBusinessDay,

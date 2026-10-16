@@ -53,7 +53,7 @@
   var TRANSFER_PATTERNS_KEY = 'expenseLogger.transferPatterns.v1';
   var FORECAST_OVERRIDES_KEY = 'expenseLogger.forecastOverrides.v1';
 
-  var APP_VERSION = '1.6.3';
+  var APP_VERSION = '1.6.4';
   var BACKUP_FORMAT = 2;
   var BACKUP_FORMAT_LEGACY = 1;
   var DEFAULT_ACCOUNT_CHECKING = 'acct-checking';
@@ -6235,9 +6235,13 @@
     forecastScreenOpen = true;
     if ($('tab-summary')) $('tab-summary').hidden = true;
     var fs = $('tab-forecast');
-    if (fs) fs.hidden = false;
+    if (fs) {
+      fs.hidden = false;
+      fs.scrollTop = 0;
+    }
     renderForecastScreen();
-    window.scrollTo(0, 0);
+    if (fs) fs.scrollTop = 0;
+    try { window.scrollTo(0, 0); } catch (e) {}
   }
 
   function renderForecastScreen() {
@@ -6299,6 +6303,8 @@
     }
     if ($('forecastUpcomingWindow')) $('forecastUpcomingWindow').textContent = 'Next ' + forecastChartDays + ' days';
     if ($('forecastUpcomingLabel')) $('forecastUpcomingLabel').textContent = 'Upcoming \u00B7 ' + accountShortName(checking);
+    var noIncEl = $('forecastNoIncome');
+    if (noIncEl) noIncEl.hidden = !result.noIncomeDetected;
 
     var sim = FC.simulateBalanceTimeline({
       nowMs: payload.nowMs,
@@ -6549,6 +6555,17 @@
     var list = $('forecastUpcomingList');
     if (!list || !sim) return;
     var html = '';
+    var daily = sim.dailySpend || 0;
+    var chartDays = sim.chartDays || forecastChartDays;
+    if (daily > 0) {
+      var dailyTotal = Math.round(daily * chartDays * 100) / 100;
+      html += '<div class="forecast-up-row forecast-up-row--summary">';
+      html += '<div class="forecast-up-icon" style="background:var(--raised);color:var(--text-dim)">';
+      html += '<svg width="18" height="18" viewBox="0 0 18 18" fill="none"><path d="M3 9h12M9 4v10" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg></div>';
+      html += '<div><p class="forecast-up-title">Everyday spending</p>';
+      html += '<p class="forecast-up-sub">~' + fmtMoneyDisplay(daily) + '/day \u00B7 -' + fmtMoneyDisplay(dailyTotal) + ' over this view</p></div>';
+      html += '<div class="forecast-up-amt-col"><div class="forecast-up-amt">-' + fmtMoneyDisplay(dailyTotal) + '</div></div></div>';
+    }
     var items = sim.upcoming.slice().sort(function (a, b) {
       if (b.amount !== a.amount) return b.amount - a.amount;
       return a.ts - b.ts;
@@ -6616,6 +6633,15 @@
       }
       html += '</div></button>';
     });
+    var peek = sim.peekPastWindow;
+    if (peek) {
+      html += '<div class="forecast-up-row forecast-up-row--past">';
+      html += '<div class="forecast-up-icon" style="background:var(--raised);color:var(--text-secondary)">';
+      html += '<svg width="18" height="18" viewBox="0 0 18 18" fill="none"><path d="M4 9h10M11 5l3 4-3 4" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg></div>';
+      html += '<div><p class="forecast-up-title">' + escHtml(peek.label) + '</p>';
+      html += '<p class="forecast-up-sub is-muted">' + escHtml(formatForecastShortDate(peek.ts)) + ' \u00B7 just past this view</p></div>';
+      html += '<div class="forecast-up-amt-col"><div class="forecast-up-amt">-' + fmtMoneyDisplay(peek.amount) + '</div></div></div>';
+    }
     list.innerHTML = html;
     Array.prototype.forEach.call(list.querySelectorAll('[data-forecast-item]'), function (btn) {
       btn.addEventListener('click', function () {
