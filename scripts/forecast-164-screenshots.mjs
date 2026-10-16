@@ -72,7 +72,7 @@ async function run() {
   const srv = server();
   await new Promise((r) => srv.listen(PORT, r));
   const browser = await chromium.launch();
-  for (const scheme of ['dark', 'light']) {
+  for (const scheme of ['light']) {
     const context = await browser.newContext({
       viewport: VIEWPORT,
       colorScheme: scheme,

@@ -212,8 +212,79 @@
   }
 
   function projectedClusterAmount(cluster) {
-    var recent = cluster.slice(-Math.min(3, cluster.length));
+    var sorted = cluster.slice().sort(function (a, b) { return a.ts - b.ts; });
+    var recent = sorted.slice(-Math.min(3, sorted.length));
     return median(recent.map(function (e) { return e.amount; }));
+  }
+
+  function clusterRowKey(e) {
+    return e.id != null ? String(e.id) : String(e.ts) + ':' + e.amount;
+  }
+
+  function clusterRowKeys(cluster) {
+    return cluster.map(clusterRowKey);
+  }
+
+  function clusterIsSubset(smaller, larger) {
+    var set = {};
+    larger.forEach(function (e) { set[clusterRowKey(e)] = true; });
+    return smaller.every(function (e) { return set[clusterRowKey(e)]; });
+  }
+
+  function clusterOverlapRatio(a, b) {
+    var setB = {};
+    b.forEach(function (e) { setB[clusterRowKey(e)] = true; });
+    var shared = 0;
+    a.forEach(function (e) {
+      if (setB[clusterRowKey(e)]) shared++;
+    });
+    return shared / Math.min(a.length, b.length);
+  }
+
+  function clusterLatestTs(cluster) {
+    var max = cluster[0].ts;
+    cluster.forEach(function (e) { if (e.ts > max) max = e.ts; });
+    return max;
+  }
+
+  function dedupeOverlappingClusters(candidates) {
+    var sorted = candidates.slice().sort(function (a, b) {
+      if (b.cluster.length !== a.cluster.length) return b.cluster.length - a.cluster.length;
+      return clusterLatestTs(b.cluster) - clusterLatestTs(a.cluster);
+    });
+    var kept = [];
+    sorted.forEach(function (c) {
+      var drop = kept.some(function (k) {
+        return clusterIsSubset(c.cluster, k.cluster)
+          || clusterOverlapRatio(c.cluster, k.cluster) >= 0.66;
+      });
+      if (drop) return;
+      kept = kept.filter(function (k) {
+        return !clusterIsSubset(k.cluster, c.cluster);
+      });
+      kept.push(c);
+    });
+    return kept;
+  }
+
+  function fitTwoPaymentMonthly(ts, isInflow) {
+    if (!ts || ts.length !== 2) return null;
+    var sorted = ts.map(startOfDay).sort(function (a, b) { return a - b; });
+    var gapOnly = Math.round((sorted[1] - sorted[0]) / MS_DAY);
+    if (gapOnly < 27 || gapOnly > 35) return null;
+    var domOnly = Math.round(median(sorted.map(function (t) { return new Date(t).getDate(); })));
+    var shiftOnly = learnShiftRule(sorted, function (y, m) {
+      var dim = new Date(y, m + 1, 0).getDate();
+      return dateMs(y, m, Math.min(domOnly, dim));
+    });
+    return {
+      scheduleType: 'monthly_dom',
+      dayOfMonth: domOnly,
+      shiftRule: shiftOnly || (isInflow ? 'prev' : 'next'),
+      inferenceDetail: 'Usually around the ' + ordinal(domOnly) + ' (2 posts — lower confidence)' + shiftHint(shiftOnly || (isInflow ? 'prev' : 'next')),
+      lastTs: sorted[1],
+      confidence: 'low'
+    };
   }
 
   function buildAmountClusters(sorted, tolFn) {
@@ -244,28 +315,53 @@
   function pickScheduleClusters(list, isInflow) {
     if (!list || list.length < 2) return [];
     var sorted = list.slice().sort(function (a, b) { return a.ts - b.ts; });
-    var seen = {};
-    var out = [];
+    var seenKeys = {};
+    var raw = [];
     function addClusters(tolFn) {
       buildAmountClusters(sorted, tolFn).forEach(function (cluster) {
         cluster.sort(function (a, b) { return a.ts - b.ts; });
-        var proj = Math.round(projectedClusterAmount(cluster) * 100) / 100;
-        var sig = proj + '|' + cluster.length;
-        if (seen[sig]) return;
+        var rowSig = clusterRowKeys(cluster).sort().join(',');
+        if (seenKeys[rowSig]) return;
+        seenKeys[rowSig] = true;
         var fit = fitSchedule(cluster.map(function (e) { return e.ts; }), isInflow);
+        if (!fit && cluster.length === 2) {
+          var amts = cluster.map(function (e) { return e.amount; });
+          if (Math.abs(amts[0] - amts[1]) <= 0.01) {
+            fit = fitTwoPaymentMonthly(cluster.map(function (e) { return e.ts; }), isInflow);
+          }
+        }
         if (!fit) return;
-        seen[sig] = true;
-        out.push({
+        var proj = Math.round(projectedClusterAmount(cluster) * 100) / 100;
+        raw.push({
           cluster: cluster,
           projectedAmount: proj,
           fit: fit,
-          score: clusterCadenceScore(fit) * 1000 + cluster.length * 10 + cluster.reduce(function (s, e) { return s + e.amount; }, 0)
+          score: clusterCadenceScore(fit) * 1000 + cluster.length * 10 + cluster.reduce(function (s, e) { return s + e.amount; }, 0),
+          latestTs: clusterLatestTs(cluster)
         });
       });
     }
     addClusters(function (a) { return amountToleranceFrac(a, 0.10); });
     addClusters(function (a) { return amountToleranceFrac(a, 0.15); });
-    out.sort(function (a, b) { return b.score - a.score; });
+    var deduped = dedupeOverlappingClusters(raw);
+    deduped.sort(function (a, b) {
+      if (b.latestTs !== a.latestTs) return b.latestTs - a.latestTs;
+      return b.score - a.score;
+    });
+    var usedRows = {};
+    var out = [];
+    var hasLargeCluster = deduped.some(function (c) { return c.cluster.length >= 3; });
+    deduped.forEach(function (c) {
+      if (c.cluster.some(function (e) { return usedRows[clusterRowKey(e)]; })) return;
+      if (c.fit.scheduleType === 'monthly_dom' && c.cluster.length === 2) {
+        var a0 = c.cluster[0].amount;
+        var a1 = c.cluster[1].amount;
+        if (Math.abs(a0 - a1) > 0.01) return;
+        if (hasLargeCluster) return;
+      }
+      c.cluster.forEach(function (e) { usedRows[clusterRowKey(e)] = true; });
+      out.push(c);
+    });
     return out;
   }
 
@@ -518,21 +614,6 @@
     var ts = timestamps.map(startOfDay).sort(function (a, b) { return a - b; });
     if (ts.length === 2) {
       var gapOnly = Math.round((ts[1] - ts[0]) / MS_DAY);
-      if (gapOnly >= 27 && gapOnly <= 35) {
-        var domOnly = Math.round(median(ts.map(function (t) { return new Date(t).getDate(); })));
-        var shiftOnly = learnShiftRule(ts, function (y, m) {
-          var dim = new Date(y, m + 1, 0).getDate();
-          return dateMs(y, m, Math.min(domOnly, dim));
-        });
-        return {
-          scheduleType: 'monthly_dom',
-          dayOfMonth: domOnly,
-          shiftRule: shiftOnly || (isInflow ? 'prev' : 'next'),
-          inferenceDetail: 'Usually around the ' + ordinal(domOnly) + ' (2 posts — lower confidence)' + shiftHint(shiftOnly || (isInflow ? 'prev' : 'next')),
-          lastTs: ts[1],
-          confidence: 'low'
-        };
-      }
       if (gapOnly >= 12 && gapOnly <= 18) {
         return {
           scheduleType: 'biweekly',
@@ -549,29 +630,33 @@
           var dim = new Date(y, m + 1, 0).getDate();
           return dateMs(y, m, Math.min(dom2s, dim));
         });
+        var last2s = ts[1];
+        var domLast2s = new Date(last2s).getDate();
         return {
           scheduleType: 'semiannual',
-          dayOfMonth: dom2s,
-          anchorMs: ts[0],
+          dayOfMonth: domLast2s,
+          anchorMs: last2s,
           shiftRule: shift2s || 'next',
-          inferenceDetail: 'About every 6 months on the ' + ordinal(dom2s) + ' (2 posts — lower confidence)' + shiftHint(shift2s || 'next'),
-          lastTs: ts[1],
+          inferenceDetail: 'About every 6 months on the ' + ordinal(domLast2s) + ' (2 posts — lower confidence)' + shiftHint(shift2s || 'next'),
+          lastTs: last2s,
           confidence: 'low'
         };
       }
       if (gapOnly >= 350 && gapOnly <= 380) {
-        var dom2a = Math.round(median(ts.map(function (t) { return new Date(t).getDate(); })));
         var shift2a = learnShiftRule(ts, function (y, m) {
           var dim = new Date(y, m + 1, 0).getDate();
+          var dom2a = new Date(ts[1]).getDate();
           return dateMs(y, m, Math.min(dom2a, dim));
         });
+        var last2a = ts[1];
+        var domLast2a = new Date(last2a).getDate();
         return {
           scheduleType: 'annual',
-          dayOfMonth: dom2a,
-          anchorMs: ts[0],
+          dayOfMonth: domLast2a,
+          anchorMs: last2a,
           shiftRule: shift2a || 'next',
-          inferenceDetail: 'About once a year on the ' + ordinal(dom2a) + ' (2 posts — lower confidence)' + shiftHint(shift2a || 'next'),
-          lastTs: ts[1],
+          inferenceDetail: 'About once a year on the ' + ordinal(domLast2a) + ' (2 posts — lower confidence)' + shiftHint(shift2a || 'next'),
+          lastTs: last2a,
           confidence: 'low'
         };
       }
@@ -699,7 +784,8 @@
     }
 
     if (medGap >= 80 && medGap <= 100) {
-      var domQ = Math.round(median(doms));
+      var lastQ = ts[ts.length - 1];
+      var domQ = new Date(lastQ).getDate();
       var shiftQ = learnShiftRule(ts, function (y, m) {
         var dim = new Date(y, m + 1, 0).getDate();
         return dateMs(y, m, Math.min(domQ, dim));
@@ -707,15 +793,16 @@
       return {
         scheduleType: 'quarterly',
         dayOfMonth: domQ,
-        anchorMs: ts[0],
+        anchorMs: lastQ,
         shiftRule: shiftQ,
         inferenceDetail: 'About every 3 months on the ' + ordinal(domQ) + shiftHint(shiftQ),
-        lastTs: ts[ts.length - 1]
+        lastTs: lastQ
       };
     }
 
     if (medGap >= 165 && medGap <= 200) {
-      var domS = Math.round(median(doms));
+      var lastS = ts[ts.length - 1];
+      var domS = new Date(lastS).getDate();
       var shiftS = learnShiftRule(ts, function (y, m) {
         var dim = new Date(y, m + 1, 0).getDate();
         return dateMs(y, m, Math.min(domS, dim));
@@ -723,15 +810,16 @@
       return {
         scheduleType: 'semiannual',
         dayOfMonth: domS,
-        anchorMs: ts[0],
+        anchorMs: lastS,
         shiftRule: shiftS,
         inferenceDetail: 'About every 6 months on the ' + ordinal(domS) + shiftHint(shiftS),
-        lastTs: ts[ts.length - 1]
+        lastTs: lastS
       };
     }
 
     if (medGap >= 350 && medGap <= 380) {
-      var domA = Math.round(median(doms));
+      var lastA = ts[ts.length - 1];
+      var domA = new Date(lastA).getDate();
       var shiftA = learnShiftRule(ts, function (y, m) {
         var dim = new Date(y, m + 1, 0).getDate();
         return dateMs(y, m, Math.min(domA, dim));
@@ -739,10 +827,10 @@
       return {
         scheduleType: 'annual',
         dayOfMonth: domA,
-        anchorMs: ts[0],
+        anchorMs: lastA,
         shiftRule: shiftA,
         inferenceDetail: 'About once a year on the ' + ordinal(domA) + shiftHint(shiftA),
-        lastTs: ts[ts.length - 1]
+        lastTs: lastA
       };
     }
 
@@ -965,10 +1053,10 @@
   function generateQuarterlySemiannualDates(schedule, afterMs, untilMs) {
     var out = [];
     var stepMo = schedule.scheduleType === 'annual' ? 12 : (schedule.scheduleType === 'semiannual' ? 6 : 3);
-    var anchor = startOfDay(schedule.anchorMs || schedule.lastTs);
-    if (!validMs(anchor)) return out;
-    var dom = schedule.dayOfMonth || new Date(anchor).getDate();
-    var cur = { y: new Date(anchor).getFullYear(), m: new Date(anchor).getMonth() };
+    var last = startOfDay(schedule.lastTs || schedule.anchorMs);
+    if (!validMs(last)) return out;
+    var dom = schedule.dayOfMonth || new Date(last).getDate();
+    var cur = addCalendarMonths(new Date(last).getFullYear(), new Date(last).getMonth(), stepMo);
     var guard = 0;
     while (guard < 80) {
       var dim = new Date(cur.y, cur.m + 1, 0).getDate();

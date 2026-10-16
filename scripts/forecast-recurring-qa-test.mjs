@@ -135,6 +135,70 @@ console.log('recurring-qa: semiannual insurance two payments wide band');
   assert.ok(next.length >= 1, 'projects next semiannual payment');
 })();
 
+console.log('recurring-qa: semiannual triple payment deduped once');
+(function () {
+  const rows = [
+    entry('s1', 500, 'FAKE HARBOR INSURANCE', ts(2025, 8, 15)),
+    entry('s2', 510, 'FAKE HARBOR INSURANCE', ts(2026, 2, 15)),
+    entry('s3', 495, 'FAKE HARBOR INSURANCE', ts(2026, 8, 15))
+  ];
+  const now = ts(2026, 9, 16);
+  const sched = detectOut(rows, now);
+  const harbor = sched.filter((s) => /HARBOR/i.test(s.label));
+  assert.strictEqual(harbor.length, 1, 'one semiannual schedule not double-counted');
+  assert.strictEqual(harbor[0].scheduleType, 'semiannual');
+})();
+
+console.log('recurring-qa: semiannual next date from last payment');
+(function () {
+  const rows = [
+    entry('s1', 400, 'FAKE COAST INSURANCE', ts(2025, 8, 21)),
+    entry('s2', 400, 'FAKE COAST INSURANCE', ts(2026, 2, 21)),
+    entry('s3', 400, 'FAKE COAST INSURANCE', ts(2026, 8, 21))
+  ];
+  const now = ts(2026, 9, 16);
+  const sched = detectOut(rows, now);
+  const ins = sched.find((s) => /COAST/i.test(s.label));
+  assert.ok(ins);
+  const events = FC.expandSchedule(ins, now, FC.addDays(now, 220), rows, CHECKING);
+  assert.ok(events.length >= 1);
+  const next = events[0];
+  const d = new Date(next.ts);
+  assert.strictEqual(d.getFullYear(), 2027);
+  assert.ok(d.getMonth() === 1 || d.getMonth() === 2, 'next ~Feb/Mar 2027 from Sep 2026 last pay');
+  assert.ok(d.getDate() >= 18 && d.getDate() <= 24, 'near 21st after business-day shift');
+})();
+
+console.log('recurring-qa: two-payment extras not monthly beside real loan');
+(function () {
+  const rows = [];
+  let id = 0;
+  for (let i = 0; i < 7; i++) {
+    rows.push(entry('m' + id++, 720, 'FAKE LENDER LLC', ts(2026, 2 + i, 10)));
+  }
+  rows.push(entry('x1', 310, 'FAKE LENDER LLC', ts(2026, 6, 5)));
+  rows.push(entry('x2', 305, 'FAKE LENDER LLC', ts(2026, 7, 3)));
+  const sched = detectOut(rows, ts(2026, 9, 16));
+  assert.ok(sched.some((s) => s.amount === 720), 'monthly loan kept');
+  assert.ok(!sched.some((s) => s.amount < 400), 'irregular extras not monthly schedules');
+})();
+
+console.log('recurring-qa: cluster amount uses recent median');
+(function () {
+  const rows = [];
+  let id = 0;
+  for (let i = 0; i < 4; i++) {
+    rows.push(entry('o' + id++, 95, 'FAKE GYM MEMBERSHIP', ts(2026, 0 + i, 1)));
+  }
+  for (let i = 0; i < 4; i++) {
+    rows.push(entry('n' + id++, 120, 'FAKE GYM MEMBERSHIP', ts(2026, 5 + i, 1)));
+  }
+  const sched = detectOut(rows, ts(2026, 9, 16));
+  const gym = sched.find((s) => /GYM/i.test(s.label));
+  assert.ok(gym);
+  assert.strictEqual(gym.amount, 120, 'projects raised recent amount');
+})();
+
 console.log('recurring-qa: chase card median of last three');
 (function () {
   const pairs = [];
