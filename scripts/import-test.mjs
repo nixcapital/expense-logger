@@ -37,12 +37,16 @@ const server = createServer((req, res) => {
   res.end(readFileSync(file));
 });
 
-async function importFile(page, relPath) {
+async function importFile(page, relPath, accountPickId) {
   await page.locator('#importFileInput').setInputFiles(join(FIX, relPath));
   await page.waitForSelector('#importAccountModal.show', { timeout: 5000 }).catch(() => {});
   const accountSheet = await page.locator('#importAccountModal.show').count();
   if (accountSheet) {
     await page.waitForTimeout(300);
+    if (accountPickId) {
+      await page.locator('[data-account-pick="' + accountPickId + '"]').click();
+      await page.waitForTimeout(150);
+    }
     await page.click('#importAccountContinueBtn');
     await page.waitForFunction(() => {
       const acct = document.getElementById('importAccountModal');
@@ -111,7 +115,7 @@ async function run() {
     const all = JSON.parse(localStorage.getItem('expenseLogger.entries.v1'));
     return { spending: all.filter((e) => !e.isTransfer).length, all: all.length };
   });
-  results.push(['card reimport dupes', n2.spending === 5 && /duplicate|skipped|tagged/i.test(dupSummary), JSON.stringify(n2) + ' ' + t2]);
+  results.push(['card reimport dupes', n2.spending === 5 && /duplicate|already imported|skipped|tagged/i.test(dupSummary), JSON.stringify(n2) + ' ' + t2]);
 
   await page.evaluate(() => {
     localStorage.setItem('expenseLogger.entries.v1', '[]');
@@ -229,6 +233,120 @@ async function run() {
     return JSON.parse(localStorage.getItem('expenseLogger.entries.v1')).some((e) => e.note === 'Test import note');
   });
   results.push(['app csv sample note', hasNote]);
+
+  // Bank deposit dedupe (checking CSV)
+  await page.evaluate(() => {
+    localStorage.clear();
+    localStorage.setItem('expenseLogger.categories.v1', JSON.stringify([
+      { id: 'groceries', name: 'Groceries', emoji: '🛒', color: '#4dabf7' },
+      { id: 'dining', name: 'Dining', emoji: '🍽️', color: '#ff922b' },
+      { id: 'income', name: 'Income', emoji: '💰', color: '#20C997' },
+      { id: 'other', name: 'Other', emoji: '📦', color: '#adb5bd' }
+    ]));
+    localStorage.setItem('expenseLogger.entries.v1', '[]');
+    localStorage.setItem('expenseLogger.importRules.v1', '[]');
+    localStorage.setItem('expenseLogger.accounts.v1', JSON.stringify([
+      { id: 'acct-checking', name: 'Checking', type: 'bank', color: '#20C997' },
+      { id: 'acct-savings', name: 'Savings', type: 'bank', color: '#fab005' },
+      { id: 'acct-chase', name: 'Chase card', type: 'credit_card', color: '#748FFC' }
+    ]));
+  });
+  await page.reload({ waitUntil: 'networkidle' });
+  await page.click('button[data-tab="settings"]');
+
+  await importFile(page, 'sample-bank-checking.csv', 'acct-checking');
+  await page.waitForSelector('#importModal.show');
+  await confirmImport(page);
+  const bankDep1 = await page.evaluate(() => {
+    const es = JSON.parse(localStorage.getItem('expenseLogger.entries.v1'));
+    return {
+      n: es.length,
+      deposits: es.filter((e) => e.isDeposit).length,
+      twinMobile: es.filter((e) => (e.note || '').indexOf('MOBILE DEPOSIT') !== -1).length
+    };
+  });
+  results.push(['bank csv twin mobile deposits', bankDep1.twinMobile === 2 && bankDep1.deposits === 3, JSON.stringify(bankDep1)]);
+
+  await importFile(page, 'sample-bank-checking.csv', 'acct-checking');
+  await page.waitForSelector('#importModal.show');
+  const bankReSummary = await page.locator('#importSummary').innerText();
+  await confirmImport(page);
+  const bankReToast = await toastText(page);
+  const bankDep2 = await page.evaluate(() => JSON.parse(localStorage.getItem('expenseLogger.entries.v1')).length);
+  results.push([
+    'bank deposit reimport no new rows',
+    bankDep2 === bankDep1.n && /0\s*to import/i.test(bankReSummary.replace(/\s+/g, ' ')),
+    'n=' + bankDep2 + ' ' + bankReToast.replace(/\s+/g, ' ').slice(0, 80)
+  ]);
+  results.push(['bank deposit reimport dup summary', /duplicate/i.test(bankReSummary)]);
+
+  await importFile(page, 'sample-bank-savings-deposit.csv', 'acct-savings');
+  await page.waitForSelector('#importModal.show');
+  const savingsSummary = await page.locator('#importSummary').innerText();
+  await confirmImport(page);
+  const savingsMobile = await page.evaluate(() => {
+    const es = JSON.parse(localStorage.getItem('expenseLogger.entries.v1'));
+    return es.filter((e) => (e.note || '').indexOf('MOBILE DEPOSIT') !== -1 && e.accountId === 'acct-savings').length;
+  });
+  results.push([
+    'deposit different account not deduped',
+    savingsMobile === 1 && /1\s*to import/i.test(savingsSummary.replace(/\s+/g, ' ')),
+    'savingsMobile=' + savingsMobile
+  ]);
+
+  // Bank transfer re-import + category preserved on duplicate
+  await page.evaluate(() => {
+    localStorage.setItem('expenseLogger.entries.v1', '[]');
+    localStorage.setItem('expenseLogger.importRules.v1', '[]');
+    localStorage.setItem('expenseLogger.transferPairs.v1', '[]');
+  });
+  await page.reload({ waitUntil: 'networkidle' });
+  await page.click('button[data-tab="settings"]');
+  await importFile(page, 'sample-bank.xlsx', 'acct-checking');
+  await page.waitForSelector('#importModal.show');
+  await confirmImport(page);
+  await page.evaluate(() => {
+    const es = JSON.parse(localStorage.getItem('expenseLogger.entries.v1'));
+    const payroll = es.find((e) => (e.note || '').indexOf('PAYROLL') !== -1);
+    if (payroll) {
+      payroll.categoryId = 'dining';
+      payroll.note = 'PAYROLL DEP PPD edited';
+      localStorage.setItem('expenseLogger.entries.v1', JSON.stringify(es));
+    }
+  });
+  const xferBefore = await page.evaluate(() => {
+    const T = window.ExpenseLoggerTest;
+    T.reloadFromStorage();
+    T.autoPairTransfers();
+    const es = JSON.parse(localStorage.getItem('expenseLogger.entries.v1'));
+    return {
+      xfer: es.filter((e) => e.isTransfer).length,
+      pairs: JSON.parse(localStorage.getItem('expenseLogger.transferPairs.v1') || '[]').filter((p) => !p.unlinked).length,
+      payrollCat: es.find((e) => (e.note || '').indexOf('PAYROLL') !== -1)?.categoryId
+    };
+  });
+  await importFile(page, 'sample-bank.xlsx', 'acct-checking');
+  await page.waitForSelector('#importModal.show');
+  await confirmImport(page);
+  const xferAfter = await page.evaluate(() => {
+    const T = window.ExpenseLoggerTest;
+    T.reloadFromStorage();
+    T.autoPairTransfers();
+    const es = JSON.parse(localStorage.getItem('expenseLogger.entries.v1'));
+    return {
+      n: es.length,
+      xfer: es.filter((e) => e.isTransfer).length,
+      pairs: JSON.parse(localStorage.getItem('expenseLogger.transferPairs.v1') || '[]').filter((p) => !p.unlinked).length,
+      payrollCat: es.find((e) => (e.note || '').indexOf('PAYROLL') !== -1)?.categoryId,
+      payrollNote: es.find((e) => (e.note || '').indexOf('PAYROLL') !== -1)?.note
+    };
+  });
+  results.push(['bank reimport transfers stable', xferAfter.xfer === xferBefore.xfer && xferAfter.pairs === xferBefore.pairs, xferAfter]);
+  results.push([
+    'bank reimport keeps edited deposit',
+    xferAfter.payrollCat === 'dining' && xferAfter.payrollNote === 'PAYROLL DEP PPD edited',
+    xferAfter
+  ]);
 
   console.log('Page errors:', errors);
   let failed = false;
