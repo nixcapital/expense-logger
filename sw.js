@@ -3,8 +3,8 @@
    Offline: fall back to the current release cache only.
    Install precache uses network no-store (not HTTP cache / addAll).
 */
-const CACHE_VERSION = 'expense-logger-v1.2.0';
-const ASSET_V = '1.2.0';
+const CACHE_VERSION = 'expense-logger-v1.3.0';
+const ASSET_V = '1.3.0';
 const SHELL_URLS = [
   './',
   './index.html',
@@ -12,7 +12,8 @@ const SHELL_URLS = [
   './app.js?v=' + ASSET_V,
   './manifest.json',
   './icon-192.png',
-  './icon-512.png'
+  './icon-512.png',
+  './apple-touch-icon.png'
 ];
 
 function isShellRequest(url) {
@@ -20,7 +21,8 @@ function isShellRequest(url) {
   const p = url.pathname;
   if (p === '/' || p.endsWith('/index.html')) return true;
   if (p.endsWith('/app.js') || p.endsWith('/styles.css')) return true;
-  return p.endsWith('/manifest.json') || p.endsWith('/icon-192.png') || p.endsWith('/icon-512.png');
+  return p.endsWith('/manifest.json') || p.endsWith('/icon-192.png') || p.endsWith('/icon-512.png')
+    || p.endsWith('/apple-touch-icon.png');
 }
 
 function cacheBustUrl(url) {

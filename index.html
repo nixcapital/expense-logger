@@ -8,22 +8,28 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Expenses">
-<meta name="theme-color" content="#0f1117" media="(prefers-color-scheme: dark)">
-<meta name="theme-color" content="#f4f6fb" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0B0C10" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#F2F3F7" media="(prefers-color-scheme: light)">
 <link rel="manifest" href="manifest.json">
 <link rel="icon" href="icon-192.png">
-<link rel="apple-touch-icon" href="icon-192.png">
-<link rel="stylesheet" href="styles.css?v=1.2.0">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="stylesheet" href="styles.css?v=1.3.0">
 <title>Expense Logger</title>
 </head>
 <body>
 
+<!-- Launch splash (in-app; works on all iPhone sizes without startup-image matrix) -->
+<div id="splashScreen" class="splash-screen" aria-hidden="true">
+  <img src="apple-touch-icon.png" alt="" class="splash-icon" width="120" height="120">
+  <p class="splash-title">Expense Logger</p>
+  <p class="splash-tag">Quick entries, saved on this device</p>
+</div>
+
 <!-- LOCK SCREEN -->
 <div id="lockScreen" class="lock-screen" hidden>
   <div class="lock-inner">
-    <div class="lock-emoji">🔒</div>
-    <h1 class="lock-title">Expense Logger</h1>
-    <p class="lock-sub">Enter your passcode</p>
+    <img src="apple-touch-icon.png" alt="" class="lock-app-icon" width="80" height="80">
+    <p class="lock-sub">Enter passcode</p>
     <div class="pin-dots" id="pinDots"></div>
     <div class="pin-pad" id="pinPad"></div>
     <button class="link-btn" id="forgotPinBtn" type="button">Forgot passcode?</button>
@@ -33,85 +39,54 @@
 <!-- APP -->
 <div id="app" hidden>
 
-<h1>Expense Logger</h1>
-<p class="subtitle">Quick entries, saved on this device</p>
+<main class="app-main" id="appMain">
 
-<div class="tab-bar" id="tabBar" role="tablist">
-  <button class="tab-btn active" data-tab="add" role="tab">Add</button>
-  <button class="tab-btn" data-tab="summary" role="tab">Summary</button>
-  <button class="tab-btn" data-tab="report" role="tab">Report</button>
-  <button class="tab-btn" data-tab="history" role="tab">History</button>
-  <button class="tab-btn" data-tab="settings" role="tab">Settings</button>
-</div>
+<!-- TAB: HOME (Summary) -->
+<section id="tab-summary" class="screen" hidden>
+  <div class="screen-header-wrap">
+    <div class="title-sentinel" aria-hidden="true"></div>
+    <h1 class="screen-title">Home</h1>
+    <p class="screen-title-compact">Home</p>
+  </div>
 
-<!-- TAB: ADD -->
-<section id="tab-add">
-  <div class="card">
-    <div class="field">
-      <label for="amount">Amount</label>
-      <div class="amount-wrap">
-        <span class="dollar">$</span>
-        <input type="number" id="amount" inputmode="decimal" step="0.01" min="0" placeholder="0.00" autocomplete="off">
+  <div class="month-switcher" id="summaryMonthSwitcher">
+    <button type="button" class="month-nav" id="summaryMonthPrev" aria-label="Previous month">‹</button>
+    <label class="month-pill">
+      <span id="summaryMonthPillLabel">Month</span>
+      <input type="month" id="summaryMonth" class="visually-hidden-input" aria-label="Summary month">
+    </label>
+    <button type="button" class="month-nav" id="summaryMonthNext" aria-label="Next month">›</button>
+  </div>
+
+  <div class="card hero-card">
+    <p class="caption-label">Spent this month</p>
+    <p id="total-display" class="hero-total" aria-live="polite"><span id="totalVal">$0.00</span></p>
+    <div class="hero-budget-wrap" id="heroBudgetWrap" hidden>
+      <div class="hero-budget-row">
+        <div class="hero-budget-track" role="progressbar" aria-valuemin="0" aria-valuemax="100">
+          <div class="hero-budget-fill" id="heroBudgetFill"></div>
+          <div class="hero-budget-pace" id="heroBudgetPace" hidden></div>
+        </div>
+        <span class="hero-budget-pct" id="heroBudgetPct"></span>
       </div>
-    </div>
-
-    <div class="field">
-      <label>Category</label>
-      <div class="cats" id="cats"></div>
-    </div>
-
-    <div class="field">
-      <label for="note">Note (optional)</label>
-      <input type="text" id="note" placeholder="e.g. lunch with Sam" autocomplete="off" maxlength="80">
-    </div>
-
-    <div class="field">
-      <label>Receipt (optional)</label>
-      <div class="receipt-row">
-        <button class="btn-secondary" id="receiptBtn" type="button">📷 Add photo</button>
-        <img id="receiptPreview" class="receipt-preview" alt="" hidden>
-        <button class="del-btn" id="receiptClearBtn" type="button" hidden aria-label="Remove receipt">✕</button>
-      </div>
-      <input type="file" id="receiptInput" accept="image/*" capture="environment" hidden>
-    </div>
-
-    <div class="field">
-      <label class="check-row">
-        <input type="checkbox" id="recurring" >
-        <span>Recurring monthly</span>
-      </label>
-    </div>
-
-    <button class="save-btn" id="saveBtn" disabled>Save Expense</button>
-    <p class="save-hint" id="saveHint" aria-live="polite"></p>
-  </div>
-
-  <div class="card" id="recentCard">
-    <div class="section-header">
-      <h2>Recent</h2>
-      <button class="link-btn" id="viewAllBtn" type="button">View all →</button>
-    </div>
-    <div id="recentEntries"></div>
-  </div>
-</section>
-
-<!-- TAB: SUMMARY -->
-<section id="tab-summary" hidden>
-  <div class="card">
-    <div class="field">
-      <label for="summaryMonth">Month</label>
-      <input type="month" id="summaryMonth">
+      <p class="hero-budget-meta" id="heroBudgetMeta"></p>
     </div>
   </div>
 
-  <div class="card insights-card">
-    <h2>Insights</h2>
-    <div id="insightsList" class="insights-list" role="list"></div>
+  <div class="card insight-strip-card" id="homeRecapCard" hidden>
+    <button type="button" class="recap-teaser" id="homeRecapBtn">
+      <span class="recap-teaser-icon" aria-hidden="true">✨</span>
+      <span id="homeRecapText">Your last month, wrapped</span>
+      <span class="chevron" aria-hidden="true">›</span>
+    </button>
+  </div>
+
+  <div class="insights-scroll-wrap card flat-card">
+    <div id="insightsList" class="insights-scroll" role="list"></div>
   </div>
 
   <div class="card chart-card">
-    <h2>Spending <span class="month-label" id="summaryMonthLabel"></span></h2>
-    <p id="total-display" aria-live="polite"><span id="totalVal">$0.00</span></p>
+    <h2 class="card-title">By category</h2>
     <div class="donut-wrap" id="donutWrap">
       <svg id="donutChart" class="chart-svg donut-chart" viewBox="0 0 220 220" role="img" aria-label="Spending by category"></svg>
       <div class="donut-center" id="donutCenter">
@@ -121,150 +96,250 @@
       </div>
     </div>
     <div class="cat-legend interactive-legend" id="legend"></div>
+    <button class="link-btn legend-edit-budgets" id="editBudgetsBtn" type="button">Edit budgets</button>
   </div>
 
   <div class="card">
-    <h2>Monthly trend</h2>
-    <p class="chart-subtitle" id="trendCompare"></p>
-    <canvas id="trendChart" class="chart-canvas" width="600" height="200" aria-label="Monthly spending trend"></canvas>
-  </div>
-
-  <div class="card">
-    <h2>Daily pace <span class="month-label" id="dailyMonthLabel"></span></h2>
+    <h2 class="card-title">Daily pace <span class="month-label" id="dailyMonthLabel"></span></h2>
     <p class="chart-subtitle" id="dailySubtitle"></p>
     <canvas id="dailyChart" class="chart-canvas" width="600" height="220" aria-label="Daily spending and budget pace"></canvas>
     <div class="chart-legend-row" id="dailyLegend"></div>
   </div>
 
   <div class="card">
-    <div class="section-header">
-      <h2>Budgets</h2>
-      <button class="link-btn" id="editBudgetsBtn" type="button">Edit</button>
-    </div>
-    <div id="budgetList"></div>
+    <h2 class="card-title">12-month trend</h2>
+    <p class="chart-subtitle" id="trendCompare"></p>
+    <canvas id="trendChart" class="chart-canvas" width="600" height="200" aria-label="Monthly spending trend"></canvas>
   </div>
 
-  <div class="card">
-    <h2>Monthly Summary <span class="month-label" id="yearLabel"></span></h2>
+  <details class="card collapsible">
+    <summary class="collapsible-summary">Monthly summary <span class="month-label" id="yearLabel"></span></summary>
     <div id="monthlySummary"></div>
+  </details>
+
+  <details class="card collapsible">
+    <summary class="collapsible-summary">Yearly summary
+      <select id="yearSelect" class="mini-select inline-select" onclick="event.stopPropagation()"></select>
+    </summary>
+    <div id="yearlySummary"></div>
+  </details>
+
+  <div class="card" id="recentCard">
+    <div class="section-header">
+      <h2 class="card-title">Recent</h2>
+      <button class="link-btn" id="viewAllBtn" type="button">See all</button>
+    </div>
+    <div id="recentEntries"></div>
   </div>
 
-  <div class="card">
-    <div class="section-header">
-      <h2>Yearly Summary</h2>
-      <select id="yearSelect" class="mini-select"></select>
-    </div>
-    <div id="yearlySummary"></div>
-  </div>
+  <div id="budgetList" hidden aria-hidden="true"></div>
+  <span id="summaryMonthLabel" hidden></span>
 </section>
 
-<!-- TAB: REPORT -->
-<section id="tab-report" hidden>
-  <div class="card">
-    <div class="field">
-      <label for="reportMonth">Report month</label>
-      <input type="month" id="reportMonth">
-    </div>
-    <button class="btn-secondary" id="reportExportPdfBtn" type="button">🖨 Print / Save as PDF</button>
+<!-- TAB: ACTIVITY (History) -->
+<section id="tab-history" class="screen" hidden>
+  <div class="screen-header-wrap">
+    <div class="title-sentinel" aria-hidden="true"></div>
+    <h1 class="screen-title">Activity</h1>
+    <p class="screen-title-compact">Activity</p>
   </div>
+
+  <div class="search-wrap">
+    <span class="search-icon" aria-hidden="true">⌕</span>
+    <input type="search" id="searchInput" placeholder="Search" autocomplete="off" enterkeyhint="search">
+  </div>
+
+  <div class="filter-chips" role="group" aria-label="Filters">
+    <button type="button" class="filter-chip" data-filter="category">Category ▾</button>
+    <button type="button" class="filter-chip" data-filter="month">Month ▾</button>
+    <button type="button" class="filter-chip" data-filter="type">Type ▾</button>
+    <button type="button" class="filter-chip" data-filter="sort">Sort ▾</button>
+  </div>
+  <div class="filter-hidden">
+    <select id="filterCategory"><option value="">All categories</option></select>
+    <input type="month" id="filterMonth">
+    <select id="filterType">
+      <option value="all">All types</option>
+      <option value="one-time">One-time</option>
+      <option value="recurring">Recurring</option>
+      <option value="with-receipt">With receipt</option>
+    </select>
+    <select id="filterSort">
+      <option value="newest">Newest first</option>
+      <option value="oldest">Oldest first</option>
+      <option value="highest">Highest amount</option>
+      <option value="lowest">Lowest amount</option>
+    </select>
+  </div>
+
+  <p class="entries-meta" id="entriesCount" aria-live="polite"></p>
+  <div id="entries" class="activity-groups"></div>
+</section>
+
+<!-- TAB: REPORTS -->
+<section id="tab-report" class="screen" hidden>
+  <div class="screen-header-wrap">
+    <div class="title-sentinel" aria-hidden="true"></div>
+    <h1 class="screen-title">Reports</h1>
+    <p class="screen-title-compact">Reports</p>
+  </div>
+
+  <div class="month-switcher" id="reportMonthSwitcher">
+    <button type="button" class="month-nav" id="reportMonthPrev" aria-label="Previous month">‹</button>
+    <label class="month-pill">
+      <span id="reportMonthPillLabel">Month</span>
+      <input type="month" id="reportMonth" class="visually-hidden-input" aria-label="Report month">
+    </label>
+    <button type="button" class="month-nav" id="reportMonthNext" aria-label="Next month">›</button>
+  </div>
+
+  <button type="button" class="btn-secondary pill-btn" id="openWrappedBtn">✨ Spending Wrapped</button>
+  <button class="btn-secondary pill-btn" id="reportExportPdfBtn" type="button">Print / Save as PDF</button>
   <div id="reportBody"></div>
 </section>
 
-<!-- TAB: HISTORY -->
-<section id="tab-history" hidden>
-  <div class="card">
-    <div class="field">
-      <label for="searchInput">Search</label>
-      <input type="text" id="searchInput" placeholder="Search notes or categories…" autocomplete="off">
-    </div>
-    <div class="filter-row">
-      <select id="filterCategory"><option value="">All categories</option></select>
-      <input type="month" id="filterMonth">
-    </div>
-    <div class="filter-row">
-      <select id="filterType">
-        <option value="all">All types</option>
-        <option value="one-time">One-time</option>
-        <option value="recurring">Recurring</option>
-        <option value="with-receipt">With receipt</option>
-      </select>
-      <select id="filterSort">
-        <option value="newest">Newest first</option>
-        <option value="oldest">Oldest first</option>
-        <option value="highest">Highest amount</option>
-        <option value="lowest">Lowest amount</option>
-      </select>
-    </div>
-  </div>
-
-  <div class="card">
-    <h2>Entries <span class="month-label" id="entriesCount"></span></h2>
-    <div id="entries"></div>
-  </div>
-</section>
-
 <!-- TAB: SETTINGS -->
-<section id="tab-settings" hidden>
-  <div class="card">
-    <h2>Security</h2>
-    <div class="summary-row">
-      <span class="label">Passcode lock</span>
-      <span class="value"><button class="link-btn" id="togglePinBtn" type="button">Off</button></span>
-    </div>
-    <p class="hint">Passcode is stored hashed (SHA-256) on this device. It is not a substitute for device encryption.</p>
+<section id="tab-settings" class="screen" hidden>
+  <div class="screen-header-wrap">
+    <div class="title-sentinel" aria-hidden="true"></div>
+    <h1 class="screen-title">Settings</h1>
+    <p class="screen-title-compact">Settings</p>
   </div>
 
-  <div class="card">
-    <h2>Data</h2>
-    <div class="stack">
-      <button class="btn-secondary" id="exportBtn" type="button">⬇ Export CSV</button>
-      <button class="btn-secondary" id="exportJsonBtn" type="button">⬇ Export JSON backup (with receipts)</button>
-      <button class="btn-secondary" id="importJsonBtn" type="button">⬆ Import JSON backup</button>
-      <button class="btn-secondary" id="importCsvBtn" type="button">⬆ Import CSV / Excel</button>
+  <div class="inset-group">
+    <h3 class="group-label">Security</h3>
+    <div class="inset-card">
+      <div class="settings-row">
+        <span>Passcode lock</span>
+        <button class="link-btn" id="togglePinBtn" type="button">Off</button>
+      </div>
+      <p class="hint inset-hint">Passcode is stored hashed (SHA-256) on this device.</p>
+    </div>
+  </div>
+
+  <div class="inset-group">
+    <h3 class="group-label">Data</h3>
+    <div class="inset-card">
+      <button class="settings-row-btn" id="exportBtn" type="button">Export CSV <span class="chevron">›</span></button>
+      <button class="settings-row-btn" id="exportJsonBtn" type="button">Export JSON backup <span class="chevron">›</span></button>
+      <button class="settings-row-btn" id="importJsonBtn" type="button">Import JSON backup <span class="chevron">›</span></button>
+      <button class="settings-row-btn" id="importCsvBtn" type="button">Import CSV / Excel <span class="chevron">›</span></button>
       <input type="file" id="jsonFileInput" accept=".json,application/json" hidden>
       <input type="file" id="importFileInput" accept=".csv,text/csv,.xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" hidden>
-      <label class="check-row" style="margin-top:12px;">
+      <label class="settings-row check-settings">
+        <span>Count card bill payments as spending</span>
         <input type="checkbox" id="countCardPayments">
-        <span>Count credit-card bill payments as spending (if you do not import card files)</span>
       </label>
     </div>
   </div>
 
-  <div class="card">
-    <div class="section-header">
-      <h2>Categories</h2>
-      <button class="link-btn" id="addCategoryBtn" type="button">+ Add</button>
+  <div class="inset-group">
+    <h3 class="group-label">Categories</h3>
+    <div class="inset-card" id="categoryList"></div>
+    <button class="link-btn group-action" id="addCategoryBtn" type="button">+ Add category</button>
+  </div>
+
+  <div class="inset-group">
+    <h3 class="group-label">Budgets</h3>
+    <div class="inset-card" id="budgetSettings"></div>
+  </div>
+
+  <div class="inset-group">
+    <h3 class="group-label">Import rules</h3>
+    <div class="inset-card" id="importRulesList"></div>
+  </div>
+
+  <div class="inset-group">
+    <h3 class="group-label">Recurring</h3>
+    <div class="inset-card" id="recurringList"></div>
+  </div>
+
+  <div class="inset-group danger-group">
+    <div class="inset-card">
+      <button class="settings-row-btn danger-text" id="clearAllBtn" type="button">Clear All Data</button>
     </div>
-    <div id="categoryList"></div>
-  </div>
-
-  <div class="card">
-    <h2>Budget Settings</h2>
-    <p class="hint">Set monthly spending limits per category.</p>
-    <div id="budgetSettings"></div>
-  </div>
-
-  <div class="card">
-    <h2>Import rules</h2>
-    <p class="hint">Learned from imports: category and transfer matching by description (reference numbers ignored).</p>
-    <div id="importRulesList"></div>
-  </div>
-
-  <div class="card">
-    <h2>Recurring Expenses</h2>
-    <p class="hint">Added automatically on the day you set, each month.</p>
-    <div id="recurringList"></div>
-  </div>
-
-  <div class="card danger">
-    <h2>Danger Zone</h2>
-    <button class="btn-secondary danger" id="clearAllBtn" type="button">Clear All Data</button>
   </div>
 
   <p class="version" id="versionLine"></p>
 </section>
 
+<section id="tab-add" hidden aria-hidden="true"></section>
+
+</main>
+
+<!-- Bottom tab bar -->
+<nav class="bottom-tab-bar" id="tabBar" role="tablist" aria-label="Main">
+  <button class="tab-btn" data-tab="summary" role="tab" aria-selected="false" type="button">
+    <svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 10.5L12 3l9 7.5V20a1 1 0 01-1 1h-5v-6H9v6H4a1 1 0 01-1-1v-9.5z" fill="currentColor"/></svg>
+    <span>Home</span>
+  </button>
+  <button class="tab-btn" data-tab="history" role="tab" aria-selected="false" type="button">
+    <svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16v2H4V6zm0 5h16v2H4v-2zm0 5h10v2H4v-2z" fill="currentColor"/></svg>
+    <span>Activity</span>
+  </button>
+  <button class="tab-btn tab-btn-add" data-tab="add" role="tab" aria-selected="false" type="button" aria-label="Add expense">
+    <span class="add-fab">+</span>
+  </button>
+  <button class="tab-btn" data-tab="report" role="tab" aria-selected="false" type="button">
+    <svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 19V5h2v14H5zm6-8v8H9V11h2zm6-4v12h-2V7h2z" fill="currentColor"/></svg>
+    <span>Reports</span>
+  </button>
+  <button class="tab-btn" data-tab="settings" role="tab" aria-selected="false" type="button">
+    <svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 8a4 4 0 100 8 4 4 0 000-8zm9.4 4a7.4 7.4 0 01-.1 1l2 1.5-2 3.5-2.3-1a7.6 7.6 0 01-2.1 1.2l-.3 2.5H9.4l-.3-2.5a7.6 7.6 0 01-2.1-1.2l-2.3 1-2-3.5 2-1.5a7.4 7.4 0 010-2l-2-1.5 2-3.5 2.3 1a7.6 7.6 0 012.1-1.2l.3-2.5h5.2l.3 2.5a7.6 7.6 0 012.1 1.2l2.3-1 2 3.5-2 1.5a7.4 7.4 0 01.1 1z" fill="currentColor"/></svg>
+    <span>Settings</span>
+  </button>
+</nav>
+
 </div><!-- /#app -->
+
+<!-- Add expense sheet -->
+<div class="modal-overlay sheet" id="addSheet">
+  <div class="modal sheet-modal add-sheet">
+    <div class="sheet-grabber" aria-hidden="true"></div>
+    <div class="sheet-header">
+      <button type="button" class="link-btn" id="addCancelBtn">Cancel</button>
+      <h3>New expense</h3>
+      <span class="sheet-header-spacer"></span>
+    </div>
+    <div class="add-amount-display">
+      <span class="add-amount-prefix">$</span>
+      <input type="number" id="amount" inputmode="decimal" step="0.01" min="0" placeholder="0.00" autocomplete="off" aria-label="Amount">
+    </div>
+    <div class="cats add-cats" id="cats"></div>
+    <div class="inset-card grouped-rows">
+      <button type="button" class="grouped-row" id="addNoteRow">
+        <span class="row-icon">📝</span>
+        <span class="row-label">Note</span>
+        <span class="row-value" id="addNotePreview">Add note</span>
+        <span class="chevron">›</span>
+      </button>
+      <input type="text" id="note" class="visually-hidden-input" placeholder="e.g. lunch with Sam" autocomplete="off" maxlength="80" tabindex="-1">
+      <button type="button" class="grouped-row" id="addDateRow">
+        <span class="row-icon">📅</span>
+        <span class="row-label">Date</span>
+        <span class="row-value" id="addDatePreview">Today</span>
+        <span class="chevron">›</span>
+      </button>
+      <input type="date" id="addDate" class="visually-hidden-input" tabindex="-1">
+      <button type="button" class="grouped-row" id="receiptBtn">
+        <span class="row-icon">📷</span>
+        <span class="row-label">Receipt</span>
+        <span class="row-value" id="receiptBtnLabel">Add photo</span>
+        <span class="chevron">›</span>
+      </button>
+      <input type="file" id="receiptInput" accept="image/*" capture="environment" hidden>
+      <img id="receiptPreview" class="receipt-preview" alt="" hidden>
+      <button class="del-btn receipt-clear-inline" id="receiptClearBtn" type="button" hidden aria-label="Remove receipt">✕</button>
+      <label class="grouped-row switch-row">
+        <span class="row-icon">🔁</span>
+        <span class="row-label">Recurring monthly</span>
+        <input type="checkbox" id="recurring" class="ios-switch">
+      </label>
+    </div>
+    <button class="save-btn" id="saveBtn" disabled>Save expense</button>
+    <p class="save-hint" id="saveHint" aria-live="polite"></p>
+  </div>
+</div>
 
 <!-- Undo -->
 <div class="undo-toast" id="undoToast" role="status">
@@ -272,25 +347,30 @@
   <button id="undoBtn" type="button">Undo</button>
 </div>
 
-<!-- Toast -->
 <div class="toast" id="toast" role="status"></div>
 
 <!-- Modal: budgets -->
-<div class="modal-overlay" id="budgetModal">
-  <div class="modal">
-    <h3>Edit Budgets</h3>
-    <div id="budgetEditList"></div>
-    <div class="btn-row">
-      <button class="btn-secondary" id="budgetCancelBtn" type="button">Cancel</button>
-      <button class="save-btn flex1" id="budgetSaveBtn" type="button">Save</button>
+<div class="modal-overlay sheet" id="budgetModal">
+  <div class="modal sheet-modal">
+    <div class="sheet-grabber" aria-hidden="true"></div>
+    <div class="sheet-header">
+      <button class="btn-secondary sheet-cancel" id="budgetCancelBtn" type="button">Cancel</button>
+      <h3>Edit budgets</h3>
+      <button class="link-btn" id="budgetSaveBtn" type="button">Save</button>
     </div>
+    <div id="budgetEditList"></div>
   </div>
 </div>
 
 <!-- Modal: category -->
-<div class="modal-overlay" id="catModal">
-  <div class="modal">
-    <h3 id="catModalTitle">Add Category</h3>
+<div class="modal-overlay sheet" id="catModal">
+  <div class="modal sheet-modal">
+    <div class="sheet-grabber" aria-hidden="true"></div>
+    <div class="sheet-header">
+      <button class="btn-secondary sheet-cancel" id="catCancelBtn" type="button">Cancel</button>
+      <h3 id="catModalTitle">Add Category</h3>
+      <button class="link-btn" id="catSaveBtn" type="button">Save</button>
+    </div>
     <div class="field">
       <label for="catNameInput">Name</label>
       <input type="text" id="catNameInput" placeholder="Category name" maxlength="20">
@@ -303,17 +383,18 @@
       <label>Color</label>
       <div class="color-swatches" id="colorSwatches"></div>
     </div>
-    <div class="btn-row">
-      <button class="btn-secondary" id="catCancelBtn" type="button">Cancel</button>
-      <button class="save-btn flex1" id="catSaveBtn" type="button">Save</button>
-    </div>
   </div>
 </div>
 
-<!-- Modal: edit expense / receipt -->
-<div class="modal-overlay" id="receiptModal">
-  <div class="modal modal-wide">
-    <h3>Edit expense</h3>
+<!-- Modal: edit expense -->
+<div class="modal-overlay sheet" id="receiptModal">
+  <div class="modal sheet-modal modal-wide">
+    <div class="sheet-grabber" aria-hidden="true"></div>
+    <div class="sheet-header">
+      <button class="btn-secondary sheet-cancel" id="receiptModalClose" type="button">Cancel</button>
+      <h3>Edit expense</h3>
+      <button class="link-btn" id="editSaveBtn" type="button">Save</button>
+    </div>
     <div class="field">
       <label for="editAmount">Amount</label>
       <div class="amount-wrap">
@@ -338,17 +419,14 @@
       <img id="receiptModalImg" class="receipt-modal-img" alt="Receipt" hidden>
       <button class="btn-secondary danger" id="receiptModalDelete" type="button" hidden>Delete receipt</button>
     </div>
-    <div class="btn-row">
-      <button class="btn-secondary danger" id="editDeleteBtn" type="button">Delete</button>
-      <button class="btn-secondary flex1" id="receiptModalClose" type="button">Cancel</button>
-      <button class="save-btn flex1" id="editSaveBtn" type="button">Save changes</button>
-    </div>
+    <button class="btn-secondary danger full-destructive" id="editDeleteBtn" type="button">Delete expense</button>
   </div>
 </div>
 
 <!-- Modal: passcode -->
-<div class="modal-overlay" id="pinModal">
-  <div class="modal">
+<div class="modal-overlay sheet" id="pinModal">
+  <div class="modal sheet-modal">
+    <div class="sheet-grabber" aria-hidden="true"></div>
     <h3 id="pinModalTitle">Set Passcode</h3>
     <form id="pinForm" onsubmit="return false;">
       <div class="field">
@@ -368,18 +446,33 @@
 </div>
 
 <!-- Modal: import review -->
-<div class="modal-overlay" id="importModal">
-  <div class="modal modal-wide import-modal">
-    <h3>Review import</h3>
+<div class="modal-overlay sheet" id="importModal">
+  <div class="modal sheet-modal modal-wide import-modal">
+    <div class="sheet-grabber" aria-hidden="true"></div>
+    <div class="sheet-header">
+      <button class="btn-secondary sheet-cancel" id="importCancelBtn" type="button">Cancel</button>
+      <h3>Review import</h3>
+      <button class="link-btn" id="importConfirmBtn" type="button">Import</button>
+    </div>
     <div id="importSummary"></div>
     <div id="importRowList" class="import-row-list"></div>
-    <div class="btn-row">
-      <button class="btn-secondary" id="importCancelBtn" type="button">Cancel</button>
-      <button class="save-btn flex1" id="importConfirmBtn" type="button">Import</button>
-    </div>
   </div>
 </div>
 
-<script src="app.js?v=1.2.0"></script>
+<!-- Spending Wrapped -->
+<div class="modal-overlay sheet" id="wrappedModal">
+  <div class="modal sheet-modal wrapped-modal">
+    <div class="sheet-grabber" aria-hidden="true"></div>
+    <div class="sheet-header">
+      <button class="btn-secondary sheet-cancel" id="wrappedCloseBtn" type="button">Close</button>
+      <h3>Spending Wrapped</h3>
+      <button class="link-btn" id="wrappedShareBtn" type="button">Share</button>
+    </div>
+    <div id="wrappedPreview" class="wrapped-preview"></div>
+    <p class="hint wrapped-empty" id="wrappedEmpty" hidden>No spending data for this month.</p>
+  </div>
+</div>
+
+<script src="app.js?v=1.3.0"></script>
 </body>
 </html>
