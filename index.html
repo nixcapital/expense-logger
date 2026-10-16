@@ -13,8 +13,8 @@
 <link rel="manifest" href="manifest.json">
 <link rel="icon" href="icon-192.png">
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
-<link rel="stylesheet" href="styles.css?v=1.5.0">
-<link rel="stylesheet" href="icon-animations.css?v=1.5.0">
+<link rel="stylesheet" href="styles.css?v=1.6.0">
+<link rel="stylesheet" href="icon-animations.css?v=1.6.0">
 <title>Expense Logger</title>
 </head>
 <body>
@@ -73,6 +73,19 @@
       <p class="hero-budget-meta" id="heroBudgetMeta"></p>
     </div>
   </div>
+
+  <button type="button" class="card forecast-home-card" id="homeForecastCard" hidden>
+    <p class="forecast-home-kicker">Money lasts until</p>
+    <div class="forecast-home-main">
+      <span class="forecast-home-date" id="homeForecastDate">—</span>
+      <span class="forecast-home-days" id="homeForecastDays"></span>
+    </div>
+    <div class="forecast-home-balance">
+      <span id="homeForecastBalanceLabel">Checking balance · as of today</span>
+      <span class="forecast-home-balance-val" id="homeForecastBalanceVal">—</span>
+    </div>
+    <span class="chevron forecast-home-chevron" aria-hidden="true">›</span>
+  </button>
 
   <div class="card flat-card backup-nudge-card" id="homeBackupNudge" hidden>
     <div class="backup-nudge">
@@ -147,6 +160,78 @@
 
   <div id="budgetList" hidden aria-hidden="true"></div>
   <span id="summaryMonthLabel" hidden></span>
+</section>
+
+<!-- FORECAST (overlay; Home tab stays active) -->
+<section id="tab-forecast" class="screen forecast-screen" hidden>
+  <div class="forecast-nav">
+    <button type="button" class="link-btn forecast-back-btn" id="forecastBackBtn">&lt; Home</button>
+    <h1 class="forecast-nav-title">Forecast</h1>
+    <button type="button" class="forecast-info-btn" id="forecastInfoBtn" aria-label="Forecast info">
+      <svg width="22" height="22" viewBox="0 0 22 22" fill="none" aria-hidden="true"><circle cx="11" cy="11" r="9" stroke="currentColor" stroke-width="1.5"/><path d="M11 10v6M11 7h.01" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"/></svg>
+    </button>
+  </div>
+
+  <div class="forecast-empty card" id="forecastEmptyState" hidden>
+    <p class="forecast-empty-title" id="forecastEmptyTitle">Set your checking balance</p>
+    <p class="forecast-empty-text" id="forecastEmptyText">Add the balance from your bank app so we can project cash flow.</p>
+    <button type="button" class="save-btn" id="forecastEmptySetBtn">Set balance</button>
+  </div>
+
+  <div id="forecastMain" hidden>
+    <div class="forecast-summary-card card">
+      <div class="forecast-summary-top">
+        <p class="forecast-kicker">How long will my money last?</p>
+        <span class="forecast-account-chip" id="forecastAccountChip"></span>
+      </div>
+      <div class="forecast-headline-row">
+        <div>
+          <p class="forecast-headline-prefix">Money lasts until</p>
+          <p class="forecast-headline-date" id="forecastLastsDate">—</p>
+        </div>
+        <p class="forecast-days-away" id="forecastDaysAway"></p>
+      </div>
+      <div class="forecast-balance-row">
+        <div>
+          <p class="forecast-balance-label" id="forecastBalanceLabel">Checking balance · as of today</p>
+          <p class="forecast-balance-val" id="forecastBalanceVal">—</p>
+        </div>
+        <button type="button" class="forecast-update-btn" id="forecastUpdateBtn">
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true"><path d="M8.2 2.5l3.3 3.3M2.5 11.5V9.2H4.8L10.1 3.9l2.3 2.3L7.1 11.5H2.5z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/></svg>
+          Update
+        </button>
+      </div>
+    </div>
+
+    <div class="card forecast-chart-card" id="forecastChartCard">
+      <div class="forecast-chart-header">
+        <div>
+          <h2 class="forecast-chart-title">Projected balance</h2>
+          <p class="forecast-chart-sub" id="forecastLowestSub"></p>
+        </div>
+        <div class="forecast-range-toggle" role="group" aria-label="Chart range">
+          <button type="button" class="forecast-range-btn" data-forecast-days="30" aria-pressed="false">30d</button>
+          <button type="button" class="forecast-range-btn" data-forecast-days="60" aria-pressed="true">60d</button>
+          <button type="button" class="forecast-range-btn" data-forecast-days="90" aria-pressed="false">90d</button>
+        </div>
+      </div>
+      <div class="forecast-chart-wrap" id="forecastChartWrap">
+        <canvas id="forecastChart" class="forecast-chart-canvas" width="800" height="280" aria-label="Projected checking balance"></canvas>
+      </div>
+      <p class="forecast-chart-note" id="forecastChartNote">
+        <span class="forecast-note-icon" aria-hidden="true"><svg width="14" height="14" viewBox="0 0 14 14" fill="none"><circle cx="7" cy="7" r="5.5" stroke="currentColor"/><path d="M7 6.2v3.6M7 4.4h.01" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg></span>
+        <span>Checking only: card purchases don’t count, the card bill does. Transfers move the balance, never income or spending.</span>
+      </p>
+    </div>
+
+    <div class="forecast-upcoming">
+      <div class="forecast-upcoming-header">
+        <span class="forecast-upcoming-label" id="forecastUpcomingLabel">Upcoming · Checking</span>
+        <span class="forecast-upcoming-window" id="forecastUpcomingWindow">Next 60 days</span>
+      </div>
+      <div class="forecast-upcoming-list card" id="forecastUpcomingList"></div>
+    </div>
+  </div>
 </section>
 
 <!-- TAB: ACTIVITY (History) -->
@@ -239,6 +324,11 @@
     <div class="title-sentinel" aria-hidden="true"></div>
     <h1 class="screen-title">Settings</h1>
     <p class="screen-title-compact">Settings</p>
+  </div>
+
+  <div class="inset-group">
+    <h3 class="group-label">Accounts</h3>
+    <div class="inset-card" id="settingsAccountsList"></div>
   </div>
 
   <div class="inset-group">
@@ -552,6 +642,90 @@
   </div>
 </div>
 
+<!-- Modal: set checking balance -->
+<div class="modal-overlay sheet modal-front" id="balanceSheet">
+  <div class="modal sheet-modal balance-sheet-modal">
+    <div class="sheet-grabber" aria-hidden="true"></div>
+    <div class="balance-sheet-header">
+      <h3>Set current balance</h3>
+      <button type="button" class="balance-sheet-close" id="balanceSheetClose" aria-label="Close">✕</button>
+    </div>
+    <div class="balance-sheet-account" id="balanceSheetAccount"></div>
+    <label class="balance-input-wrap">
+      <span class="balance-input-label">Current balance</span>
+      <input type="text" id="balanceAmountInput" inputmode="decimal" autocomplete="off" aria-label="Current balance">
+    </label>
+    <button type="button" class="grouped-row balance-asof-row" id="balanceAsOfRow">
+      <span class="row-icon" data-ui-icon="ui-calendar" data-ui-icon-size="row" aria-hidden="true"></span>
+      <span class="row-label">As of</span>
+      <span class="row-value" id="balanceAsOfPreview">Today</span>
+      <span class="chevron">›</span>
+    </button>
+    <input type="date" id="balanceAsOfInput" class="visually-hidden-input" tabindex="-1">
+    <div class="balance-info-callout" id="balanceInfoCallout">
+      <span class="account-mini-icon" style="background:#20C99722;color:#20C997" aria-hidden="true"><svg viewBox="0 0 16 16" fill="none"><path d="M2.5 6.5V12a1 1 0 001 1h9a1 1 0 001-1V6.5" stroke="currentColor" stroke-width="1.25"/><path d="M1.5 5.5h13v2H1.5v-2z" stroke="currentColor" stroke-width="1.25"/></svg></span>
+      <p>Use the balance in your bank app. Bank CSV exports don't always include a balance, so this is where your forecast starts.</p>
+    </div>
+    <p class="balance-sheet-foot" id="balanceSheetFoot"></p>
+    <button type="button" class="save-btn" id="balanceSaveBtn">Save balance</button>
+  </div>
+</div>
+
+<!-- Modal: forecast info -->
+<div class="modal-overlay sheet" id="forecastInfoModal">
+  <div class="modal sheet-modal">
+    <div class="sheet-grabber" aria-hidden="true"></div>
+    <div class="sheet-header">
+      <button class="btn-secondary sheet-cancel" id="forecastInfoCloseBtn" type="button">Done</button>
+      <h3>Forecast</h3>
+      <span class="sheet-header-spacer"></span>
+    </div>
+    <div class="field">
+      <label for="forecastCushionInput">Low balance cushion</label>
+      <div class="amount-wrap">
+        <span class="dollar">$</span>
+        <input type="number" id="forecastCushionInput" inputmode="decimal" step="1" min="0" placeholder="600">
+      </div>
+      <p class="hint">Shown as a dashed line on the chart. Default $600.</p>
+    </div>
+    <p class="hint" id="forecastInfoDailyNote"></p>
+    <h4 class="field-label" style="margin-top:12px">Recurring timing</h4>
+    <div id="forecastScheduleList"></div>
+  </div>
+</div>
+
+<!-- Modal: edit forecast upcoming item -->
+<div class="modal-overlay sheet modal-front" id="forecastItemEditModal">
+  <div class="modal sheet-modal">
+    <div class="sheet-grabber" aria-hidden="true"></div>
+    <div class="sheet-header">
+      <button class="btn-secondary sheet-cancel" id="forecastItemEditCancelBtn" type="button">Cancel</button>
+      <h3 id="forecastItemEditTitle">Upcoming item</h3>
+      <button class="link-btn" id="forecastItemEditSaveBtn" type="button">Save</button>
+    </div>
+    <div class="field">
+      <label for="forecastItemAmountInput">Amount</label>
+      <div class="amount-wrap">
+        <span class="dollar">$</span>
+        <input type="number" id="forecastItemAmountInput" inputmode="decimal" step="0.01" min="0">
+      </div>
+    </div>
+    <div class="field">
+      <label for="forecastItemDateInput">Next date</label>
+      <input type="date" id="forecastItemDateInput">
+    </div>
+    <p class="hint">Applies to this item until you change it again.</p>
+  </div>
+</div>
+
+<!-- Modal: other-account transfer detail -->
+<div class="modal-overlay sheet modal-front" id="otherTransferSheet">
+  <div class="modal sheet-modal other-transfer-sheet">
+    <div class="sheet-grabber" aria-hidden="true"></div>
+    <div id="otherTransferSheetBody"></div>
+  </div>
+</div>
+
 <!-- Modal: import review -->
 <div class="modal-overlay sheet modal-front" id="importModal">
   <div class="modal sheet-modal modal-wide import-modal">
@@ -610,7 +784,8 @@
   </div>
 </div>
 
-<script src="icon-system.js?v=1.5.0"></script>
-<script src="app.js?v=1.5.0"></script>
+<script src="icon-system.js?v=1.6.0"></script>
+<script src="forecast.js?v=1.6.0"></script>
+<script src="app.js?v=1.6.0"></script>
 </body>
 </html>
