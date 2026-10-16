@@ -262,8 +262,37 @@
   }
 
   function fitSchedule(timestamps, isInflow) {
-    if (!timestamps || timestamps.length < 3) return null;
+    if (!timestamps || timestamps.length < 2) return null;
     var ts = timestamps.map(startOfDay).sort(function (a, b) { return a - b; });
+    if (ts.length === 2) {
+      var gapOnly = Math.round((ts[1] - ts[0]) / MS_DAY);
+      if (gapOnly >= 27 && gapOnly <= 35) {
+        var domOnly = Math.round(median(ts.map(function (t) { return new Date(t).getDate(); })));
+        var shiftOnly = learnShiftRule(ts, function (y, m) {
+          var dim = new Date(y, m + 1, 0).getDate();
+          return dateMs(y, m, Math.min(domOnly, dim));
+        });
+        return {
+          scheduleType: 'monthly_dom',
+          dayOfMonth: domOnly,
+          shiftRule: shiftOnly || (isInflow ? 'prev' : 'next'),
+          inferenceDetail: 'Usually around the ' + ordinal(domOnly) + ' (2 posts — lower confidence)' + shiftHint(shiftOnly || (isInflow ? 'prev' : 'next')),
+          lastTs: ts[1],
+          confidence: 'low'
+        };
+      }
+      if (gapOnly >= 12 && gapOnly <= 18) {
+        return {
+          scheduleType: 'biweekly',
+          anchorMs: ts[0],
+          shiftRule: isInflow ? 'prev' : 'next',
+          inferenceDetail: 'Every 2 weeks (2 posts — lower confidence)' + shiftHint(isInflow ? 'prev' : 'next'),
+          lastTs: ts[1],
+          confidence: 'low'
+        };
+      }
+      return null;
+    }
     var gaps = [];
     for (var i = 1; i < ts.length; i++) gaps.push(Math.round((ts[i] - ts[i - 1]) / MS_DAY));
     var medGap = median(gaps);
@@ -375,11 +404,13 @@
     var checkingId = opts.checkingId;
     var sinceMs = opts.sinceMs || 0;
     var kind = opts.kind || 'any';
+    var nowMs = opts.nowMs != null ? startOfDay(opts.nowMs) : null;
     var paired = pairedEntryIds(opts.transferPairs);
     var groups = {};
     (entries || []).forEach(function (e) {
       if (e.accountId !== checkingId) return;
       if (e.ts < sinceMs) return;
+      if (nowMs != null && startOfDay(e.ts) > nowMs) return;
       if (kind === 'transfer-other') {
         if (!isOtherAccountTransfer(e)) return;
       } else if (isOtherAccountTransfer(e)) return;
@@ -401,13 +432,13 @@
     var out = [];
     Object.keys(groups).forEach(function (key) {
       var list = groups[key].sort(function (a, b) { return a.ts - b.ts; });
-      if (list.length < 3) return;
+      if (list.length < 2) return;
       var amounts = list.map(function (e) { return e.amount; });
       var medAmt = median(amounts);
       var similar = list.filter(function (e) {
         return Math.abs(e.amount - medAmt) <= Math.max(5, medAmt * 0.08);
       });
-      if (similar.length < 3) return;
+      if (similar.length < 2) return;
       var sample = similar[0];
       var isIn = isDepositEntry(sample);
       if (kind === 'inflow' && !isIn) return;
@@ -432,7 +463,8 @@
         nth: fit.nth,
         shiftRule: fit.shiftRule,
         inferenceDetail: fit.inferenceDetail,
-        lastTs: fit.lastTs
+        lastTs: fit.lastTs,
+        confidence: fit.confidence || 'high'
       });
     });
     return out;
@@ -586,14 +618,17 @@
       debits.push({ ts: e.ts, amount: e.amount });
     });
     debits.sort(function (a, b) { return a.ts - b.ts; });
-    if (debits.length < 2) return null;
+    if (debits.length < 1) return null;
     var doms = debits.map(function (d) { return new Date(d.ts).getDate(); });
     var dom = mode(doms);
     var amounts = debits.map(function (d) { return d.amount; });
-    var shift = learnShiftRule(debits.map(function (d) { return d.ts; }), function (y, m) {
-      var dim = new Date(y, m + 1, 0).getDate();
-      return dateMs(y, m, Math.min(dom, dim));
-    });
+    var shift = debits.length >= 2
+      ? learnShiftRule(debits.map(function (d) { return d.ts; }), function (y, m) {
+        var dim = new Date(y, m + 1, 0).getDate();
+        return dateMs(y, m, Math.min(dom, dim));
+      })
+      : 'next';
+    var confNote = debits.length < 2 ? ' (1 post — lower confidence)' : '';
     return {
       itemKey: 'card-payment|chase',
       label: 'Chase card payment',
@@ -604,8 +639,9 @@
       scheduleType: 'monthly_dom',
       dayOfMonth: dom,
       shiftRule: shift,
-      inferenceDetail: 'Usually on the ' + ordinal(dom) + ' (from checking autopay)' + shiftHint(shift),
-      lastTs: debits[debits.length - 1].ts
+      inferenceDetail: 'Usually on the ' + ordinal(dom) + ' (from checking autopay)' + confNote + shiftHint(shift),
+      lastTs: debits[debits.length - 1].ts,
+      confidence: debits.length >= 2 ? 'high' : 'low'
     };
   }
 
@@ -650,7 +686,8 @@
     ['inflow', 'outflow', 'transfer-other'].forEach(function (kind) {
       detectRecurringSchedules(input.entries, {
         checkingId: checkingId,
-        sinceMs: addDays(nowMs, -150),
+        sinceMs: addDays(nowMs, -400),
+        nowMs: nowMs,
         kind: kind,
         transferPairs: input.transferPairs
       }).forEach(function (s) {

@@ -1,5 +1,5 @@
 /**
- * QA screenshots for 1.6.0 forecast (428x926). Fake data only.
+ * QA screenshots for 1.6.0 forecast (428×926 viewport). Fake data only.
  * Run: node scripts/forecast-qa-screenshots.mjs
  */
 import { chromium } from 'playwright';
@@ -9,12 +9,13 @@ import { join, extname } from 'path';
 
 const PORT = 8895;
 const ROOT = '/workspace';
-const OUT = '/opt/cursor/artifacts';
+const OUT_DIRS = ['/opt/cursor/artifacts', '/cursor/stores/self/artifacts'];
 const MIME = {
   '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css',
   '.json': 'application/json', '.png': 'image/png', '.svg': 'image/svg+xml'
 };
-const MODAL_MS = 400;
+const MODAL_MS = 450;
+const VIEWPORT = { width: 428, height: 926 };
 
 function server() {
   return createServer((req, res) => {
@@ -27,6 +28,7 @@ function server() {
   });
 }
 
+/** Month is 0-indexed (9 = October). */
 function ts(y, m, d) {
   return new Date(y, m, d, 12, 0, 0).getTime();
 }
@@ -40,36 +42,112 @@ function seed() {
     },
     { id: 'acct-chase', name: 'Chase card', type: 'credit_card', color: '#748FFC' }
   ];
-  const entries = [
-    { id: 'e-duke', amount: 142.4, categoryId: 'bills', note: 'Duke Energy', ts: ts(2026, 8, 22), accountId: 'acct-checking' },
-    { id: 'e-duke2', amount: 142.4, categoryId: 'bills', note: 'Duke Energy', ts: ts(2026, 9, 22), accountId: 'acct-checking' },
-    { id: 'e-pay', amount: 2140, categoryId: 'other', note: 'Acme Corp payroll', ts: ts(2026, 9, 30), accountId: 'acct-checking', isDeposit: true },
-    { id: 'e-pay2', amount: 2140, categoryId: 'other', note: 'Acme Corp payroll', ts: ts(2026, 8, 30), accountId: 'acct-checking', isDeposit: true },
-    { id: 'e-pay3', amount: 2140, categoryId: 'other', note: 'Acme Corp payroll', ts: ts(2026, 7, 30), accountId: 'acct-checking', isDeposit: true },
-    { id: 'e-xfer', amount: 200, categoryId: 'other', note: 'Transfer to savings', ts: ts(2026, 9, 30), accountId: 'acct-checking', isTransfer: true, transferKind: 'other', bankText: 'ONLINE TRANSFER TO SAV ...4821' },
-    { id: 'e-rent', amount: 1650, categoryId: 'bills', note: 'Maple Court Apts', ts: ts(2026, 10, 1), accountId: 'acct-checking' },
-    { id: 'e-rent2', amount: 1650, categoryId: 'bills', note: 'Maple Court Apts', ts: ts(2026, 9, 1), accountId: 'acct-checking' },
-    { id: 'e-chase-b', amount: 1566.75, categoryId: 'bills', note: 'Chase card payment', ts: ts(2026, 10, 8), accountId: 'acct-checking', isTransfer: true },
-    { id: 'e-chase-c', amount: 1566.75, categoryId: 'other', note: 'Payment Thank You', ts: ts(2026, 10, 7), accountId: 'acct-chase', isTransfer: true },
-    { id: 'e-coffee', amount: 6.45, categoryId: 'dining', note: 'Starbucks', ts: ts(2026, 10, 15), accountId: 'acct-checking' },
-    { id: 'e-xfer-y', amount: 200, categoryId: 'other', note: 'Transfer to savings', ts: ts(2026, 10, 15), accountId: 'acct-checking', isTransfer: true, transferKind: 'other', bankText: 'ONLINE TRANSFER TO SAV ...4821' }
-  ];
-  const transferPairs = [{ id: 'tp1', entryIds: ['e-chase-b', 'e-chase-c'], auto: true, unlinked: false, createdAt: Date.now() }];
-  const transferPatterns = [{ id: 'pat1', pattern: 'online transfer to sav', createdAt: Date.now() }];
   const categories = [
+    { id: 'income', name: 'Income', emoji: '💵', icon: 'circle-dot', color: '#34C77B' },
     { id: 'dining', name: 'Dining', icon: 'utensils', color: '#ff922b' },
+    { id: 'groceries', name: 'Groceries', icon: 'shopping-cart', color: '#4dabf7' },
     { id: 'bills', name: 'Bills', icon: 'receipt', color: '#cc5de8' },
     { id: 'other', name: 'Other', icon: 'boxes', color: '#878e96' }
   ];
+
+  const entries = [];
+  const push = (e) => entries.push(e);
+
+  // Biweekly paychecks (Fridays) — Jul through Oct 2026
+  const payFridays = [
+    ts(2026, 6, 3), ts(2026, 6, 17), ts(2026, 6, 31),
+    ts(2026, 7, 14), ts(2026, 7, 28),
+    ts(2026, 8, 11), ts(2026, 8, 25),
+    ts(2026, 9, 9), ts(2026, 9, 23),
+    ts(2026, 10, 6)
+  ];
+  payFridays.forEach((t, i) => {
+    push({
+      id: 'pay-' + i, amount: 2140, categoryId: 'income', note: 'Acme Corp payroll',
+      ts: t, accountId: 'acct-checking', isDeposit: true
+    });
+  });
+
+  // Rent on the 1st (Sep 2025 Sat → Mon the 3rd for history; recent on the 1st)
+  [
+    [2026, 6, 1], [2026, 7, 1], [2026, 8, 1], [2026, 9, 1]
+  ].forEach(([y, m, d], i) => {
+    push({ id: 'rent-' + i, amount: 1650, categoryId: 'bills', note: 'Maple Court Apts', ts: ts(y, m, d), accountId: 'acct-checking' });
+  });
+
+  // Duke ~22nd
+  [
+    [2026, 6, 22], [2026, 7, 22], [2026, 8, 22], [2026, 9, 22]
+  ].forEach(([y, m, d], i) => {
+    push({ id: 'duke-' + i, amount: 142.4, categoryId: 'bills', note: 'Duke Energy', ts: ts(y, m, d), accountId: 'acct-checking' });
+  });
+
+  // Chase autopay pairs (8th)
+  [
+    ['chase-b1', 'chase-c1', ts(2026, 7, 8), ts(2026, 7, 7), 1488.2],
+    ['chase-b2', 'chase-c2', ts(2026, 8, 8), ts(2026, 8, 7), 1522.5],
+    ['chase-b3', 'chase-c3', ts(2026, 9, 8), ts(2026, 9, 7), 1566.75]
+  ].forEach(([bid, cid, bts, cts, amt]) => {
+    push({ id: bid, amount: amt, categoryId: 'bills', note: 'CREDIT CRD AUTOPAY', ts: bts, accountId: 'acct-checking', isTransfer: true, bankText: 'CREDIT CRD AUTOPAY' });
+    push({ id: cid, amount: amt, categoryId: 'other', note: 'Payment Thank You', ts: cts, accountId: 'acct-chase', isTransfer: true });
+  });
+
+  const transferPairs = [
+    { id: 'tp1', entryIds: ['chase-b1', 'chase-c1'], auto: true, unlinked: false, createdAt: Date.now() },
+    { id: 'tp2', entryIds: ['chase-b2', 'chase-c2'], auto: true, unlinked: false, createdAt: Date.now() },
+    { id: 'tp3', entryIds: ['chase-b3', 'chase-c3'], auto: true, unlinked: false, createdAt: Date.now() }
+  ];
+
+  // Monthly savings transfer (other account)
+  [ts(2026, 7, 30), ts(2026, 8, 30), ts(2026, 9, 30)].forEach((t, i) => {
+    push({
+      id: 'sav-' + i, amount: 200, categoryId: 'other', note: 'Transfer to savings', ts: t,
+      accountId: 'acct-checking', isTransfer: true, transferKind: 'other',
+      bankText: 'ONLINE TRANSFER TO SAV ...4821'
+    });
+  });
+
+  // Scattered daily-ish debits (last ~10 weeks)
+  const debits = [
+    ['coffee-1', 6.45, 'Starbucks', ts(2026, 9, 15)],
+    ['coffee-2', 4.2, 'Dunkin', ts(2026, 9, 12)],
+    ['groc-1', 54.3, 'Trader Joes', ts(2026, 9, 10)],
+    ['groc-2', 61.2, 'Kroger', ts(2026, 9, 3)],
+    ['lunch-1', 12.8, 'Chipotle', ts(2026, 8, 28)],
+    ['gas-1', 38.5, 'Shell', ts(2026, 8, 20)],
+    ['coffee-3', 5.9, 'Starbucks', ts(2026, 8, 14)],
+    ['groc-3', 48.1, 'Kroger', ts(2026, 8, 6)],
+    ['lunch-2', 9.5, 'Panera', ts(2026, 7, 29)],
+    ['coffee-4', 6.1, 'Starbucks', ts(2026, 7, 22)],
+    ['groc-4', 72.4, 'Trader Joes', ts(2026, 7, 15)],
+    ['lunch-3', 11.2, 'Chipotle', ts(2026, 7, 8)]
+  ];
+  debits.forEach(([id, amt, note, t]) => {
+    const cat = /starbucks|dunkin|chipotle|panera/i.test(note) ? 'dining' : /kroger|trader/i.test(note) ? 'groceries' : 'other';
+    push({ id, amount: amt, categoryId: cat, note, ts: t, accountId: 'acct-checking' });
+  });
+
+  // Future-dated rows in log (should not break detection)
+  push({ id: 'rent-future', amount: 1650, categoryId: 'bills', note: 'Maple Court Apts', ts: ts(2026, 10, 1), accountId: 'acct-checking' });
+  push({ id: 'pay-future', amount: 2140, categoryId: 'income', note: 'Acme Corp payroll', ts: ts(2026, 10, 20), accountId: 'acct-checking', isDeposit: true });
+
+  const transferPatterns = [{ id: 'pat1', pattern: 'online transfer to sav', createdAt: Date.now() }];
   return { accounts, entries, transferPairs, transferPatterns, categories };
 }
 
+async function shot(page, name) {
+  for (const dir of OUT_DIRS) {
+    mkdirSync(dir, { recursive: true });
+    await page.screenshot({ path: join(dir, name) });
+  }
+}
+
 async function run() {
-  mkdirSync(OUT, { recursive: true });
+  OUT_DIRS.forEach((d) => mkdirSync(d, { recursive: true }));
   const srv = server();
   await new Promise((r) => srv.listen(PORT, r));
   const browser = await chromium.launch();
-  const page = await browser.newPage({ viewport: { width: 428, height: 926 } });
+  const page = await browser.newPage({ viewport: VIEWPORT });
 
   await page.addInitScript(() => {
     const t = new Date(2026, 9, 16, 14, 0, 0);
@@ -102,29 +180,46 @@ async function run() {
     localStorage.setItem('expenseLogger.ui.v1', JSON.stringify({ tab: 'summary' }));
   }, data);
   await page.reload({ waitUntil: 'networkidle' });
-  await page.waitForTimeout(300);
+  await page.waitForTimeout(350);
 
-  await page.screenshot({ path: join(OUT, 'home-forecast-card-light.png'), fullPage: true });
+  await shot(page, 'home-forecast-card-light.png');
 
   await page.click('#homeForecastCard');
   await page.waitForSelector('#tab-forecast:not([hidden])');
-  await page.waitForTimeout(350);
-  await page.screenshot({ path: join(OUT, 'forecast-light.png'), fullPage: true });
+  await page.waitForTimeout(400);
+  await shot(page, 'forecast-light.png');
 
   await page.emulateMedia({ colorScheme: 'dark' });
-  await page.waitForTimeout(200);
-  await page.screenshot({ path: join(OUT, 'forecast-dark.png'), fullPage: true });
+  await page.waitForTimeout(250);
+  await shot(page, 'forecast-dark.png');
   await page.emulateMedia({ colorScheme: 'light' });
+
+  await page.click('#forecastInfoBtn');
+  await page.waitForSelector('#forecastInfoModal.show');
+  await page.waitForTimeout(MODAL_MS);
+  await shot(page, 'forecast-info-popover.png');
+  await page.click('#forecastInfoCloseBtn');
+  await page.waitForTimeout(MODAL_MS);
+
+  const firstUpcoming = await page.$('.forecast-up-row[data-forecast-item]');
+  if (firstUpcoming) {
+    await firstUpcoming.click();
+    await page.waitForSelector('#forecastItemEditModal.show');
+    await page.waitForTimeout(MODAL_MS);
+    await shot(page, 'forecast-upcoming-edit-sheet.png');
+    await page.click('#forecastItemEditCancelBtn');
+    await page.waitForTimeout(MODAL_MS);
+  }
 
   await page.click('#forecastUpdateBtn');
   await page.waitForSelector('#balanceSheet.show');
   await page.waitForTimeout(MODAL_MS);
-  await page.screenshot({ path: join(OUT, 'set-balance-sheet.png'), fullPage: true });
+  await shot(page, 'set-balance-sheet.png');
   await page.click('#balanceSheetClose');
   await page.waitForTimeout(MODAL_MS);
 
   await page.click('#forecastBackBtn');
-  await page.waitForTimeout(200);
+  await page.waitForTimeout(250);
   await page.click('button[data-tab="history"]');
   await page.waitForTimeout(300);
   await page.click('[data-activity-range="all"]');
@@ -132,14 +227,14 @@ async function run() {
   await page.click('.activity-account-segment[data-account-id="acct-checking"]');
   await page.waitForTimeout(200);
   const opened = await page.evaluate(() => {
-    const row = document.querySelector('.activity-row[data-id="e-xfer-y"]');
+    const row = document.querySelector('.activity-row[data-id="sav-2"]');
     if (row) { row.click(); return true; }
     return false;
   });
   if (!opened) throw new Error('transfer row not found');
   await page.waitForSelector('#otherTransferSheet.show');
   await page.waitForTimeout(MODAL_MS);
-  await page.screenshot({ path: join(OUT, 'transfer-other-account-detail.png'), fullPage: true });
+  await shot(page, 'transfer-other-account-detail.png');
   await page.evaluate(() => {
     const s = document.getElementById('otherTransferSheet');
     if (s) s.classList.remove('show');
@@ -147,20 +242,20 @@ async function run() {
   await page.waitForTimeout(MODAL_MS);
 
   await page.click('button[data-tab="settings"]');
-  await page.waitForTimeout(200);
+  await page.waitForTimeout(250);
   const fileInput = await page.$('#importFileInput');
   const sampleBank = join(ROOT, 'test/fixtures/sample-bank.xlsx');
   if (fileInput && existsSync(sampleBank)) {
     await fileInput.setInputFiles(sampleBank);
-    await page.waitForSelector('#importAccountModal.show', { timeout: 8000 });
+    await page.waitForSelector('#importAccountModal.show', { timeout: 12000 });
     await page.waitForTimeout(MODAL_MS);
     await page.click('#importAccountContinueBtn');
     await page.waitForSelector('#importModal.show');
     await page.waitForTimeout(MODAL_MS);
-    await page.screenshot({ path: join(OUT, 'import-review-auto-transfer.png'), fullPage: true });
+    await shot(page, 'import-review-auto-transfer.png');
   }
 
-  console.log('Screenshots saved to', OUT);
+  console.log('Screenshots saved to', OUT_DIRS.join(', '));
   await browser.close();
   srv.close();
 }

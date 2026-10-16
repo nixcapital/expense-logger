@@ -32,6 +32,18 @@ function entry(id, amount, note, dayTs, extra) {
   }, extra || {});
 }
 
+console.log('forecast-test: two-post monthly rent (low confidence)');
+var rentTwo = [
+  entry('rt1', 1650, 'Maple Court Apts', ts(2026, 8, 1), {}),
+  entry('rt2', 1650, 'Maple Court Apts', ts(2026, 9, 1), {})
+];
+var nowOct = ts(2026, 9, 16);
+var rentTwoSched = FC.detectRecurringSchedules(rentTwo, {
+  checkingId: CHECKING, sinceMs: 0, nowMs: nowOct, kind: 'outflow', transferPairs: []
+});
+assert.ok(rentTwoSched.length >= 1, 'two rent posts detected');
+assert.strictEqual(rentTwoSched[0].confidence, 'low');
+
 console.log('forecast-test: monthly dom paycheck');
 const paychecks = [
   entry('p1', 2140, 'ACME CORP PAYROLL', ts(2026, 7, 15), { isDeposit: true, categoryId: 'other' }),
