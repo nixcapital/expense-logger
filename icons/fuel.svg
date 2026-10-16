@@ -1,0 +1,7 @@
+<!-- PLACEHOLDER: replace with Canva Pro export (same filename); keep data-part groups -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none">
+
+  <g data-part="pump"><path d="M6 20V8l6-4v16M6 12h6" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"/><path d="M14 10h4v10" stroke="currentColor" stroke-width="1.75"/></g>
+  <g data-part="nozzle"><path d="M16 10h2v3h-2" stroke="currentColor" stroke-width="1.75"/></g>
+  <g data-part="drop"><circle cx="17" cy="17" r="1" fill="currentColor"/></g>
+</svg>

@@ -1,0 +1,6 @@
+<!-- PLACEHOLDER: replace with Canva Pro export (same filename); keep data-part groups -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none">
+
+  <g data-part="paper"><path d="M7 4h10v16l-2-1.5L13 20l-2-1.5L9 20l-2-1.5L5 20V4z" stroke="currentColor" stroke-width="1.75"/></g>
+  <g data-part="lines"><path d="M9 8h6M9 12h6" stroke="currentColor" stroke-width="1.75"/></g>
+</svg>

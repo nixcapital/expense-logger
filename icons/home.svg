@@ -1,0 +1,6 @@
+<!-- PLACEHOLDER: replace with Canva Pro export (same filename); keep data-part groups -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none">
+
+  <g data-part="house"><path d="M5 11V20h14V11M12 4l7 7" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"/></g>
+  <g data-part="window"><rect x="10" y="13" width="4" height="4" rx=".5" fill="currentColor" opacity=".35"/></g>
+</svg>

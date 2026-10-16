@@ -1,0 +1,6 @@
+<!-- PLACEHOLDER: replace with Canva Pro export (same filename); keep data-part groups -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none">
+
+  <g data-part="body"><path d="M5 16l1-5h12l1 5M7 16h10" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"/></g>
+  <g data-part="wheels"><circle cx="8" cy="17" r="1.25" fill="currentColor"/><circle cx="16" cy="17" r="1.25" fill="currentColor"/></g>
+</svg>

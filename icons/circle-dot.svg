@@ -1,0 +1,7 @@
+<!-- PLACEHOLDER: replace with Canva Pro export (same filename); keep data-part groups -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none">
+
+  <g data-part="box"><path d="M6 9h12v10H6V9z" stroke="currentColor" stroke-width="1.75"/></g>
+  <g data-part="lid"><path d="M5 9h14l-1-3H6l-1 3z" stroke="currentColor" stroke-width="1.75"/></g>
+  <g data-part="dot"><circle cx="12" cy="14" r="1.5" fill="currentColor"/></g>
+</svg>

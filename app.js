@@ -16,6 +16,28 @@
   var IMPORT_SETTINGS_KEY = 'expenseLogger.importSettings.v1';
 
   var APP_VERSION = '1.3.0';
+  var EI = window.ExpenseIcons;
+
+  function iconBadge(cat, size) {
+    return EI ? EI.badgeHTML(cat, { size: size || 'md' }) : '';
+  }
+  function uiIcon(id, size) {
+    return EI ? EI.uiIconHTML(id, { size: size || 'md' }) : '';
+  }
+  function escHtml(s) {
+    return EI ? EI.escHtml(s) : String(s);
+  }
+  function catPillHTML(cat) {
+    return '<span class="cat-pill cat-pill--icon" style="color:' + cat.color + '; border-color:' + cat.color + '55;">'
+      + iconBadge(cat, 'xs') + '<span>' + escHtml(cat.name) + '</span></span>';
+  }
+  var lastSavedEntryId = null;
+  function playCatIcon(node) {
+    if (EI && EI.playIconAnimation) EI.playIconAnimation(node);
+  }
+  function refreshIconObservers(root) {
+    if (EI && EI.scanBadgesForReveal) EI.scanBadgesForReveal(root || document);
+  }
 
   // ---------- IndexedDB for receipts ----------
   var DB_NAME = 'expenseLogger';
@@ -93,12 +115,12 @@
 
   // ---------- Defaults ----------
   var DEFAULT_CATEGORIES = [
-    { id: 'groceries', name: 'Groceries', emoji: '🛒', color: '#4dabf7' },
-    { id: 'dining',    name: 'Dining',    emoji: '🍽️', color: '#ff922b' },
-    { id: 'gas',       name: 'Gas',       emoji: '⛽', color: '#51cf66' },
-    { id: 'bills',     name: 'Bills',     emoji: '📄', color: '#cc5de8' },
-    { id: 'fun',       name: 'Fun',       emoji: '🎉', color: '#f783ac' },
-    { id: 'other',     name: 'Other',     emoji: '📦', color: '#adb5bd' }
+    { id: 'groceries', name: 'Groceries', emoji: '🛒', icon: 'shopping-cart', color: '#4dabf7' },
+    { id: 'dining',    name: 'Dining',    emoji: '🍽️', icon: 'utensils', color: '#ff922b' },
+    { id: 'gas',       name: 'Gas',       emoji: '⛽', icon: 'fuel', color: '#51cf66' },
+    { id: 'bills',     name: 'Bills',     emoji: '📄', icon: 'receipt', color: '#cc5de8' },
+    { id: 'fun',       name: 'Fun',       emoji: '🎉', icon: 'ticket', color: '#f783ac' },
+    { id: 'other',     name: 'Other',     emoji: '📦', icon: 'circle-dot', color: '#adb5bd' }
   ];
 
   // ---------- State ----------
@@ -113,7 +135,7 @@
   var pendingDelete = null;
   var undoTimer = null;
   var editingCategoryId = null;
-  var selectedEmoji = '📦';
+  var selectedIconId = 'circle-dot';
   var selectedColor = '#adb5bd';
   var pendingReceiptBlob = null; // { id, blob } not yet attached
   var editingEntryId = null;     // id of entry being edited (modal)
@@ -189,7 +211,7 @@
   var $catModal = $('catModal');
   var $catModalTitle = $('catModalTitle');
   var $catNameInput = $('catNameInput');
-  var $emojiPicker = $('emojiPicker');
+  var $iconPicker = $('iconPicker');
   var $colorSwatches = $('colorSwatches');
 
   var $receiptModal = $('receiptModal');
@@ -582,8 +604,7 @@
       btn.type = 'button';
       btn.className = 'cat-btn';
       btn.dataset.id = c.id;
-      btn.innerHTML = '<span class="emoji"></span><span></span>';
-      btn.firstChild.textContent = c.emoji;
+      btn.innerHTML = iconBadge(c, 'lg') + '<span></span>';
       btn.lastChild.textContent = c.name;
       btn.style.setProperty('--cat-ring', c.color);
       btn.addEventListener('click', function () {
@@ -591,10 +612,12 @@
         Array.prototype.forEach.call($cats.children, function (el) {
           el.classList.toggle('selected', el.dataset.id === c.id);
         });
+        playCatIcon(btn.querySelector('.cat-badge'));
         updateSaveState();
       });
       $cats.appendChild(btn);
     });
+    refreshIconObservers($cats);
     if (selectedCat && categories.some(function (c) { return c.id === selectedCat; })) {
       Array.prototype.forEach.call($cats.children, function (el) {
         el.classList.toggle('selected', el.dataset.id === selectedCat);
@@ -638,10 +661,10 @@
     top.className = 'top';
 
     var pill = document.createElement('span');
-    pill.className = 'cat-pill';
-    pill.textContent = cat.emoji + ' ' + cat.name;
+    pill.className = 'cat-pill cat-pill--icon';
     pill.style.color = cat.color;
     pill.style.borderColor = cat.color + '55';
+    pill.innerHTML = iconBadge(cat, 'xs') + '<span>' + escHtml(cat.name) + '</span>';
     top.appendChild(pill);
 
     if (e.recurringId) {
@@ -712,6 +735,7 @@
     recent.forEach(function (e) { frag.appendChild(createEntryRow(e)); });
     $recentEl.innerHTML = '';
     $recentEl.appendChild(frag);
+    refreshIconObservers($recentEl);
   }
 
   function getFilteredEntries() {
@@ -772,9 +796,8 @@
       openEntryEditor(e.id);
     });
     var chip = document.createElement('span');
-    chip.className = 'cat-chip';
-    chip.textContent = cat.emoji;
-    chip.style.background = 'color-mix(in srgb, ' + cat.color + ' 16%, transparent)';
+    chip.className = 'cat-chip cat-chip--badge';
+    chip.innerHTML = iconBadge(cat, 'sm');
     var main = document.createElement('div');
     main.className = 'row-main';
     var title = document.createElement('div');
@@ -784,8 +807,8 @@
     sub.className = 'row-sub';
     var subBits = [cat.name];
     if (e.recurringId) subBits.push('Recurring');
-    if (e.hasReceipt) subBits.push('📷');
-    sub.textContent = subBits.join(' · ');
+    if (e.hasReceipt) subBits.push(uiIcon('ui-camera', 'xs'));
+    sub.innerHTML = subBits.join(' · ');
     main.appendChild(title);
     main.appendChild(sub);
     var amt = document.createElement('span');
@@ -838,6 +861,12 @@
       frag.appendChild(flat);
       $entriesEl.innerHTML = '';
       $entriesEl.appendChild(frag);
+      if (lastSavedEntryId) {
+        var savedRow = $entriesEl.querySelector('.activity-row[data-id="' + lastSavedEntryId + '"]');
+        if (savedRow) playCatIcon(savedRow.querySelector('.cat-badge'));
+        lastSavedEntryId = null;
+      }
+      refreshIconObservers($entriesEl);
       return;
     }
 
@@ -865,6 +894,12 @@
     });
     $entriesEl.innerHTML = '';
     $entriesEl.appendChild(frag);
+    if (lastSavedEntryId) {
+      var savedRow = $entriesEl.querySelector('.activity-row[data-id="' + lastSavedEntryId + '"]');
+      if (savedRow) playCatIcon(savedRow.querySelector('.cat-badge'));
+      lastSavedEntryId = null;
+    }
+    refreshIconObservers($entriesEl);
   }
 
   // ---------- Undo ----------
@@ -1011,7 +1046,7 @@
       var c = getCat(catId);
       var amt = byCat[catId];
       var pct = total > 0 ? Math.round((amt / total) * 100) : 0;
-      $donutCenterLabel.textContent = c.emoji + ' ' + c.name;
+      $donutCenterLabel.innerHTML = '<span class="donut-center-label-wrap">' + iconBadge(c, 'xs') + '<span>' + escHtml(c.name) + '</span></span>';
       $donutCenterValue.textContent = fmtMoneyDisplay(amt);
       $donutCenterSub.textContent = pct + '% of spending';
     } else if (total === 0) {
@@ -1120,17 +1155,19 @@
         var bColor = r.amt > budgetLimit ? cssVar('--danger', '#FF5A5F') : r.c.color;
         budgetBar = '<div class="legend-budget-bar"><div class="legend-budget-fill" style="width:' + budgetPct + '%;background:' + bColor + '"></div></div>';
       }
-      row.innerHTML = '<span class="name"><span class="cat-chip" style="background:color-mix(in srgb,' + r.c.color + ' 16%, transparent)">' + r.c.emoji + '</span>'
-        + r.c.name + ' <span class="pct">· ' + pct + '%</span></span>'
+      row.innerHTML = '<span class="name">' + iconBadge(r.c, 'sm') + ' '
+        + escHtml(r.c.name) + ' <span class="pct">· ' + pct + '%</span></span>'
         + '<span class="amt">' + fmtMoneyDisplay(r.amt) + '</span>' + budgetBar;
       row.addEventListener('click', function () {
         selectedLegendCatId = selectedLegendCatId === r.c.id ? null : r.c.id;
+        playCatIcon(row.querySelector('.cat-badge'));
         renderLegendInteractive(byCat, total);
         drawDonutFrame(byCat, total, 1, selectedLegendCatId);
         updateDonutCenter(selectedLegendCatId, total, byCat);
       });
       $legendEl.appendChild(row);
     });
+    refreshIconObservers($legendEl);
   }
 
   var trendCtx = null;
@@ -1435,7 +1472,8 @@
     if (topCat) {
       var share = Math.round((topCat.amt / data.total) * 100);
       items.push({
-        icon: topCat.c.emoji,
+        kickerIcon: 'category',
+        cat: topCat.c,
         title: 'Top category',
         text: topCat.c.name + ' leads at $' + fmtMoney(topCat.amt) + ' (' + share + '% of the month).'
       });
@@ -1446,7 +1484,7 @@
       var dir = diff > 0 ? 'more' : diff < 0 ? 'less' : 'the same as';
       var pctTxt = prevTotal > 0 ? ' (' + (diff >= 0 ? '+' : '') + Math.round((diff / prevTotal) * 100) + '%)' : '';
       items.push({
-        icon: diff > 0 ? '📈' : diff < 0 ? '📉' : '➡️',
+        kickerIcon: diff > 0 ? 'ui-trend-up' : diff < 0 ? 'ui-trend-down' : 'ui-trend-flat',
         title: 'Vs last month',
         text: diff === 0
           ? 'Spending matches last month at $' + fmtMoney(data.total) + '.'
@@ -1457,7 +1495,7 @@
     var merchant = topMerchantNote(data.entries);
     if (merchant) {
       items.push({
-        icon: '🏷️',
+        kickerIcon: 'ui-note',
         title: 'Top note',
         text: '"' + merchant.note + '" — $' + fmtMoney(merchant.sum)
           + (merchant.count > 1 ? ' across ' + merchant.count + ' entries' : '') + '.'
@@ -1470,14 +1508,14 @@
       if (dom > 0) {
         var projected = (data.total / dom) * dim;
         items.push({
-          icon: '🔮',
+          kickerIcon: 'ui-insight',
           title: 'Month-end forecast',
           text: 'At today\'s pace you\'ll land around $' + fmtMoney(projected) + ' by the ' + monthShort(new Date(y, m, 1)) + ' close.'
         });
       }
     } else if (!isCurrent && data.total > 0) {
       items.push({
-        icon: '📅',
+        kickerIcon: 'ui-calendar',
         title: 'Month closed',
         text: 'You spent $' + fmtMoney(data.total) + ' across ' + data.entries.length + ' transaction'
           + (data.entries.length === 1 ? '' : 's') + '.'
@@ -1492,7 +1530,8 @@
         var pctCh = Math.round(((cur - prev) / prev) * 100);
         if (Math.abs(pctCh) >= 8) {
           items.unshift({
-            icon: c.emoji,
+            kickerIcon: 'category',
+            cat: c,
             title: 'Insight',
             text: c.name + ' is ' + (pctCh > 0 ? 'up' : 'down') + ' ' + Math.abs(pctCh) + '% vs last month'
           });
@@ -1500,11 +1539,18 @@
       }
     });
 
+    function insightKicker(it) {
+      var lead = '';
+      if (it.kickerIcon === 'category' && it.cat) lead = iconBadge(it.cat, 'xs');
+      else if (it.kickerIcon) lead = uiIcon(it.kickerIcon, 'xs');
+      return '<span class="insight-kicker-inner">' + lead + '<span>' + escHtml(it.title) + '</span></span>';
+    }
+
     var html = '';
     items.slice(0, 8).forEach(function (it) {
       html += '<div class="insight-chip" role="listitem">'
-        + '<p class="insight-kicker">' + (it.title === 'Insight' ? '💡 Insight' : it.icon + ' ' + it.title) + '</p>'
-        + '<p class="insight-text">' + it.text + '</p></div>';
+        + '<p class="insight-kicker">' + insightKicker(it) + '</p>'
+        + '<p class="insight-text">' + escHtml(it.text) + '</p></div>';
     });
     $insightsList.innerHTML = html;
   }
@@ -1622,7 +1668,8 @@
       html += '<div class="budget-row">'
         + '<div class="budget-header">'
         + '<span class="cat-name"><span class="dot" style="background:' + c.color + '"></span>' + c.name + '</span>'
-        + '<span class="amounts' + (over ? ' over' : '') + '">' + fmtMoneyDisplay(spent) + ' / ' + fmtMoneyDisplay(limit) + (over ? ' ⚠️' : '') + '</span>'
+        + '<span class="amounts' + (over ? ' over' : '') + '">' + fmtMoneyDisplay(spent) + ' / ' + fmtMoneyDisplay(limit)
+        + (over ? ' ' + uiIcon('ui-alert', 'xs') : '') + '</span>'
         + '</div>'
         + '<div class="budget-bar-bg"><div class="budget-bar-fill' + (over ? ' over' : '') + '" style="width:' + pct + '%; background:' + barColor + ';"></div></div>'
         + '</div>';
@@ -1671,7 +1718,8 @@
     html += '<div class="summary-row"><span class="label">Daily average' + (isCurrentMonth ? ' (so far)' : '') + '</span><span class="value">' + fmtMoneyDisplay(avgPerDay) + '</span></div>';
     if (largest) {
       var lcat = getCat(largest.categoryId);
-      html += '<div class="summary-row"><span class="label">Largest expense</span><span class="value">' + fmtMoneyDisplay(largest.amount) + ' (' + lcat.emoji + ')</span></div>';
+      html += '<div class="summary-row"><span class="label">Largest expense</span><span class="value summary-value-icon">'
+        + fmtMoneyDisplay(largest.amount) + ' ' + iconBadge(lcat, 'xs') + '</span></div>';
     }
     $monthlySummary.innerHTML = html;
     $yearLabel.textContent = '· ' + y;
@@ -2025,7 +2073,7 @@
       html += '<h3>By category</h3>';
       html += '<table class="report-table"><thead><tr><th>Category</th><th>Share</th><th>Amount</th></tr></thead><tbody>';
       rows.forEach(function (r) {
-        html += '<tr><td>' + r.c.emoji + ' ' + r.c.name + '</td><td>' + pctLabel(r.amt, data.total) + '</td><td>' + fmtMoneyDisplay(r.amt) + '</td></tr>';
+        html += '<tr><td class="report-cat-cell">' + iconBadge(r.c, 'xs') + ' ' + escHtml(r.c.name) + '</td><td>' + pctLabel(r.amt, data.total) + '</td><td>' + fmtMoneyDisplay(r.amt) + '</td></tr>';
       });
       html += '</tbody></table></div>';
     }
@@ -2039,7 +2087,8 @@
       budgetRows.forEach(function (c) {
         var spent = data.byCat[c.id] || 0;
         var over = spent > budgets[c.id];
-        html += '<tr><td>' + c.emoji + ' ' + c.name + (over ? ' ⚠️' : '') + '</td><td>' + fmtMoneyDisplay(budgets[c.id]) + '</td><td style="color:' + (over ? 'var(--danger)' : 'inherit') + '">' + fmtMoneyDisplay(spent) + '</td></tr>';
+        html += '<tr><td class="report-cat-cell">' + iconBadge(c, 'xs') + ' ' + escHtml(c.name)
+          + (over ? ' ' + uiIcon('ui-alert', 'xs') : '') + '</td><td>' + fmtMoneyDisplay(budgets[c.id]) + '</td><td style="color:' + (over ? 'var(--danger)' : 'inherit') + '">' + fmtMoneyDisplay(spent) + '</td></tr>';
       });
       html += '</tbody></table></div>';
     }
@@ -2054,8 +2103,8 @@
         var d = new Date(e.ts);
         var cat = getCat(e.categoryId);
         var day = d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
-        var label = cat.emoji + ' ' + cat.name + (e.note ? ' — ' + e.note : '');
-        html += '<tr><td>' + day + '</td><td>' + label + '</td><td>' + fmtMoneyDisplay(e.amount) + '</td></tr>';
+        var label = iconBadge(cat, 'xs') + ' ' + escHtml(cat.name) + (e.note ? ' — ' + escHtml(e.note) : '');
+        html += '<tr><td>' + day + '</td><td class="report-cat-cell">' + label + '</td><td>' + fmtMoneyDisplay(e.amount) + '</td></tr>';
       });
       html += '</tbody></table></div>';
     } else {
@@ -2067,15 +2116,44 @@
   }
 
   // ---------- Category management ----------
-  var EMOJI_OPTIONS = ['🛒','🍽️','⛽','📄','🎉','📦','🏠','🚗','👕','💊','🎬','✈️','🐾','🎁','📱','💡','☕','🍺','🎮','📚','🏋️','💄','🧾','🔧'];
   var COLOR_OPTIONS = ['#4dabf7','#ff922b','#51cf66','#cc5de8','#f783ac','#adb5bd','#ff6b6b','#20c997','#fcc419','#845ef7','#339af0','#e599f7'];
+
+  function pickerPreviewCat(iconId) {
+    return {
+      id: 'picker',
+      name: ($catNameInput && $catNameInput.value.trim()) || 'Category',
+      icon: iconId,
+      color: selectedColor
+    };
+  }
+
+  function renderIconPicker() {
+    if (!$iconPicker || !EI) return;
+    $iconPicker.innerHTML = '';
+    var ids = EI.PICKER_ICON_IDS.concat([EI.LETTER_ID]);
+    ids.forEach(function (iconId) {
+      var btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'icon-picker-option' + (iconId === selectedIconId ? ' selected' : '');
+      btn.dataset.iconId = iconId;
+      btn.setAttribute('aria-label', iconId === EI.LETTER_ID ? 'Letter icon' : iconId.replace(/-/g, ' '));
+      btn.innerHTML = iconBadge(pickerPreviewCat(iconId), 'picker');
+      btn.addEventListener('click', function () {
+        selectedIconId = iconId;
+        Array.prototype.forEach.call($iconPicker.children, function (b) {
+          b.classList.toggle('selected', b.dataset.iconId === iconId);
+        });
+      });
+      $iconPicker.appendChild(btn);
+    });
+  }
 
   function renderCategoryList() {
     var html = '';
     categories.forEach(function (c) {
       html += '<div class="entry settings-inset-entry">'
         + '<div class="entry-info"><div class="top">'
-        + '<span class="settings-cat-emoji">' + c.emoji + '</span>'
+        + iconBadge(c, 'sm')
         + '<span style="font-weight:600;">' + c.name + '</span>'
         + '<span class="cat-pill" style="color:' + c.color + '; border-color:' + c.color + '55;">'
         + (budgets[c.id] ? fmtMoneyDisplay(budgets[c.id]) + '/mo' : 'No budget') + '</span>'
@@ -2086,6 +2164,7 @@
         + '</div></div>';
     });
     $categoryList.innerHTML = html;
+    refreshIconObservers($categoryList);
     Array.prototype.forEach.call($categoryList.querySelectorAll('[data-edit]'), function (btn) {
       btn.addEventListener('click', function () { openCategoryModal(btn.dataset.edit); });
     });
@@ -2124,28 +2203,15 @@
       var cat = getCat(id);
       $catModalTitle.textContent = 'Edit Category';
       $catNameInput.value = cat.name;
-      selectedEmoji = cat.emoji;
+      selectedIconId = cat.icon || (EI ? EI.resolveIconId(cat) : 'circle-dot');
       selectedColor = cat.color;
     } else {
       $catModalTitle.textContent = 'Add Category';
       $catNameInput.value = '';
-      selectedEmoji = '📦';
+      selectedIconId = 'circle-dot';
       selectedColor = '#adb5bd';
     }
-    $emojiPicker.innerHTML = '';
-    EMOJI_OPTIONS.forEach(function (em) {
-      var btn = document.createElement('button');
-      btn.type = 'button';
-      btn.className = 'emoji-option' + (em === selectedEmoji ? ' selected' : '');
-      btn.textContent = em;
-      btn.addEventListener('click', function () {
-        selectedEmoji = em;
-        Array.prototype.forEach.call($emojiPicker.children, function (b) {
-          b.classList.toggle('selected', b.textContent === em);
-        });
-      });
-      $emojiPicker.appendChild(btn);
-    });
+    renderIconPicker();
     $colorSwatches.innerHTML = '';
     COLOR_OPTIONS.forEach(function (col) {
       var sw = document.createElement('button');
@@ -2158,6 +2224,7 @@
         Array.prototype.forEach.call($colorSwatches.children, function (s) {
           s.classList.toggle('selected', s.dataset.color === col);
         });
+        renderIconPicker();
       });
       $colorSwatches.appendChild(sw);
     });
@@ -2171,11 +2238,11 @@
     if (editingCategoryId) {
       var cat = null;
       for (var i = 0; i < categories.length; i++) if (categories[i].id === editingCategoryId) { cat = categories[i]; break; }
-      if (cat) { cat.name = name; cat.emoji = selectedEmoji; cat.color = selectedColor; }
+      if (cat) { cat.name = name; cat.icon = selectedIconId; cat.color = selectedColor; }
     } else {
       var newId = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || uid();
       if (categories.some(function (c) { return c.id === newId; })) newId = newId + '-' + uid().slice(0, 4);
-      categories.push({ id: newId, name: name, emoji: selectedEmoji, color: selectedColor });
+      categories.push({ id: newId, name: name, emoji: '📦', icon: selectedIconId, color: selectedColor });
     }
     saveCategories();
     $catModal.classList.remove('show');
@@ -2188,7 +2255,7 @@
   function budgetInputHTML(catId, value, attr) {
     return '<div class="field budget-settings-field">'
       + '<label style="display:flex; align-items:center; gap:6px; text-transform:none; letter-spacing:0; font-size:14px; color:var(--text);">'
-      + '<span class="settings-cat-emoji">' + getCat(catId).emoji + '</span> ' + getCat(catId).name + '</label>'
+      + iconBadge(getCat(catId), 'xs') + ' ' + escHtml(getCat(catId).name) + '</label>'
       + '<div class="amount-wrap"><span class="dollar">$</span>'
       + '<input type="number" inputmode="decimal" step="0.01" min="0" placeholder="No budget" '
       + attr + '="' + catId + '" value="' + (value || '') + '"></div></div>';
@@ -2244,7 +2311,7 @@
       var cat = getCat(r.categoryId);
       html += '<div class="entry settings-inset-entry">'
         + '<div class="entry-info"><div class="top">'
-        + '<span class="cat-pill" style="color:' + cat.color + '; border-color:' + cat.color + '55;">' + cat.emoji + ' ' + cat.name + '</span>'
+        + catPillHTML(cat)
         + '<span class="recurring-badge">Day ' + r.dayOfMonth + '</span></div>'
         + (r.note ? '<div class="note">' + r.note + '</div>' : '')
         + '</div><div class="entry-right">'
@@ -2304,6 +2371,7 @@
     var finish = function () {
       entries.push(entry);
       if (!saveEntries()) return;
+      lastSavedEntryId = entry.id;
       $amount.value = '';
       $note.value = '';
       $recurring.checked = false;
@@ -2357,7 +2425,7 @@
     var html = '';
     categories.forEach(function (c) {
       html += '<option value="' + c.id + '"' + (c.id === selectedId ? ' selected' : '') + '>' +
-        c.emoji + ' ' + c.name + '</option>';
+        escHtml(c.name) + '</option>';
     });
     $editCategory.innerHTML = html;
   }
@@ -3077,7 +3145,7 @@
       var d = r.ts ? new Date(r.ts).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : '—';
       var catOpts = '';
       categories.forEach(function (c) {
-        catOpts += '<option value="' + c.id + '"' + (c.id === r.categoryId ? ' selected' : '') + '>' + c.emoji + ' ' + c.name + '</option>';
+        catOpts += '<option value="' + c.id + '"' + (c.id === r.categoryId ? ' selected' : '') + '>' + escHtml(c.name) + '</option>';
       });
       listHtml += '<div class="import-row' + (r.status === 'transfer' ? ' is-transfer' : '') + '" data-idx="' + i + '">';
       listHtml += '<div class="import-row-top"><span class="import-row-date">' + d + '</span>';
@@ -3519,7 +3587,7 @@
     var currentVal = $filterCategory.value;
     var html = '<option value="">All categories</option>';
     categories.forEach(function (c) {
-      html += '<option value="' + c.id + '">' + c.emoji + ' ' + c.name + '</option>';
+      html += '<option value="' + c.id + '">' + escHtml(c.name) + '</option>';
     });
     $filterCategory.innerHTML = html;
     if (currentVal && categories.some(function (c) { return c.id === currentVal; })) $filterCategory.value = currentVal;
@@ -3926,6 +3994,7 @@
 
   registerSW();
 
+  function bootApp() {
   // ---------- Boot ----------
   categories = loadCategories();
   budgets = loadBudgets();
@@ -3948,7 +4017,6 @@
   })();
 
   migrate();
-  buildCategoryButtons();
   rebuildFilterDropdowns();
   renderAll();
   renderCategoryList();
@@ -3975,6 +4043,18 @@
 
   switchTab(currentTab);
 
+  if (EI && EI.hydrateUiIcons) EI.hydrateUiIcons(document);
+  refreshIconObservers(document);
   setTimeout(dismissSplash, prefersReducedMotion() ? 80 : 400);
+  }
+
+  if (EI && EI.preloadIcons) {
+    EI.preloadIcons(function () {
+      buildCategoryButtons();
+      bootApp();
+    });
+  } else {
+    bootApp();
+  }
 
 })();

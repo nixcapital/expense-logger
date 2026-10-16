@@ -1,0 +1,11 @@
+<!-- PLACEHOLDER: replace with Canva Pro export (same filename); keep data-part groups -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none">
+
+  <g data-part="popper"><path d="M5 8h14v8H5V8z" stroke="currentColor" stroke-width="1.75"/></g>
+  <g data-part="confetti">
+    <circle data-part="cf1" cx="9" cy="7.5" r=".45" fill="currentColor"/>
+    <circle data-part="cf2" cx="11.5" cy="6.8" r=".4" fill="currentColor"/>
+    <circle data-part="cf3" cx="14" cy="7.5" r=".45" fill="currentColor"/>
+    <circle data-part="cf4" cx="12" cy="8.2" r=".35" fill="currentColor"/>
+  </g>
+</svg>

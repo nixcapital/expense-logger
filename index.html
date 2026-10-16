@@ -14,6 +14,7 @@
 <link rel="icon" href="icon-192.png">
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
 <link rel="stylesheet" href="styles.css?v=1.3.0">
+<link rel="stylesheet" href="icon-animations.css?v=1.3.0">
 <title>Expense Logger</title>
 </head>
 <body>
@@ -75,7 +76,7 @@
 
   <div class="card insight-strip-card" id="homeRecapCard" hidden>
     <button type="button" class="recap-teaser" id="homeRecapBtn">
-      <span class="recap-teaser-icon" aria-hidden="true">✨</span>
+      <span class="recap-teaser-icon" data-ui-icon="ui-sparkles" data-ui-icon-size="md" aria-hidden="true"></span>
       <span id="homeRecapText">Your last month, wrapped</span>
       <span class="chevron" aria-hidden="true">›</span>
     </button>
@@ -193,7 +194,7 @@
     <button type="button" class="month-nav" id="reportMonthNext" aria-label="Next month">›</button>
   </div>
 
-  <button type="button" class="btn-secondary pill-btn" id="openWrappedBtn">✨ Spending Wrapped</button>
+  <button type="button" class="btn-secondary pill-btn pill-btn-with-icon" id="openWrappedBtn"><span data-ui-icon="ui-sparkles" data-ui-icon-size="sm" aria-hidden="true"></span> Spending Wrapped</button>
   <button class="btn-secondary pill-btn" id="reportExportPdfBtn" type="button">Print / Save as PDF</button>
   <div id="reportBody"></div>
 </section>
@@ -308,7 +309,7 @@
     <div class="cats add-cats" id="cats"></div>
     <div class="inset-card grouped-rows">
       <button type="button" class="grouped-row" id="addNoteRow">
-        <span class="row-icon">📝</span>
+        <span class="row-icon" data-ui-icon="ui-note" data-ui-icon-size="row" aria-hidden="true"></span>
         <span class="row-label">Note</span>
         <span class="row-value" id="addNotePreview">Add note</span>
         <span class="chevron">›</span>
@@ -317,14 +318,14 @@
         <input type="text" id="note" class="visually-hidden-input" placeholder="e.g. lunch with Sam" autocomplete="off" maxlength="80" tabindex="-1" aria-label="Note">
       </div>
       <button type="button" class="grouped-row" id="addDateRow">
-        <span class="row-icon">📅</span>
+        <span class="row-icon" data-ui-icon="ui-calendar" data-ui-icon-size="row" aria-hidden="true"></span>
         <span class="row-label">Date</span>
         <span class="row-value" id="addDatePreview">Today</span>
         <span class="chevron">›</span>
       </button>
       <input type="date" id="addDate" class="visually-hidden-input" tabindex="-1">
       <button type="button" class="grouped-row" id="receiptBtn">
-        <span class="row-icon">📷</span>
+        <span class="row-icon" data-ui-icon="ui-camera" data-ui-icon-size="row" aria-hidden="true"></span>
         <span class="row-label">Receipt</span>
         <span class="row-value" id="receiptBtnLabel">Add photo</span>
         <span class="chevron">›</span>
@@ -333,7 +334,7 @@
       <img id="receiptPreview" class="receipt-preview" alt="" hidden>
       <button class="del-btn receipt-clear-inline" id="receiptClearBtn" type="button" hidden aria-label="Remove receipt">✕</button>
       <label class="grouped-row switch-row">
-        <span class="row-icon">🔁</span>
+        <span class="row-icon" data-ui-icon="ui-repeat" data-ui-icon-size="row" aria-hidden="true"></span>
         <span class="row-label">Recurring monthly</span>
         <input type="checkbox" id="recurring" class="ios-switch">
       </label>
@@ -378,8 +379,8 @@
       <input type="text" id="catNameInput" placeholder="Category name" maxlength="20">
     </div>
     <div class="field">
-      <label>Emoji</label>
-      <div class="emoji-picker" id="emojiPicker"></div>
+      <label>Icon</label>
+      <div class="icon-picker" id="iconPicker"></div>
     </div>
     <div class="field">
       <label>Color</label>
@@ -475,6 +476,7 @@
   </div>
 </div>
 
+<script src="icon-system.js?v=1.3.0"></script>
 <script src="app.js?v=1.3.0"></script>
 </body>
 </html>
