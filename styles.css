@@ -63,16 +63,19 @@ html, body {
 }
 
 @media (prefers-color-scheme: light) {
+  :root {
+    --raised: #E9EDF3;
+  }
   .cat-btn {
-    background: var(--card);
-    border: 1px solid var(--sep);
+    background: var(--raised);
+    border: 1px solid rgba(14, 17, 22, 0.14);
   }
   .cat-btn.selected {
     border-width: 2px;
-    background: color-mix(in srgb, var(--cat-ring, var(--accent)) 14%, var(--card));
+    background: color-mix(in srgb, var(--cat-ring, var(--accent)) 16%, var(--raised));
   }
   .add-cats .cat-btn {
-    box-shadow: 0 1px 0 rgba(0, 0, 0, 0.04);
+    box-shadow: 0 1px 0 rgba(0, 0, 0, 0.05);
   }
 }
 
@@ -779,8 +782,17 @@ button.legend-row.legend-btn.active { background: color-mix(in srgb, var(--accen
   border-radius: var(--radius-card);
   overflow: hidden;
 }
-.inset-card .entry {
+.inset-card .entry,
+.inset-card .settings-inset-entry {
   padding: var(--sp-3) var(--sp-4);
+}
+.inset-card .budget-settings-field {
+  margin: 0;
+  padding: var(--sp-3) var(--sp-4);
+  border-bottom: 1px solid var(--sep);
+}
+.inset-card .budget-settings-field:last-child {
+  border-bottom: none;
 }
 .inset-card .entry .top {
   gap: var(--sp-3);

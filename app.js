@@ -315,9 +315,14 @@
     return 'rgb(' + parseInt(h.slice(0,2),16) + ', ' + parseInt(h.slice(2,4),16) + ', ' + parseInt(h.slice(4,6),16) + ')';
   }
   function hexDarken(hex, amt) {
-    var rgb = hexToRgb(hex);
-    if (!rgb) return hex;
-    return 'rgb(' + Math.round(rgb.r * (1 - amt)) + ',' + Math.round(rgb.g * (1 - amt)) + ',' + Math.round(rgb.b * (1 - amt)) + ')';
+    var h = String(hex || '').replace('#', '');
+    if (h.length === 3) h = h.split('').map(function (c) { return c + c; }).join('');
+    if (h.length !== 6) return hex;
+    var r = parseInt(h.slice(0, 2), 16);
+    var g = parseInt(h.slice(2, 4), 16);
+    var b = parseInt(h.slice(4, 6), 16);
+    if (isNaN(r) || isNaN(g) || isNaN(b)) return hex;
+    return 'rgb(' + Math.round(r * (1 - amt)) + ',' + Math.round(g * (1 - amt)) + ',' + Math.round(b * (1 - amt)) + ')';
   }
 
   function donutSegmentColor(hex) {
@@ -2068,7 +2073,7 @@
   function renderCategoryList() {
     var html = '';
     categories.forEach(function (c) {
-      html += '<div class="entry" style="padding:10px 0;">'
+      html += '<div class="entry settings-inset-entry">'
         + '<div class="entry-info"><div class="top">'
         + '<span class="settings-cat-emoji">' + c.emoji + '</span>'
         + '<span style="font-weight:600;">' + c.name + '</span>'
@@ -2181,9 +2186,9 @@
 
   // ---------- Budgets ----------
   function budgetInputHTML(catId, value, attr) {
-    return '<div class="field" style="margin-bottom:12px;">'
+    return '<div class="field budget-settings-field">'
       + '<label style="display:flex; align-items:center; gap:6px; text-transform:none; letter-spacing:0; font-size:14px; color:var(--text);">'
-      + '<span>' + getCat(catId).emoji + '</span> ' + getCat(catId).name + '</label>'
+      + '<span class="settings-cat-emoji">' + getCat(catId).emoji + '</span> ' + getCat(catId).name + '</label>'
       + '<div class="amount-wrap"><span class="dollar">$</span>'
       + '<input type="number" inputmode="decimal" step="0.01" min="0" placeholder="No budget" '
       + attr + '="' + catId + '" value="' + (value || '') + '"></div></div>';
@@ -2237,7 +2242,7 @@
     var html = '';
     recurringItems.forEach(function (r) {
       var cat = getCat(r.categoryId);
-      html += '<div class="entry" style="padding:10px 0;">'
+      html += '<div class="entry settings-inset-entry">'
         + '<div class="entry-info"><div class="top">'
         + '<span class="cat-pill" style="color:' + cat.color + '; border-color:' + cat.color + '55;">' + cat.emoji + ' ' + cat.name + '</span>'
         + '<span class="recurring-badge">Day ' + r.dayOfMonth + '</span></div>'
@@ -2417,17 +2422,11 @@
     if (!editingEntryId) return;
     var id = editingEntryId;
     if (!window.confirm('Delete this expense?')) return;
-    idbDelete('receipt:' + id).catch(function () {});
-    var idx = -1;
-    for (var i = 0; i < entries.length; i++) if (entries[i].id === id) { idx = i; break; }
-    if (idx !== -1) entries.splice(idx, 1);
-    saveEntries();
-    renderAll();
-    buildYearSelect(true);
-    if (currentTab === 'report') renderReport();
     $receiptModal.classList.remove('show');
     editingEntryId = null;
-    toast('Expense deleted');
+    softDeleteEntry(id);
+    buildYearSelect(true);
+    if (currentTab === 'report') renderReport();
   }
 
   // ---------- Receipt capture ----------
