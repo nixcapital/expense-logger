@@ -10,6 +10,7 @@
 <meta name="theme-color" content="#0f1117" media="(prefers-color-scheme: dark)">
 <meta name="theme-color" content="#f4f6fb" media="(prefers-color-scheme: light)">
 <link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon-192.png">
 <link rel="apple-touch-icon" href="icon-192.png">
 <link rel="stylesheet" href="styles.css">
 <title>Expense Logger</title>
@@ -81,6 +82,7 @@
     </div>
 
     <button class="save-btn" id="saveBtn" disabled>Save Expense</button>
+    <p class="save-hint" id="saveHint" aria-live="polite"></p>
   </div>
 
   <div class="card" id="recentCard">
@@ -103,7 +105,7 @@
 
   <div class="card">
     <h2>Spending <span class="month-label" id="summaryMonthLabel"></span></h2>
-    <p id="total-display"><span class="cur">$</span><span id="totalVal">0.00</span></p>
+    <p id="total-display"><span id="totalVal">$0.00</span></p>
     <canvas id="chart" width="600" height="200"></canvas>
     <div class="cat-legend" id="legend"></div>
   </div>
@@ -272,14 +274,38 @@
   </div>
 </div>
 
-<!-- Modal: receipt viewer -->
+<!-- Modal: edit expense / receipt -->
 <div class="modal-overlay" id="receiptModal">
-  <div class="modal">
-    <h3>Receipt</h3>
-    <img id="receiptModalImg" class="receipt-modal-img" alt="Receipt">
+  <div class="modal modal-wide">
+    <h3>Edit expense</h3>
+    <div class="field">
+      <label for="editAmount">Amount</label>
+      <div class="amount-wrap">
+        <span class="dollar">$</span>
+        <input type="number" id="editAmount" inputmode="decimal" step="0.01" min="0" placeholder="0.00">
+      </div>
+    </div>
+    <div class="field">
+      <label for="editCategory">Category</label>
+      <select id="editCategory"></select>
+    </div>
+    <div class="field">
+      <label for="editDate">Date</label>
+      <input type="date" id="editDate">
+    </div>
+    <div class="field">
+      <label for="editNote">Note</label>
+      <input type="text" id="editNote" placeholder="Optional note" autocomplete="off" maxlength="80">
+    </div>
+    <div class="field">
+      <label>Receipt</label>
+      <img id="receiptModalImg" class="receipt-modal-img" alt="Receipt" hidden>
+      <button class="btn-secondary danger" id="receiptModalDelete" type="button" hidden>Delete receipt</button>
+    </div>
     <div class="btn-row">
-      <button class="btn-secondary flex1" id="receiptModalClose" type="button">Close</button>
-      <button class="btn-secondary flex1 danger" id="receiptModalDelete" type="button">Delete</button>
+      <button class="btn-secondary danger" id="editDeleteBtn" type="button">Delete</button>
+      <button class="btn-secondary flex1" id="receiptModalClose" type="button">Cancel</button>
+      <button class="save-btn flex1" id="editSaveBtn" type="button">Save changes</button>
     </div>
   </div>
 </div>
@@ -293,7 +319,7 @@
       <input type="password" id="pinInput1" inputmode="numeric" pattern="[0-9]*" maxlength="8" autocomplete="new-password">
     </div>
     <div class="field">
-      <label for="pinInput2">Confirm</label>
+      <label for="pinInput2">Confirm passcode</label>
       <input type="password" id="pinInput2" inputmode="numeric" pattern="[0-9]*" maxlength="8" autocomplete="new-password">
     </div>
     <div class="btn-row">
