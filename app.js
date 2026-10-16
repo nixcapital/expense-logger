@@ -15,9 +15,16 @@
   var IMPORT_RULES_KEY    = 'expenseLogger.importRules.v1';
   var IMPORT_SETTINGS_KEY = 'expenseLogger.importSettings.v1';
   var META_KEY            = 'expenseLogger.meta.v1';
+  var ACCOUNTS_KEY        = 'expenseLogger.accounts.v1';
+  var TRANSFER_PAIRS_KEY  = 'expenseLogger.transferPairs.v1';
+  var TRANSFER_UNLINK_KEY = 'expenseLogger.transferUnlink.v1';
+  var IMPORT_ACCOUNT_PREFS_KEY = 'expenseLogger.importAccountPrefs.v1';
 
-  var APP_VERSION = '1.4.3';
-  var BACKUP_FORMAT = 1;
+  var APP_VERSION = '1.5.0';
+  var BACKUP_FORMAT = 2;
+  var BACKUP_FORMAT_LEGACY = 1;
+  var DEFAULT_ACCOUNT_CHECKING = 'acct-checking';
+  var DEFAULT_ACCOUNT_CHASE = 'acct-chase';
   var MS_DAY = 86400000;
   var BACKUP_NUDGE_AFTER_DAYS = 30;
   var BACKUP_NUDGE_MIN_ENTRIES = 50;
@@ -150,7 +157,16 @@
   var editingEntryId = null;     // id of entry being edited (modal)
   var importRules = [];
   var importSettings = { countCardPayments: false };
-  var pendingImport = null;      // { batchId, rows, fileName }
+  var pendingImport = null;      // { batchId, rows, fileName, accountId, layout }
+  var pendingImportAccount = null; // pre-review: { batchId, rows, fileName, layout, rowCount }
+  var accounts = [];
+  var transferPairs = [];
+  var transferUnlinkKeys = [];
+  var importAccountPrefs = {};
+  var selectedAddAccountId = '';
+  var newAccountType = 'bank';
+  var importAccountPickId = null;
+  var viewingTransferPairId = null;
 
   // ---------- DOM ----------
   var $ = function (id) { return document.getElementById(id); };
@@ -220,6 +236,24 @@
   var $activitySummaryTotal = $('activitySummaryTotal');
   var $activitySummaryCount = $('activitySummaryCount');
   var $activitySummaryAvg = $('activitySummaryAvg');
+  var $activityAccountSegments = $('activityAccountSegments');
+  var $importAccountModal = $('importAccountModal');
+  var $importAccountList = $('importAccountList');
+  var $importAccountFileMeta = $('importAccountFileMeta');
+  var $importAccountHint = $('importAccountHint');
+  var $importAccountContinueBtn = $('importAccountContinueBtn');
+  var $addAccountModal = $('addAccountModal');
+  var $newAccountName = $('newAccountName');
+  var $addAccountCancelBtn = $('addAccountCancelBtn');
+  var $addAccountSaveBtn = $('addAccountSaveBtn');
+  var $addAccountRow = $('addAccountRow');
+  var $addAccountPreview = $('addAccountPreview');
+  var $addAccountRowIcon = $('addAccountRowIcon');
+  var $addAccountSelect = $('addAccountSelect');
+  var $editAccount = $('editAccount');
+  var $transferDetailView = $('transferDetailView');
+  var $transferDetailBody = $('transferDetailBody');
+  var $transferDetailBackBtn = $('transferDetailBackBtn');
 
   var ACTIVITY_RANGE_IDS = ['this-month', 'last-month', '3-months', 'year', 'all'];
 
@@ -554,11 +588,12 @@
         dismissedWrapped: uiState.dismissedWrapped || {},
         reportChartMonths: uiState.reportChartMonths === 12 ? 12 : 6,
         reportTxSort: uiState.reportTxSort || 'latest',
-        activityRange: normalizeActivityRangeId(uiState.activityRange)
+        activityRange: normalizeActivityRangeId(uiState.activityRange),
+        activityAccountId: uiState.activityAccountId || ''
       }));
     } catch (e) {}
   }
-  var uiState = { dismissedWrapped: {}, reportChartMonths: 6, reportTxSort: 'latest', activityRange: 'this-month' };
+  var uiState = { dismissedWrapped: {}, reportChartMonths: 6, reportTxSort: 'latest', activityRange: 'this-month', activityAccountId: '' };
   function normalizeActivityRangeId(id) {
     if (ACTIVITY_RANGE_IDS.indexOf(id) !== -1) return id;
     return 'this-month';
@@ -575,6 +610,7 @@
           uiState.reportTxSort = p.reportTxSort;
         }
         uiState.activityRange = normalizeActivityRangeId(p.activityRange);
+        if (typeof p.activityAccountId === 'string') uiState.activityAccountId = p.activityAccountId;
         return p;
       }
     } catch (e) {}
@@ -593,6 +629,267 @@
   }
   function saveMetaObj(obj) {
     try { localStorage.setItem(META_KEY, JSON.stringify(obj || {})); } catch (e) {}
+  }
+
+  var DEFAULT_ACCOUNTS = [
+    { id: DEFAULT_ACCOUNT_CHECKING, name: 'Checking', type: 'bank', color: '#20C997' },
+    { id: DEFAULT_ACCOUNT_CHASE, name: 'Chase card', type: 'credit_card', color: '#748FFC' }
+  ];
+
+  function ensureDefaultAccounts() {
+    if (accounts.length > 0) return;
+    accounts = DEFAULT_ACCOUNTS.slice();
+    saveAccounts();
+  }
+
+  function loadAccounts() {
+    try {
+      var raw = localStorage.getItem(ACCOUNTS_KEY);
+      if (raw) {
+        var p = JSON.parse(raw);
+        if (Array.isArray(p) && p.length > 0) {
+          return p.filter(function (a) {
+            return a && a.id && a.name && (a.type === 'bank' || a.type === 'credit_card');
+          });
+        }
+      }
+    } catch (e) {}
+    return [];
+  }
+
+  function saveAccounts() {
+    try { localStorage.setItem(ACCOUNTS_KEY, JSON.stringify(accounts)); } catch (e) {}
+  }
+
+  function loadTransferPairs() {
+    try {
+      var raw = localStorage.getItem(TRANSFER_PAIRS_KEY);
+      if (raw) {
+        var p = JSON.parse(raw);
+        if (Array.isArray(p)) {
+          return p.filter(function (x) {
+            return x && x.id && Array.isArray(x.entryIds) && x.entryIds.length === 2;
+          });
+        }
+      }
+    } catch (e) {}
+    return [];
+  }
+
+  function saveTransferPairs() {
+    try { localStorage.setItem(TRANSFER_PAIRS_KEY, JSON.stringify(transferPairs)); } catch (e) {}
+  }
+
+  function loadTransferUnlinkKeys() {
+    try {
+      var raw = localStorage.getItem(TRANSFER_UNLINK_KEY);
+      if (raw) {
+        var p = JSON.parse(raw);
+        if (Array.isArray(p)) return p.filter(function (k) { return typeof k === 'string' && k; });
+      }
+    } catch (e) {}
+    return [];
+  }
+
+  function saveTransferUnlinkKeys() {
+    try { localStorage.setItem(TRANSFER_UNLINK_KEY, JSON.stringify(transferUnlinkKeys)); } catch (e) {}
+  }
+
+  function loadImportAccountPrefs() {
+    try {
+      var raw = localStorage.getItem(IMPORT_ACCOUNT_PREFS_KEY);
+      if (raw) {
+        var p = JSON.parse(raw);
+        if (p && typeof p === 'object') return p;
+      }
+    } catch (e) {}
+    return {};
+  }
+
+  function saveImportAccountPrefs() {
+    try { localStorage.setItem(IMPORT_ACCOUNT_PREFS_KEY, JSON.stringify(importAccountPrefs)); } catch (e) {}
+  }
+
+  function getAccount(id) {
+    if (!id) return null;
+    for (var i = 0; i < accounts.length; i++) {
+      if (accounts[i].id === id) return accounts[i];
+    }
+    return null;
+  }
+
+  function accountShortName(acct) {
+    if (!acct) return '';
+    var n = String(acct.name || '').trim();
+    if (/chase/i.test(n)) return 'Chase';
+    if (acct.type === 'bank' && /checking/i.test(n)) return 'Checking';
+    var parts = n.split(/\s+/);
+    return parts[0] || n;
+  }
+
+  function accountIconSvg(type) {
+    if (type === 'credit_card') {
+      return '<svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><rect x="1.5" y="3.5" width="13" height="9" rx="1.5" stroke="currentColor" stroke-width="1.25"/><path d="M1.5 6.5h13" stroke="currentColor" stroke-width="1.25"/></svg>';
+    }
+    return '<svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M2.5 6.5V12a1 1 0 001 1h9a1 1 0 001-1V6.5" stroke="currentColor" stroke-width="1.25"/><path d="M1.5 5.5h13v2H1.5v-2z" stroke="currentColor" stroke-width="1.25"/><path d="M5.5 10.5h5" stroke="currentColor" stroke-width="1.25" stroke-linecap="round"/></svg>';
+  }
+
+  function accountMiniIconHTML(acct) {
+    if (!acct) return '';
+    return '<span class="account-mini-icon" style="background:' + acct.color + '22;color:' + acct.color + '">' + accountIconSvg(acct.type) + '</span>';
+  }
+
+  function accountTagHTML(acct) {
+    if (!acct) return '';
+    return '<span class="account-tag">' + accountMiniIconHTML(acct) + escHtml(accountShortName(acct)) + '</span>';
+  }
+
+  function transferPairBlockKey(idA, idB) {
+    var ids = [idA, idB].sort();
+    return ids[0] + '|' + ids[1];
+  }
+
+  function isTransferPairBlocked(idA, idB) {
+    var k = transferPairBlockKey(idA, idB);
+    return transferUnlinkKeys.indexOf(k) !== -1;
+  }
+
+  function getEntryById(id) {
+    for (var i = 0; i < entries.length; i++) {
+      if (entries[i].id === id) return entries[i];
+    }
+    return null;
+  }
+
+  function getActivePairForEntry(entryId) {
+    for (var i = 0; i < transferPairs.length; i++) {
+      var p = transferPairs[i];
+      if (p.unlinked) continue;
+      if (p.entryIds[0] === entryId || p.entryIds[1] === entryId) return p;
+    }
+    return null;
+  }
+
+  function importRowMatchKey(ts, amount, note) {
+    return dayKey(ts) + '|' + fmtMoney(amount) + '|' + descriptionMatchKey(note);
+  }
+
+  function buildExistingEntryByMatchKey() {
+    var map = {};
+    entries.forEach(function (e) {
+      var k = importRowMatchKey(e.ts, e.amount, e.note || '');
+      if (!map[k]) map[k] = e;
+    });
+    return map;
+  }
+
+  function suggestImportAccountId(layout) {
+    ensureDefaultAccounts();
+    if (layout === 'card') return importAccountPrefs.card || DEFAULT_ACCOUNT_CHASE;
+    if (layout === 'bank') return importAccountPrefs.bank || DEFAULT_ACCOUNT_CHECKING;
+    return importAccountPrefs[layout] || accounts[0].id;
+  }
+
+  function importAccountHintText(layout, suggestedId) {
+    var acct = getAccount(suggestedId);
+    if (layout === 'card' && acct && acct.type === 'credit_card') {
+      return 'Suggested because the columns match a Chase credit card export. Every imported row will be tagged with this account.';
+    }
+    if (layout === 'bank') {
+      return 'Suggested because the columns match your bank checking export. Every imported row will be tagged with this account.';
+    }
+    return 'Every imported row will be tagged with this account.';
+  }
+
+  function isCardPaymentCreditEntry(e) {
+    if (!e || !e.isTransfer) return false;
+    var acct = getAccount(e.accountId);
+    if (!acct || acct.type !== 'credit_card') return false;
+    var n = normText(e.note || '');
+    if (CARD_PAYMENT_TYPES[normText(e.typeVal || '')]) return true;
+    if (/\bpayment\b/.test(n) && (/\bthank\b/.test(n) || /\byou\b/.test(n))) return true;
+    if (CARD_ISSUER_RE.test(n) && /\bpayment\b/.test(n)) return true;
+    return false;
+  }
+
+  function isBankCardPaymentDebit(e) {
+    if (!e || !e.isTransfer) return false;
+    var acct = getAccount(e.accountId);
+    if (!acct || acct.type !== 'bank') return false;
+    return isCardBillAutopayTransfer(e.note || '');
+  }
+
+  function entryQualifiesForTransferPair(e) {
+    if (!e || !e.isTransfer || !e.accountId) return false;
+    var acct = getAccount(e.accountId);
+    if (!acct) return false;
+    if (acct.type === 'bank') return isBankCardPaymentDebit(e) || isCardBillAutopayTransfer(e.note || '');
+    if (acct.type === 'credit_card') return true;
+    return false;
+  }
+
+  function autoPairTransfers() {
+    var used = {};
+    transferPairs.forEach(function (p) {
+      if (!p.unlinked) {
+        used[p.entryIds[0]] = true;
+        used[p.entryIds[1]] = true;
+      }
+    });
+    var bank = [];
+    var cards = [];
+    entries.forEach(function (e) {
+      if (used[e.id] || getActivePairForEntry(e.id)) return;
+      if (!entryQualifiesForTransferPair(e)) return;
+      var acct = getAccount(e.accountId);
+      if (!acct) return;
+      if (acct.type === 'bank') bank.push(e);
+      else if (acct.type === 'credit_card') cards.push(e);
+    });
+    bank.forEach(function (b) {
+      if (used[b.id]) return;
+      var best = null;
+      var bestGap = Infinity;
+      cards.forEach(function (c) {
+        if (used[c.id]) return;
+        if (Math.abs(b.amount - c.amount) > 0.001) return;
+        if (isTransferPairBlocked(b.id, c.id)) return;
+        var gap = Math.abs(b.ts - c.ts);
+        if (gap > MS_DAY * 5) return;
+        if (!best || gap < bestGap) { best = c; bestGap = gap; }
+      });
+      if (!best) return;
+      transferPairs.push({
+        id: uid(),
+        entryIds: [b.id, best.id],
+        auto: true,
+        unlinked: false,
+        createdAt: Date.now()
+      });
+      used[b.id] = true;
+      used[best.id] = true;
+    });
+    saveTransferPairs();
+  }
+
+  function unlinkTransferPair(pairId) {
+    for (var i = 0; i < transferPairs.length; i++) {
+      if (transferPairs[i].id !== pairId) continue;
+      var p = transferPairs[i];
+      p.unlinked = true;
+      var block = transferPairBlockKey(p.entryIds[0], p.entryIds[1]);
+      if (transferUnlinkKeys.indexOf(block) === -1) transferUnlinkKeys.push(block);
+      saveTransferPairs();
+      saveTransferUnlinkKeys();
+      return true;
+    }
+    return false;
+  }
+
+  function pairedTransferTitle(creditAcct) {
+    if (creditAcct && /chase/i.test(creditAcct.name)) return 'Chase card payment';
+    if (creditAcct) return creditAcct.name + ' payment';
+    return 'Card payment';
   }
 
   function collectExpenseLoggerKeys() {
@@ -615,12 +912,17 @@
     storage[RECURRING_KEY] = JSON.stringify(recurringItems);
     storage[IMPORT_RULES_KEY] = JSON.stringify(importRules);
     storage[IMPORT_SETTINGS_KEY] = JSON.stringify(importSettings);
+    storage[ACCOUNTS_KEY] = JSON.stringify(accounts);
+    storage[TRANSFER_PAIRS_KEY] = JSON.stringify(transferPairs);
+    storage[TRANSFER_UNLINK_KEY] = JSON.stringify(transferUnlinkKeys);
+    storage[IMPORT_ACCOUNT_PREFS_KEY] = JSON.stringify(importAccountPrefs);
     storage[UI_KEY] = JSON.stringify({
       tab: currentTab === 'add' ? tabBeforeAdd : currentTab,
       dismissedWrapped: uiState.dismissedWrapped || {},
       reportChartMonths: uiState.reportChartMonths === 12 ? 12 : 6,
       reportTxSort: uiState.reportTxSort || 'latest',
-      activityRange: normalizeActivityRangeId(uiState.activityRange)
+      activityRange: normalizeActivityRangeId(uiState.activityRange),
+      activityAccountId: uiState.activityAccountId || ''
     });
     return storage;
   }
@@ -709,7 +1011,9 @@
 
   function validateBackupDocument(data) {
     if (!data || typeof data !== 'object') return { ok: false, error: 'Invalid backup format' };
-    if (data.backupFormat !== BACKUP_FORMAT) return { ok: false, error: 'Unsupported backup version' };
+    if (data.backupFormat !== BACKUP_FORMAT && data.backupFormat !== BACKUP_FORMAT_LEGACY) {
+      return { ok: false, error: 'Unsupported backup version' };
+    }
     if (!data.storage || typeof data.storage !== 'object') return { ok: false, error: 'Missing storage data' };
     var hasKey = false;
     Object.keys(data.storage).forEach(function (k) {
@@ -759,6 +1063,11 @@
     recurringItems = loadRecurring();
     importRules = loadImportRules();
     importSettings = loadImportSettings();
+    accounts = loadAccounts();
+    transferPairs = loadTransferPairs();
+    transferUnlinkKeys = loadTransferUnlinkKeys();
+    importAccountPrefs = loadImportAccountPrefs();
+    ensureDefaultAccounts();
     entries = loadEntries();
     if ($countCardPayments) $countCardPayments.checked = importSettings.countCardPayments;
   }
@@ -990,6 +1299,14 @@
       }
     });
     if (changed) saveCategories();
+    ensureDefaultAccounts();
+    entries.forEach(function (e) {
+      if (e.isTransfer && !e.accountId) {
+        if (e.importSource === 'card') e.accountId = DEFAULT_ACCOUNT_CHASE;
+        else if (e.importSource === 'bank') e.accountId = DEFAULT_ACCOUNT_CHECKING;
+      }
+    });
+    autoPairTransfers();
     processRecurring();
   }
 
@@ -1123,7 +1440,8 @@
   }
 
   function renderRecent() {
-    var recent = entries.slice().sort(function (a, b) { return b.ts - a.ts; }).slice(0, 5);
+    var recent = entries.filter(function (e) { return entryCountsAsSpending(e); })
+      .sort(function (a, b) { return b.ts - a.ts; }).slice(0, 5);
     if (recent.length === 0) {
       $recentEl.innerHTML = '<div class="empty">No expenses yet.<br>Add your first one above ↑</div>';
       return;
@@ -1262,14 +1580,73 @@
     return list.reduce(function (s, e) { return s + entrySpendingAmount(e); }, 0);
   }
 
-  function computeActivitySummary(list, bounds) {
-    var total = sumSpending(list);
-    var days = inclusiveRangeDayCount(bounds, list);
-    var avg = total / days;
+  function buildActivityDisplayItems(list) {
+    var hidden = {};
+    var items = [];
+    transferPairs.forEach(function (p) {
+      if (p.unlinked) return;
+      var a = null;
+      var b = null;
+      list.forEach(function (e) {
+        if (e.id === p.entryIds[0]) a = e;
+        if (e.id === p.entryIds[1]) b = e;
+      });
+      if (!a || !b) return;
+      hidden[a.id] = true;
+      hidden[b.id] = true;
+      var acctA = getAccount(a.accountId);
+      var acctB = getAccount(b.accountId);
+      var bankE = acctA && acctA.type === 'bank' ? a : b;
+      var cardE = acctA && acctA.type === 'credit_card' ? a : b;
+      if (getAccount(bankE.accountId).type !== 'bank') {
+        bankE = b;
+        cardE = a;
+      }
+      var creditAcct = getAccount(cardE.accountId);
+      items.push({
+        kind: 'paired-transfer',
+        pairId: p.id,
+        pair: p,
+        ts: Math.max(bankE.ts, cardE.ts),
+        amount: bankE.amount,
+        bankEntry: bankE,
+        cardEntry: cardE,
+        title: pairedTransferTitle(creditAcct),
+        bankAcct: getAccount(bankE.accountId),
+        cardAcct: creditAcct
+      });
+    });
+    list.forEach(function (e) {
+      if (hidden[e.id]) return;
+      items.push({ kind: 'entry', entry: e, ts: e.ts });
+    });
+    return items;
+  }
+
+  function computeActivitySummary(displayItems, bounds) {
+    var total = 0;
+    var expenseCount = 0;
+    var transferCount = 0;
+    displayItems.forEach(function (it) {
+      if (it.kind === 'paired-transfer') {
+        transferCount++;
+        return;
+      }
+      if (it.entry.isTransfer) transferCount++;
+      else if (entryCountsAsSpending(it.entry)) {
+        expenseCount++;
+        total += it.entry.amount;
+      }
+    });
+    var days = inclusiveRangeDayCount(bounds, displayItems.map(function (it) {
+      return it.kind === 'entry' ? it.entry : { ts: it.ts, amount: it.amount };
+    }));
     return {
       total: total,
-      count: list.length,
-      avgPerDay: avg,
+      expenseCount: expenseCount,
+      transferCount: transferCount,
+      count: expenseCount + transferCount,
+      avgPerDay: total / days,
       rangeLabel: formatActivityRangeLabel(bounds)
     };
   }
@@ -1303,6 +1680,17 @@
       });
     }
     if (catFilter) list = list.filter(function (e) { return e.categoryId === catFilter; });
+    if (uiState.activityAccountId) {
+      var acctId = uiState.activityAccountId;
+      list = list.filter(function (e) {
+        if (e.accountId === acctId) return true;
+        var pair = getActivePairForEntry(e.id);
+        if (!pair) return false;
+        var otherId = pair.entryIds[0] === e.id ? pair.entryIds[1] : pair.entryIds[0];
+        var other = getEntryById(otherId);
+        return other && other.accountId === acctId;
+      });
+    }
     if (typeFilter === 'recurring') list = list.filter(function (e) { return !!e.recurringId; });
     else if (typeFilter === 'one-time') list = list.filter(function (e) { return !e.recurringId; });
     else if (typeFilter === 'with-receipt') list = list.filter(function (e) { return !!e.hasReceipt; });
@@ -1359,9 +1747,12 @@
       if (ev.target.closest && ev.target.closest('button')) return;
       openEntryEditor(e.id);
     });
+    if (e.isTransfer) row.classList.add('is-transfer-row');
     var chip = document.createElement('span');
-    chip.className = 'cat-chip cat-chip--badge';
-    chip.innerHTML = iconBadge(cat, 'sm');
+    chip.className = 'cat-chip cat-chip--badge' + (e.isTransfer ? ' transfer-chip' : '');
+    chip.innerHTML = e.isTransfer
+      ? '<svg width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M4 7h9.5M13.5 7L11 4.5M13.5 7L11 9.5M16 13H6.5M6.5 13L9 10.5M6.5 13L9 15.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>'
+      : iconBadge(cat, 'sm');
     var main = document.createElement('div');
     main.className = 'row-main';
     var title = document.createElement('div');
@@ -1379,10 +1770,15 @@
     if (e.recurringId) subBits.push('Recurring');
     if (e.hasReceipt) subBits.push(uiIcon('ui-camera', 'xs'));
     main.appendChild(title);
-    if (subBits.length) {
+    if (subBits.length || e.accountId) {
       var sub = document.createElement('div');
       sub.className = 'row-sub';
-      sub.innerHTML = subBits.join(' · ');
+      var subHtml = subBits.join(' · ');
+      if (e.accountId && !e.isTransfer) {
+        var acct = getAccount(e.accountId);
+        if (acct) subHtml += accountTagHTML(acct);
+      }
+      sub.innerHTML = subHtml;
       main.appendChild(sub);
     }
     var amt = document.createElement('span');
@@ -1392,6 +1788,50 @@
     row.appendChild(main);
     row.appendChild(amt);
     return row;
+  }
+
+  function createPairedTransferActivityRow(item) {
+    var row = document.createElement('div');
+    row.className = 'activity-row is-transfer-row';
+    row.dataset.pairId = item.pairId;
+    row.addEventListener('click', function (ev) {
+      if (ev.target.closest && ev.target.closest('button')) return;
+      openTransferDetail(item.pairId);
+    });
+    var chip = document.createElement('span');
+    chip.className = 'cat-chip transfer-chip';
+    chip.innerHTML = '<svg width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M4 7h9.5M13.5 7L11 4.5M13.5 7L11 9.5M16 13H6.5M6.5 13L9 10.5M6.5 13L9 15.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+    var main = document.createElement('div');
+    main.className = 'row-main';
+    var title = document.createElement('div');
+    title.className = 'row-title';
+    title.textContent = item.title;
+    var sub = document.createElement('div');
+    sub.className = 'row-sub';
+    var fromName = item.bankAcct ? item.bankAcct.name : 'Bank';
+    var toName = item.cardAcct ? item.cardAcct.name : 'Card';
+    sub.textContent = 'Transfer \u00B7 ' + fromName + ' \u2192 ' + toName;
+    main.appendChild(title);
+    main.appendChild(sub);
+    var right = document.createElement('div');
+    right.className = 'row-amt-wrap';
+    var amt = document.createElement('span');
+    amt.className = 'row-amt';
+    amt.textContent = fmtMoneyDisplay(item.amount);
+    var linked = document.createElement('span');
+    linked.className = 'row-linked';
+    linked.innerHTML = '<svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true" style="vertical-align:-1px;margin-right:4px"><path d="M4.5 6.5l1 1 3-3M5 2.5h-.5A2.5 2.5 0 002 5v.5M7 9.5h.5A2.5 2.5 0 0010 7V6.5" stroke="currentColor" stroke-width="1.1" stroke-linecap="round"/></svg>Linked';
+    right.appendChild(amt);
+    right.appendChild(linked);
+    row.appendChild(chip);
+    row.appendChild(main);
+    row.appendChild(right);
+    return row;
+  }
+
+  function appendActivityDisplayRow(parent, item) {
+    if (item.kind === 'paired-transfer') parent.appendChild(createPairedTransferActivityRow(item));
+    else parent.appendChild(createActivityRow(item.entry));
   }
 
   function sortEntriesList(list, sort) {
@@ -1430,18 +1870,49 @@
     $activityFilterBtn.classList.toggle('is-active', active);
   }
 
-  function renderActivitySummary(list) {
+  function renderActivitySummary(displayItems) {
     if (!$activitySummaryRange) return;
     var bounds = getActivityRangeBounds(uiState.activityRange);
-    var summary = computeActivitySummary(list, bounds);
+    var summary = computeActivitySummary(displayItems, bounds);
     $activitySummaryRange.textContent = summary.rangeLabel;
     $activitySummaryTotal.textContent = fmtMoneyDisplay(summary.total);
-    $activitySummaryCount.textContent = summary.count + ' transaction' + (summary.count === 1 ? '' : 's');
+    if (summary.transferCount > 0) {
+      $activitySummaryCount.textContent = summary.expenseCount + ' expense' + (summary.expenseCount === 1 ? '' : 's')
+        + ' \u00B7 ' + summary.transferCount + ' transfer' + (summary.transferCount === 1 ? '' : 's');
+    } else {
+      $activitySummaryCount.textContent = summary.expenseCount + ' transaction' + (summary.expenseCount === 1 ? '' : 's');
+    }
     $activitySummaryAvg.innerHTML = 'avg <span class="avg-amt">' + fmtMoneyDisplay(summary.avgPerDay) + '</span>/day';
   }
 
-  function appendActivityDayGroup(parent, dayKey, dayEntries) {
-    var dayTotal = dayEntries.reduce(function (s, e) { return s + entrySpendingAmount(e); }, 0);
+  function renderActivityAccountSegments() {
+    if (!$activityAccountSegments) return;
+    ensureDefaultAccounts();
+    var selected = uiState.activityAccountId || '';
+    var html = '<button type="button" class="activity-account-segment" data-account-id="" aria-pressed="' + (selected ? 'false' : 'true') + '">All accounts</button>';
+    accounts.forEach(function (a) {
+      var on = selected === a.id;
+      html += '<button type="button" class="activity-account-segment" data-account-id="' + escHtml(a.id) + '" aria-pressed="' + (on ? 'true' : 'false') + '">'
+        + accountMiniIconHTML(a) + escHtml(a.name) + '</button>';
+    });
+    $activityAccountSegments.innerHTML = html;
+    Array.prototype.forEach.call($activityAccountSegments.querySelectorAll('.activity-account-segment'), function (btn) {
+      btn.addEventListener('click', function () {
+        var next = btn.dataset.accountId || '';
+        if (uiState.activityAccountId === next) return;
+        uiState.activityAccountId = next;
+        saveUI();
+        renderActivityAccountSegments();
+        renderEntries();
+      });
+    });
+  }
+
+  function appendActivityDayGroup(parent, dayKey, dayItems) {
+    var dayTotal = dayItems.reduce(function (s, it) {
+      if (it.kind === 'paired-transfer') return s;
+      return s + entrySpendingAmount(it.entry);
+    }, 0);
     var block = document.createElement('div');
     block.className = 'activity-day-block';
     var hdr = document.createElement('div');
@@ -1452,21 +1923,47 @@
     group.className = 'activity-group';
     var rowsWrap = document.createElement('div');
     rowsWrap.className = 'activity-day-rows';
-    dayEntries.forEach(function (e) { rowsWrap.appendChild(createActivityRow(e)); });
+    dayItems.forEach(function (it) { appendActivityDisplayRow(rowsWrap, it); });
     group.appendChild(rowsWrap);
     block.appendChild(group);
     parent.appendChild(block);
   }
 
+  function sortDisplayItems(items, sort) {
+    var out = items.slice();
+    if (sort === 'newest') {
+      out.sort(function (a, b) { return b.ts - a.ts; });
+    } else if (sort === 'oldest') {
+      out.sort(function (a, b) { return a.ts - b.ts; });
+    } else if (sort === 'highest') {
+      out.sort(function (a, b) {
+        var aa = a.kind === 'paired-transfer' ? a.amount : a.entry.amount;
+        var bb = b.kind === 'paired-transfer' ? b.amount : b.entry.amount;
+        if (bb !== aa) return bb - aa;
+        return b.ts - a.ts;
+      });
+    } else if (sort === 'lowest') {
+      out.sort(function (a, b) {
+        var aa = a.kind === 'paired-transfer' ? a.amount : a.entry.amount;
+        var bb = b.kind === 'paired-transfer' ? b.amount : b.entry.amount;
+        if (aa !== bb) return aa - bb;
+        return b.ts - a.ts;
+      });
+    }
+    return out;
+  }
+
   function renderEntries() {
     syncActivityRangeChips();
+    renderActivityAccountSegments();
     updateActivityFilterBtnState();
     var sort = $filterSort ? $filterSort.value : 'newest';
     var list = getFilteredEntries();
+    var displayItems = sortDisplayItems(buildActivityDisplayItems(list), sort);
     var bounds = getActivityRangeBounds(uiState.activityRange);
-    renderActivitySummary(list);
+    renderActivitySummary(displayItems);
     if ($entriesCt) $entriesCt.textContent = list.length === 1 ? '1 item' : list.length + ' items';
-    if (list.length === 0) {
+    if (displayItems.length === 0) {
       $entriesEl.innerHTML = '<div class="empty">No matching expenses.<br>Try changing filters.</div>';
       return;
     }
@@ -1478,7 +1975,7 @@
       flat.className = 'activity-group activity-flat';
       var flatRows = document.createElement('div');
       flatRows.className = 'activity-day-rows';
-      list.forEach(function (e) { flatRows.appendChild(createActivityRow(e)); });
+      displayItems.forEach(function (it) { appendActivityDisplayRow(flatRows, it); });
       flat.appendChild(flatRows);
       frag.appendChild(flat);
       $entriesEl.innerHTML = '';
@@ -1495,33 +1992,36 @@
     if (bounds.multiMonth) {
       var monthMap = {};
       var monthOrder = [];
-      list.forEach(function (e) {
-        var mk = monthGroupKey(e.ts);
+      displayItems.forEach(function (it) {
+        var mk = monthGroupKey(it.ts);
         if (!monthMap[mk]) { monthMap[mk] = []; monthOrder.push(mk); }
-        monthMap[mk].push(e);
+        monthMap[mk].push(it);
       });
       if (sort === 'oldest') monthOrder.reverse();
       monthOrder.forEach(function (mk) {
-        var monthEntries = monthMap[mk];
+        var monthItems = monthMap[mk];
         var mp = parseMonthGroupKey(mk);
         var block = document.createElement('div');
         block.className = 'activity-month-block';
         var monthHdr = document.createElement('div');
         monthHdr.className = 'activity-month-header';
-        var monthTotal = sumSpending(monthEntries);
+        var monthTotal = monthItems.reduce(function (s, it) {
+          if (it.kind === 'paired-transfer') return s;
+          return s + entrySpendingAmount(it.entry);
+        }, 0);
         monthHdr.innerHTML = '<div class="activity-month-left"><div class="activity-month-title">'
           + escHtml(monthName(new Date(mp.y, mp.m, 1)))
           + '</div><div class="activity-month-meta">'
-          + monthEntries.length + ' transaction' + (monthEntries.length === 1 ? '' : 's')
+          + monthItems.length + ' transaction' + (monthItems.length === 1 ? '' : 's')
           + '</div></div><div class="activity-month-total">' + fmtMoneyDisplay(monthTotal) + '</div>';
         block.appendChild(monthHdr);
 
         var dayGroups = {};
         var dayOrder = [];
-        monthEntries.forEach(function (e) {
-          var dk = startOfDay(e.ts);
+        monthItems.forEach(function (it) {
+          var dk = startOfDay(it.ts);
           if (!dayGroups[dk]) { dayGroups[dk] = []; dayOrder.push(dk); }
-          dayGroups[dk].push(e);
+          dayGroups[dk].push(it);
         });
         if (sort === 'oldest') dayOrder.reverse();
         dayOrder.forEach(function (dk) {
@@ -1532,10 +2032,10 @@
     } else {
       var groups = {};
       var order = [];
-      list.forEach(function (e) {
-        var k = startOfDay(e.ts);
+      displayItems.forEach(function (it) {
+        var k = startOfDay(it.ts);
         if (!groups[k]) { groups[k] = []; order.push(k); }
-        groups[k].push(e);
+        groups[k].push(it);
       });
       order.forEach(function (k) {
         appendActivityDayGroup(frag, k, groups[k]);
@@ -1550,6 +2050,135 @@
       lastSavedEntryId = null;
     }
     refreshIconObservers($entriesEl);
+  }
+
+  function closeTransferDetail() {
+    viewingTransferPairId = null;
+    if ($transferDetailView) $transferDetailView.hidden = true;
+    if ($entriesEl) $entriesEl.hidden = false;
+    var card = $('activitySummaryCard');
+    if (card) card.hidden = false;
+    if ($activityAccountSegments) $activityAccountSegments.hidden = false;
+    var chips = document.querySelector('.activity-range-chips');
+    if (chips) chips.hidden = false;
+  }
+
+  function openTransferDetail(pairId) {
+    var pair = null;
+    for (var i = 0; i < transferPairs.length; i++) {
+      if (transferPairs[i].id === pairId) { pair = transferPairs[i]; break; }
+    }
+    if (!pair || pair.unlinked) return;
+    viewingTransferPairId = pairId;
+    renderTransferDetail(pair);
+    if ($entriesEl) $entriesEl.hidden = true;
+    var card = $('activitySummaryCard');
+    if (card) card.hidden = true;
+    if ($activityAccountSegments) $activityAccountSegments.hidden = true;
+    var chips = document.querySelector('.activity-range-chips');
+    if (chips) chips.hidden = true;
+    if ($transferDetailView) $transferDetailView.hidden = false;
+  }
+
+  function renderTransferDetail(pair) {
+    if (!$transferDetailBody || !pair) return;
+    var a = getEntryById(pair.entryIds[0]);
+    var b = getEntryById(pair.entryIds[1]);
+    if (!a || !b) return;
+    var acctA = getAccount(a.accountId);
+    var acctB = getAccount(b.accountId);
+    var bankE = acctA && acctA.type === 'bank' ? a : b;
+    var cardE = acctA && acctA.type === 'credit_card' ? a : b;
+    if (getAccount(bankE.accountId).type !== 'bank') {
+      bankE = b;
+      cardE = a;
+    }
+    var bankAcct = getAccount(bankE.accountId);
+    var cardAcct = getAccount(cardE.accountId);
+    var title = pairedTransferTitle(cardAcct);
+    var html = '';
+    html += '<div class="transfer-detail-hero">';
+    html += '<div class="transfer-detail-icon"><svg width="28" height="28" viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M4 7h9.5M13.5 7L11 4.5M13.5 7L11 9.5M16 13H6.5M6.5 13L9 10.5M6.5 13L9 15.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></div>';
+    html += '<div class="transfer-detail-title">' + escHtml(title) + '</div>';
+    html += '<div class="transfer-detail-amount">' + fmtMoneyDisplay(bankE.amount) + '</div>';
+    html += '<div class="transfer-detail-direction">' + escHtml(bankAcct ? bankAcct.name : 'Bank') + ' \u2192 ' + escHtml(cardAcct ? cardAcct.name : 'Card') + '</div>';
+    html += '<div class="transfer-not-spending"><svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true"><path d="M3.5 7.2l2.2 2.2 5-5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>Not counted as spending</div>';
+    html += '</div>';
+    html += '<div class="transfer-section-label"><span>Matched pair</span><span style="color:var(--accent);font-size:13px;text-transform:none;letter-spacing:0;font-weight:600"><svg width="12" height="12" viewBox="0 0 12 12" fill="none" style="vertical-align:-1px;margin-right:4px"><path d="M4.5 6.5l1 1 3-3M5 2.5h-.5A2.5 2.5 0 002 5v.5M7 9.5h.5A2.5 2.5 0 0010 7V6.5" stroke="currentColor" stroke-width="1.1" stroke-linecap="round"/></svg>Linked</span></div>';
+    html += '<div class="transfer-pair-card">';
+    html += '<div class="transfer-pair-row">' + accountMiniIconHTML(bankAcct) + '<div class="transfer-pair-row-main"><div class="transfer-pair-row-title">' + escHtml(bankAcct ? bankAcct.name : 'Bank') + '</div><div class="transfer-pair-row-sub">Debit \u00B7 ' + escHtml(bankE.note || 'Payment') + '</div></div><div><div class="transfer-pair-row-amt">-' + fmtMoneyDisplay(bankE.amount) + '</div><div class="transfer-pair-row-date">' + new Date(bankE.ts).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) + '</div></div></div>';
+    html += '<div class="transfer-pair-row">' + accountMiniIconHTML(cardAcct) + '<div class="transfer-pair-row-main"><div class="transfer-pair-row-title">' + escHtml(cardAcct ? cardAcct.name : 'Card') + '</div><div class="transfer-pair-row-sub">Payment credit \u00B7 ' + escHtml(cardE.note || 'Thank you') + '</div></div><div><div class="transfer-pair-row-amt">+' + fmtMoneyDisplay(cardE.amount) + '</div><div class="transfer-pair-row-date">' + new Date(cardE.ts).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) + '</div></div></div>';
+    html += '</div>';
+    if (pair.auto) {
+      html += '<p class="transfer-auto-note"><span aria-hidden="true"><svg width="16" height="16" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6.25" stroke="currentColor"/><path d="M8 7v4M8 5.2h.01" stroke="currentColor" stroke-width="1.25" stroke-linecap="round"/></svg></span><span>Matched automatically: same amount, '
+        + Math.max(1, Math.round(Math.abs(bankE.ts - cardE.ts) / MS_DAY)) + ' day' + (Math.abs(bankE.ts - cardE.ts) >= MS_DAY * 2 ? 's' : '') + ' apart, from your '
+        + escHtml(bankAcct ? bankAcct.name : 'bank') + ' export and ' + escHtml(cardAcct ? cardAcct.name : 'card') + ' CSV.</span></p>';
+    }
+    html += '<div class="transfer-section-label">Details</div>';
+    html += '<div class="transfer-details-card">';
+    html += '<div class="transfer-details-row"><span>Type</span><span>Transfer</span></div>';
+    html += '<div class="transfer-details-row"><span>Date</span><span>' + new Date(Math.min(bankE.ts, cardE.ts)).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+      + ' \u2013 ' + new Date(Math.max(bankE.ts, cardE.ts)).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }) + '</span></div>';
+    html += '<div class="transfer-details-row"><span>Sources</span><span>2 imports</span></div>';
+    html += '</div>';
+    html += '<button type="button" class="transfer-unlink-btn" id="transferUnlinkBtn">Unlink pair</button>';
+    $transferDetailBody.innerHTML = html;
+    var unlinkBtn = document.getElementById('transferUnlinkBtn');
+    if (unlinkBtn) {
+      unlinkBtn.addEventListener('click', function () {
+        if (unlinkTransferPair(pair.id)) {
+          saveEntries();
+          closeTransferDetail();
+          renderAll();
+          toast('Transfer unlinked');
+        }
+      });
+    }
+  }
+
+  function rebuildEditAccountSelect(selectedId) {
+    if (!$editAccount) return;
+    ensureDefaultAccounts();
+    var html = '<option value="">None</option>';
+    accounts.forEach(function (a) {
+      html += '<option value="' + escHtml(a.id) + '"' + (selectedId === a.id ? ' selected' : '') + '>' + escHtml(a.name) + '</option>';
+    });
+    $editAccount.innerHTML = html;
+  }
+
+  function rebuildAddAccountSelect() {
+    if (!$addAccountSelect) return;
+    ensureDefaultAccounts();
+    var html = '<option value="">None</option>';
+    accounts.forEach(function (a) {
+      html += '<option value="' + escHtml(a.id) + '">' + escHtml(a.name) + '</option>';
+    });
+    $addAccountSelect.innerHTML = html;
+    $addAccountSelect.value = selectedAddAccountId || '';
+  }
+
+  function updateAddAccountPreview() {
+    if (!$addAccountPreview) return;
+    if (!selectedAddAccountId) {
+      $addAccountPreview.textContent = 'None';
+      if ($addAccountRowIcon) $addAccountRowIcon.innerHTML = '';
+      return;
+    }
+    var acct = getAccount(selectedAddAccountId);
+    if (!acct) {
+      $addAccountPreview.textContent = 'None';
+      return;
+    }
+    $addAccountPreview.textContent = acct.name;
+    if ($addAccountRowIcon) $addAccountRowIcon.innerHTML = accountMiniIconHTML(acct);
+  }
+
+  function createAccountRecord(name, type) {
+    var id = 'acct-' + uid().slice(0, 8);
+    var color = type === 'credit_card' ? '#748FFC' : '#20C997';
+    accounts.push({ id: id, name: name, type: type, color: color });
+    saveAccounts();
+    return id;
   }
 
   // ---------- Undo ----------
@@ -1620,7 +2249,9 @@
 
   // ---------- Summary / chart ----------
   function getSummaryData(y, m) {
-    var monthEntries = entries.filter(function (e) { return isSameMonth(e.ts, y, m); });
+    var monthEntries = entries.filter(function (e) {
+      return isSameMonth(e.ts, y, m) && entryCountsAsSpending(e);
+    });
     var total = 0;
     var byCat = {};
     categories.forEach(function (c) { byCat[c.id] = 0; });
@@ -1634,7 +2265,7 @@
 
   function getMonthTotal(y, m) {
     return entries
-      .filter(function (e) { return isSameMonth(e.ts, y, m); })
+      .filter(function (e) { return isSameMonth(e.ts, y, m) && entryCountsAsSpending(e); })
       .reduce(function (s, e) { return s + e.amount; }, 0);
   }
 
@@ -3581,6 +4212,7 @@
       note: $note.value.trim(),
       ts: ts
     };
+    if (selectedAddAccountId) entry.accountId = selectedAddAccountId;
 
     if ($recurring.checked) {
       var rec = {
@@ -3668,6 +4300,7 @@
     $editNote.value = entry.note || '';
     $editDate.value = toDateInputValue(entry.ts);
     buildEditCategorySelect(entry.categoryId);
+    rebuildEditAccountSelect(entry.accountId || '');
 
     // Receipt preview
     idbGet('receipt:' + entryId).then(function (rec) {
@@ -3704,6 +4337,11 @@
     entry.categoryId = catId;
     entry.note = $editNote.value.trim();
     entry.ts = fromDateInputValue($editDate.value, entry.ts);
+    if ($editAccount) {
+      var acctVal = $editAccount.value;
+      if (acctVal) entry.accountId = acctVal;
+      else delete entry.accountId;
+    }
 
     saveEntries();
     renderAll();
@@ -4174,6 +4812,7 @@
 
   function rowsFromTable(dataRows, headerRow, layout, batchId) {
     var contentCounts = buildExistingContentCounts(layout);
+    var existingByMatch = buildExistingEntryByMatchKey();
     var fileRowCounts = {};
     var transferFileCounts = {};
     var out = [];
@@ -4300,6 +4939,9 @@
 
       var contentKey = importContentKey(layout, ts, amount, note, catId);
 
+      var matchKey = importRowMatchKey(ts, amount, note);
+      var matchedEntry = existingByMatch[matchKey];
+
       if (isTransfer) {
         var xferKey = contentKey;
         transferFileCounts[xferKey] = (transferFileCounts[xferKey] || 0) + 1;
@@ -4307,15 +4949,27 @@
           out.push({
             status: 'duplicate',
             reason: 'Duplicate transfer in file',
-            note: note, amount: amount, ts: ts, contentKey: contentKey
+            note: note, amount: amount, ts: ts, contentKey: contentKey,
+            existingEntryId: matchedEntry ? matchedEntry.id : null
+          });
+          continue;
+        }
+        if (matchedEntry) {
+          out.push({
+            status: 'duplicate',
+            reason: 'Already in your log (overlapping statement)',
+            note: note, amount: amount, ts: ts, contentKey: contentKey,
+            existingEntryId: matchedEntry.id,
+            wasTransfer: true
           });
           continue;
         }
         out.push({
           status: 'transfer', reason: 'Transfer between accounts', note: note, amount: amount, ts: ts,
-          categoryId: catId, importRowKey: rowKey, isTransfer: true, include: false,
+          categoryId: catId, importRowKey: rowKey, isTransfer: true, include: true,
           layout: layout, suggestedCategoryId: catId, initialCategoryId: catId,
-          initialIsTransfer: true, userSetCategory: false, userSetTransfer: false
+          initialIsTransfer: true, userSetCategory: false, userSetTransfer: false,
+          typeVal: typeVal
         });
         continue;
       }
@@ -4323,11 +4977,12 @@
       fileRowCounts[contentKey] = (fileRowCounts[contentKey] || 0) + 1;
       var occurrence = fileRowCounts[contentKey];
       var existingN = contentCounts[contentKey] || 0;
-      if (occurrence <= existingN) {
+      if (occurrence <= existingN || matchedEntry) {
         out.push({
           status: 'duplicate',
           reason: 'Already in your log (overlapping statement)',
-          note: note, amount: amount, ts: ts, contentKey: contentKey
+          note: note, amount: amount, ts: ts, contentKey: contentKey,
+          existingEntryId: matchedEntry ? matchedEntry.id : null
         });
         continue;
       }
@@ -4401,7 +5056,7 @@
         var row = pendingImport.rows[idx];
         row.isTransfer = cb.checked;
         row.status = cb.checked ? 'transfer' : 'import';
-        row.include = !cb.checked;
+        row.include = true;
         row.userSetTransfer = cb.checked !== row.initialIsTransfer;
         cb.closest('.import-row').classList.toggle('is-transfer', cb.checked);
       });
@@ -4426,49 +5081,83 @@
     saveImportRules();
   }
 
+  function backfillEntryAccount(entryId, accountId) {
+    if (!entryId || !accountId) return false;
+    for (var i = 0; i < entries.length; i++) {
+      if (entries[i].id === entryId) {
+        if (entries[i].accountId) return false;
+        entries[i].accountId = accountId;
+        return true;
+      }
+    }
+    return false;
+  }
+
+  function pushImportedEntry(r, batchId, accountId) {
+    entries.push({
+      id: uid(),
+      amount: r.amount,
+      categoryId: r.categoryId,
+      note: r.note || '',
+      ts: r.ts,
+      importBatchId: batchId,
+      importRowKey: r.importRowKey,
+      importSource: importSourceKind(r.layout),
+      accountId: accountId,
+      isTransfer: !!r.isTransfer,
+      typeVal: r.typeVal || ''
+    });
+  }
+
   function commitImport() {
     if (!pendingImport) return;
     var batchId = pendingImport.batchId;
     var rows = pendingImport.rows;
+    var accountId = pendingImport.accountId || '';
+    var layout = pendingImport.layout || 'generic';
     var added = 0;
     var dup = 0;
+    var tagged = 0;
     var skippedTransfer = 0;
     var skippedCredit = 0;
     var skippedPending = 0;
     var skippedBad = 0;
     rows.forEach(function (r) {
-      if (r.status === 'duplicate') { dup++; return; }
+      if (r.status === 'duplicate') {
+        dup++;
+        if (r.existingEntryId && accountId && backfillEntryAccount(r.existingEntryId, accountId)) tagged++;
+        return;
+      }
       if (r.status === 'credit') { skippedCredit++; return; }
       if (r.status === 'pending') { skippedPending++; return; }
       if (r.status === 'unreadable') { skippedBad++; return; }
-      if (r.status === 'transfer' || (r.isTransfer && !r.include)) {
-        skippedTransfer++;
+      if (r.status === 'transfer' || r.isTransfer) {
         if (r.userSetTransfer || r.userSetCategory) learnFromImportRow(r);
+        pushImportedEntry(r, batchId, accountId);
+        added++;
         return;
       }
       if (r.status !== 'import' || !r.include) return;
       if (r.userSetTransfer || r.userSetCategory) learnFromImportRow(r);
-      entries.push({
-        id: uid(),
-        amount: r.amount,
-        categoryId: r.categoryId,
-        note: r.note || '',
-        ts: r.ts,
-        importBatchId: batchId,
-        importRowKey: r.importRowKey,
-        importSource: importSourceKind(r.layout)
-      });
+      pushImportedEntry(r, batchId, accountId);
       added++;
     });
+    if (layout && accountId) {
+      importAccountPrefs[layout === 'app-export' ? 'app' : layout] = accountId;
+      saveImportAccountPrefs();
+    }
     saveEntries();
     saveCategories();
+    autoPairTransfers();
     renderAll(); rebuildFilterDropdowns();
     renderCategoryList(); buildYearSelect(true); renderReport();
     $importModal.classList.remove('show');
     pendingImport = null;
     renderImportRulesList();
     var parts = [added + ' new'];
-    if (dup) parts.push(dup + ' duplicates');
+    if (tagged) parts.push(tagged + ' already there, tagged');
+    if (dup > tagged) parts.push((dup - tagged) + ' skipped');
+    else if (dup && !tagged) parts.push(dup + ' duplicates');
     if (skippedTransfer) parts.push(skippedTransfer + ' transfers');
     if (skippedCredit) parts.push(skippedCredit + ' credits');
     if (skippedPending) parts.push(skippedPending + ' pending');
@@ -4476,8 +5165,71 @@
     toast('Imported ' + parts.join(', '));
   }
 
-  function startImportReview(rows, batchId, fileName) {
-    pendingImport = { batchId: batchId, rows: rows, fileName: fileName };
+  function renderImportAccountSheet() {
+    if (!pendingImportAccount) return;
+    ensureDefaultAccounts();
+    var layout = pendingImportAccount.layout;
+    var suggested = suggestImportAccountId(layout);
+    importAccountPickId = importAccountPickId || suggested;
+    var rowCount = pendingImportAccount.rows.length;
+    var fname = pendingImportAccount.fileName || 'Import file';
+    $importAccountFileMeta.innerHTML = '<span class="file-doc-icon" aria-hidden="true"><svg width="20" height="20" viewBox="0 0 20 20" fill="none"><path d="M6 2.5h5.5L15 6v11.5a1 1 0 01-1 1H6a1 1 0 01-1-1v-13a1 1 0 011-1z" stroke="currentColor" stroke-width="1.25"/><path d="M11.5 2.5V6H15" stroke="currentColor" stroke-width="1.25"/></svg></span><span>'
+      + escHtml(fname) + ' \u00B7 ' + rowCount + ' row' + (rowCount === 1 ? '' : 's') + '</span>';
+    var html = '';
+    accounts.forEach(function (a) {
+      var checked = importAccountPickId === a.id;
+      var sub = a.type === 'bank' ? 'Bank account' : 'Credit card';
+      html += '<button type="button" class="import-account-option" role="radio" aria-checked="' + (checked ? 'true' : 'false') + '" data-account-pick="' + escHtml(a.id) + '">';
+      html += accountMiniIconHTML(a);
+      html += '<div class="import-account-option-main"><div class="import-account-option-name">' + escHtml(a.name);
+      if (a.id === suggested) html += ' <span class="import-account-suggested"><span data-ui-icon="ui-sparkles" data-ui-icon-size="xs" aria-hidden="true"></span> Suggested</span>';
+      html += '</div><div class="import-account-option-sub">' + sub + '</div></div>';
+      html += '<span class="import-account-radio" aria-hidden="true"></span></button>';
+    });
+    html += '<button type="button" class="import-account-option import-account-add" id="importAccountAddBtn"><span class="account-mini-icon" style="background:var(--raised);color:var(--text-dim)"><svg viewBox="0 0 16 16" fill="none"><path d="M8 3.5v9M3.5 8h9" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg></span><span class="import-account-option-main"><div class="import-account-option-name">Add account</div></div></button>';
+    $importAccountList.innerHTML = html;
+    if ($importAccountHint) {
+      $importAccountHint.hidden = false;
+      $importAccountHint.innerHTML = '<span class="hint-info-icon" aria-hidden="true"><svg width="16" height="16" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6.25" stroke="currentColor"/><path d="M8 7v4M8 5.2h.01" stroke="currentColor" stroke-width="1.25" stroke-linecap="round"/></svg></span><span>'
+        + escHtml(importAccountHintText(layout, suggested)) + '</span>';
+    }
+    if (EI && EI.hydrateUiIcons) EI.hydrateUiIcons($importAccountList);
+    Array.prototype.forEach.call($importAccountList.querySelectorAll('[data-account-pick]'), function (btn) {
+      btn.addEventListener('click', function () {
+        importAccountPickId = btn.dataset.accountPick;
+        renderImportAccountSheet();
+      });
+    });
+    var addBtn = document.getElementById('importAccountAddBtn');
+    if (addBtn) {
+      addBtn.addEventListener('click', function () {
+        pendingAddAccountFromImport = true;
+        $newAccountName.value = '';
+        newAccountType = 'bank';
+        Array.prototype.forEach.call(document.querySelectorAll('.account-type-btn'), function (b) {
+          b.setAttribute('aria-pressed', b.dataset.accountType === newAccountType ? 'true' : 'false');
+        });
+        $addAccountModal.classList.add('show');
+      });
+    }
+    $importAccountModal.classList.add('show');
+  }
+
+  var pendingAddAccountFromImport = false;
+
+  function continueImportAccountSheet() {
+    if (!pendingImportAccount || !importAccountPickId) { toast('Choose an account'); return; }
+    var payload = pendingImportAccount;
+    pendingImportAccount = null;
+    $importAccountModal.classList.remove('show');
+    pendingImport = {
+      batchId: payload.batchId,
+      rows: payload.rows,
+      fileName: payload.fileName,
+      layout: payload.layout,
+      accountId: importAccountPickId
+    };
+    importAccountPickId = null;
     renderImportReview();
   }
 
@@ -4497,7 +5249,9 @@
     }
     var dataRows = table.slice(1);
     var rows = rowsFromTable(dataRows, header, layout, batchId);
-    startImportReview(rows, batchId, fileName);
+    pendingImportAccount = { batchId: batchId, rows: rows, fileName: fileName, layout: layout };
+    importAccountPickId = suggestImportAccountId(layout);
+    renderImportAccountSheet();
   }
 
   function handleImportFile(file) {
@@ -4899,6 +5653,8 @@
       $receiptPreview.removeAttribute('src');
     }
     pendingReceiptBlob = null;
+    rebuildAddAccountSelect();
+    updateAddAccountPreview();
     $addSheet.classList.add('show');
     setTimeout(function () { if ($amount) $amount.focus(); }, prefersReducedMotion() ? 0 : 280);
   }
@@ -4926,6 +5682,7 @@
   }
 
   function switchTab(tab) {
+    closeTransferDetail();
     if (tab === 'add') {
       tabBeforeAdd = currentTab === 'add' ? tabBeforeAdd : currentTab;
       openAddSheet();
@@ -5199,13 +5956,66 @@
   });
 
   // Close modals on backdrop tap
-  [$budgetModal, $catModal, $receiptModal, $pinModal, $importModal, $wrappedModal, $backupRestoreModal].forEach(function (ov) {
+  if ($importAccountContinueBtn) {
+    $importAccountContinueBtn.addEventListener('click', continueImportAccountSheet);
+  }
+  if ($transferDetailBackBtn) {
+    $transferDetailBackBtn.addEventListener('click', closeTransferDetail);
+  }
+  if ($addAccountRow && $addAccountSelect) {
+    $addAccountRow.addEventListener('click', function () {
+      rebuildAddAccountSelect();
+      if ($addAccountSelect.showPicker) $addAccountSelect.showPicker();
+      else $addAccountSelect.focus();
+    });
+    $addAccountSelect.addEventListener('change', function () {
+      selectedAddAccountId = $addAccountSelect.value || '';
+      updateAddAccountPreview();
+    });
+  }
+  if ($addAccountCancelBtn) {
+    $addAccountCancelBtn.addEventListener('click', function () {
+      $addAccountModal.classList.remove('show');
+      pendingAddAccountFromImport = false;
+    });
+  }
+  if ($addAccountSaveBtn) {
+    $addAccountSaveBtn.addEventListener('click', function () {
+      var name = ($newAccountName && $newAccountName.value || '').trim();
+      if (!name) { toast('Enter a name'); return; }
+      var id = createAccountRecord(name, newAccountType);
+      if (pendingAddAccountFromImport) {
+        importAccountPickId = id;
+        pendingAddAccountFromImport = false;
+        $addAccountModal.classList.remove('show');
+        renderImportAccountSheet();
+      } else {
+        selectedAddAccountId = id;
+        $addAccountModal.classList.remove('show');
+        rebuildAddAccountSelect();
+        updateAddAccountPreview();
+      }
+      renderActivityAccountSegments();
+      toast('Account added');
+    });
+  }
+  Array.prototype.forEach.call(document.querySelectorAll('.account-type-btn'), function (btn) {
+    btn.addEventListener('click', function () {
+      newAccountType = btn.dataset.accountType === 'credit_card' ? 'credit_card' : 'bank';
+      Array.prototype.forEach.call(document.querySelectorAll('.account-type-btn'), function (b) {
+        b.setAttribute('aria-pressed', b === btn ? 'true' : 'false');
+      });
+    });
+  });
+
+  [$budgetModal, $catModal, $receiptModal, $pinModal, $importModal, $importAccountModal, $addAccountModal, $wrappedModal, $backupRestoreModal].forEach(function (ov) {
     if (!ov) return;
     ov.addEventListener('click', function (e) {
       if (e.target === ov) {
         ov.classList.remove('show');
         if (ov === $receiptModal) editingEntryId = null;
         if (ov === $importModal) pendingImport = null;
+        if (ov === $importAccountModal) pendingImportAccount = null;
         if (ov === $backupRestoreModal) pendingBackupRestore = null;
       }
     });
@@ -5315,6 +6125,11 @@
   recurringItems = loadRecurring();
   importRules = loadImportRules();
   importSettings = loadImportSettings();
+  accounts = loadAccounts();
+  transferPairs = loadTransferPairs();
+  transferUnlinkKeys = loadTransferUnlinkKeys();
+  importAccountPrefs = loadImportAccountPrefs();
+  ensureDefaultAccounts();
   if ($countCardPayments) $countCardPayments.checked = importSettings.countCardPayments;
   entries = loadEntries();
 
@@ -5384,6 +6199,59 @@
     formatCategorySummaryLabel: formatCategorySummaryLabel,
     pickDeviceBackupMeta: pickDeviceBackupMeta,
     commitBackupRestore: commitBackupRestore
+  };
+
+  window.ExpenseLoggerTest = {
+    APP_VERSION: APP_VERSION,
+    BACKUP_FORMAT: BACKUP_FORMAT,
+    suggestImportAccountId: suggestImportAccountId,
+    importRowMatchKey: importRowMatchKey,
+    descriptionMatchKey: descriptionMatchKey,
+    dayKey: dayKey,
+    fmtMoney: fmtMoney,
+    rowsFromTable: rowsFromTable,
+    detectImportLayout: detectImportLayout,
+    autoPairTransfers: autoPairTransfers,
+    unlinkTransferPair: unlinkTransferPair,
+    isTransferPairBlocked: isTransferPairBlocked,
+    transferPairBlockKey: transferPairBlockKey,
+    entryCountsAsSpending: entryCountsAsSpending,
+    entryQualifiesForTransferPair: entryQualifiesForTransferPair,
+    buildActivityDisplayItems: buildActivityDisplayItems,
+    computeActivitySummary: computeActivitySummary,
+    getActivityRangeBounds: getActivityRangeBounds,
+    backfillEntryAccount: backfillEntryAccount,
+    getAccount: getAccount,
+    getEntryById: getEntryById,
+    getActivePairForEntry: getActivePairForEntry,
+    accountShortName: accountShortName,
+    ensureDefaultAccounts: ensureDefaultAccounts,
+    DEFAULT_ACCOUNT_CHECKING: DEFAULT_ACCOUNT_CHECKING,
+    DEFAULT_ACCOUNT_CHASE: DEFAULT_ACCOUNT_CHASE,
+    getState: function () {
+      return {
+        entries: entries,
+        accounts: accounts,
+        transferPairs: transferPairs,
+        transferUnlinkKeys: transferUnlinkKeys,
+        importAccountPrefs: importAccountPrefs
+      };
+    },
+    setState: function (patch) {
+      if (patch.entries) entries = patch.entries;
+      if (patch.accounts) accounts = patch.accounts;
+      if (patch.transferPairs) transferPairs = patch.transferPairs;
+      if (patch.transferUnlinkKeys) transferUnlinkKeys = patch.transferUnlinkKeys;
+      if (patch.importAccountPrefs) importAccountPrefs = patch.importAccountPrefs;
+    },
+    persist: function () {
+      saveEntries();
+      saveAccounts();
+      saveTransferPairs();
+      saveTransferUnlinkKeys();
+      saveImportAccountPrefs();
+    },
+    reloadFromStorage: reloadAllStateFromStorage
   };
 
 })();

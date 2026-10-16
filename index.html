@@ -13,8 +13,8 @@
 <link rel="manifest" href="manifest.json">
 <link rel="icon" href="icon-192.png">
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
-<link rel="stylesheet" href="styles.css?v=1.4.3">
-<link rel="stylesheet" href="icon-animations.css?v=1.4.3">
+<link rel="stylesheet" href="styles.css?v=1.5.0">
+<link rel="stylesheet" href="icon-animations.css?v=1.5.0">
 <title>Expense Logger</title>
 </head>
 <body>
@@ -180,6 +180,8 @@
     <button type="button" class="activity-range-chip" data-activity-range="all" aria-pressed="false">All</button>
   </div>
 
+  <div class="activity-account-segments" id="activityAccountSegments" role="group" aria-label="Account filter"></div>
+
   <div class="activity-summary-card" id="activitySummaryCard" aria-live="polite">
     <div class="activity-summary-main">
       <div class="activity-summary-range" id="activitySummaryRange"></div>
@@ -193,6 +195,14 @@
 
   <p class="entries-meta" id="entriesCount" hidden aria-live="polite"></p>
   <div id="entries" class="activity-groups"></div>
+
+  <div id="transferDetailView" class="transfer-detail-screen" hidden>
+    <div class="transfer-detail-nav">
+      <button type="button" class="link-btn transfer-back-btn" id="transferDetailBackBtn">&lt; Activity</button>
+      <button type="button" class="link-btn" id="transferDetailEditBtn" hidden>Edit</button>
+    </div>
+    <div id="transferDetailBody"></div>
+  </div>
 </section>
 
 <!-- TAB: REPORTS -->
@@ -361,6 +371,15 @@
       <input type="file" id="receiptInput" accept="image/*" capture="environment" hidden>
       <img id="receiptPreview" class="receipt-preview" alt="" hidden>
       <button class="del-btn receipt-clear-inline" id="receiptClearBtn" type="button" hidden aria-label="Remove receipt">✕</button>
+      <button type="button" class="grouped-row" id="addAccountRow">
+        <span class="row-icon account-row-icon" id="addAccountRowIcon" aria-hidden="true"></span>
+        <span class="row-label">Account</span>
+        <span class="row-value" id="addAccountPreview">None</span>
+        <span class="chevron">›</span>
+      </button>
+      <select id="addAccountSelect" class="visually-hidden-input" tabindex="-1" aria-label="Account">
+        <option value="">None</option>
+      </select>
       <label class="grouped-row switch-row">
         <span class="row-icon" data-ui-icon="ui-repeat" data-ui-icon-size="row" aria-hidden="true"></span>
         <span class="row-label">Recurring monthly</span>
@@ -446,6 +465,10 @@
       <input type="text" id="editNote" placeholder="Optional note" autocomplete="off" maxlength="80">
     </div>
     <div class="field">
+      <label for="editAccount">Account</label>
+      <select id="editAccount"><option value="">None</option></select>
+    </div>
+    <div class="field">
       <label>Receipt</label>
       <img id="receiptModalImg" class="receipt-modal-img" alt="Receipt" hidden>
       <button class="btn-secondary danger" id="receiptModalDelete" type="button" hidden>Delete receipt</button>
@@ -486,6 +509,41 @@
       <button class="link-btn" id="backupRestoreConfirmBtn" type="button">Replace data</button>
     </div>
     <div id="backupRestoreSummary"></div>
+  </div>
+</div>
+
+<!-- Modal: import account picker -->
+<div class="modal-overlay sheet" id="importAccountModal">
+  <div class="modal sheet-modal import-account-modal">
+    <div class="sheet-grabber" aria-hidden="true"></div>
+    <h3 class="import-account-title">Which account is this?</h3>
+    <div class="import-account-file" id="importAccountFileMeta"></div>
+    <div class="import-account-list" id="importAccountList"></div>
+    <p class="import-account-hint" id="importAccountHint" hidden></p>
+    <button type="button" class="save-btn" id="importAccountContinueBtn">Continue</button>
+  </div>
+</div>
+
+<!-- Modal: add account -->
+<div class="modal-overlay sheet" id="addAccountModal">
+  <div class="modal sheet-modal">
+    <div class="sheet-grabber" aria-hidden="true"></div>
+    <div class="sheet-header">
+      <button class="btn-secondary sheet-cancel" id="addAccountCancelBtn" type="button">Cancel</button>
+      <h3>Add account</h3>
+      <button class="link-btn" id="addAccountSaveBtn" type="button">Save</button>
+    </div>
+    <div class="field">
+      <label for="newAccountName">Name</label>
+      <input type="text" id="newAccountName" placeholder="e.g. Savings" maxlength="24" autocomplete="off">
+    </div>
+    <div class="field">
+      <label>Type</label>
+      <div class="account-type-picker" id="newAccountTypePicker">
+        <button type="button" class="account-type-btn" data-account-type="bank" aria-pressed="true">Bank account</button>
+        <button type="button" class="account-type-btn" data-account-type="credit_card" aria-pressed="false">Credit card</button>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -547,7 +605,7 @@
   </div>
 </div>
 
-<script src="icon-system.js?v=1.4.3"></script>
-<script src="app.js?v=1.4.3"></script>
+<script src="icon-system.js?v=1.5.0"></script>
+<script src="app.js?v=1.5.0"></script>
 </body>
 </html>
