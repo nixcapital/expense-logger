@@ -1,5 +1,5 @@
 /**
- * Simulates 1.7.0 → 1.7.2 deploy on the same origin (port).
+ * Simulates 1.7.1 → 1.7.2 deploy on the same origin (port).
  * Run: node scripts/sw-upgrade-test.mjs [--baseline]
  * --baseline uses main-branch sw.js/app (reproduces mixed-cache issues).
  */
@@ -14,6 +14,7 @@ const ROOT_OLD = '/tmp/el-upgrade-old';
 const ROOT_NEW = '/workspace';
 
 function prepareOldTree() {
+  execSync('git fetch origin main');
   execSync(`rm -rf ${ROOT_OLD} && mkdir -p ${ROOT_OLD}`);
   execSync(`git archive origin/main | tar -x -C ${ROOT_OLD}`);
 }

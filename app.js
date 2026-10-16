@@ -1079,14 +1079,35 @@
     return null;
   }
 
-  function importRowMatchKey(ts, amount, note) {
-    return dayKey(ts) + '|' + fmtMoney(amount) + '|' + descriptionMatchKey(note);
+  function importRowSignFromEntry(e) {
+    if (e && e.isTransfer) return 'xfer';
+    if (e && e.isDeposit) return 'in';
+    return 'out';
   }
 
-  function buildExistingEntryByMatchKey() {
+  function importRowSignFromRow(r) {
+    if (r && r.isTransfer) return 'xfer';
+    if (r && r.isDeposit) return 'in';
+    return 'out';
+  }
+
+  function importRowMatchKey(ts, amount, note, accountId, sign) {
+    return (accountId || '') + '|' + (sign || 'out') + '|' + dayKey(ts) + '|' + fmtMoney(amount) + '|' + descriptionMatchKey(note);
+  }
+
+  function importEntryMatchesAccount(e, layout, accountId) {
+    if (layout === 'app-export') return true;
+    if (!accountId) return true;
+    if (e.accountId && e.accountId !== accountId) return false;
+    return true;
+  }
+
+  function buildExistingEntryByMatchKey(accountId, layout) {
     var map = {};
     entries.forEach(function (e) {
-      var k = importRowMatchKey(e.ts, e.amount, e.note || '');
+      if (!importEntryMatchesAccount(e, layout, accountId)) return;
+      var acctForKey = layout === 'app-export' ? (e.accountId || '') : (accountId || e.accountId || '');
+      var k = importRowMatchKey(e.ts, e.amount, e.note || '', acctForKey, importRowSignFromEntry(e));
       if (!map[k]) map[k] = e;
     });
     return map;
@@ -5606,11 +5627,12 @@
     if (layout === 'app-export') return 'app';
     return layout || 'generic';
   }
-  function importContentKey(layout, ts, amount, note, categoryId) {
+  function importContentKey(layout, ts, amount, note, categoryId, accountId, sign) {
     if (layout === 'app-export') {
       return 'app|' + entryDedupeKey({ id: null, ts: ts, amount: amount, categoryId: categoryId, note: note || '' });
     }
-    return importSourceKind(layout) + '|' + dayKey(ts) + '|' + fmtMoney(amount) + '|' + descriptionMatchKey(note);
+    return importSourceKind(layout) + '|' + (accountId || '') + '|' + (sign || 'out') + '|' + dayKey(ts) + '|' +
+      fmtMoney(amount) + '|' + descriptionMatchKey(note);
   }
 
   function findImportRule(note) {
@@ -5658,23 +5680,94 @@
     return null;
   }
 
-  function buildExistingContentCounts(layout) {
+  function buildExistingContentCounts(layout, accountId) {
     var counts = {};
     var srcWanted = importSourceKind(layout);
     entries.forEach(function (e) {
       if (layout !== 'app-export' && e.importSource && e.importSource !== srcWanted) return;
-      var ck = importContentKey(layout, e.ts, e.amount, e.note || '', e.categoryId);
+      if (!importEntryMatchesAccount(e, layout, accountId)) return;
+      var acctForKey = layout === 'app-export' ? '' : (accountId || e.accountId || '');
+      var ck = importContentKey(layout, e.ts, e.amount, e.note || '', e.categoryId, acctForKey,
+        importRowSignFromEntry(e));
       counts[ck] = (counts[ck] || 0) + 1;
     });
     return counts;
   }
 
-  function rowsFromTable(dataRows, headerRow, layout, batchId) {
-    var contentCounts = buildExistingContentCounts(layout);
-    var existingByMatch = buildExistingEntryByMatchKey();
+  function importSignFromContentKey(contentKey) {
+    if (!contentKey) return null;
+    var parts = contentKey.split('|');
+    if (parts.length >= 3 && (parts[2] === 'in' || parts[2] === 'out' || parts[2] === 'xfer')) return parts[2];
+    return null;
+  }
+
+  function reapplyImportDedupe(rows, layout, accountId) {
+    if (!rows || !rows.length) return rows;
+    rows.forEach(function (r) {
+      if (r.status !== 'duplicate') return;
+      r.status = r.dedupeBaseStatus || (r.wasTransfer ? 'transfer' : 'import');
+      r.include = true;
+      delete r.existingEntryId;
+      delete r.wasTransfer;
+      if (r.dedupeBaseStatus === 'transfer' || r.dedupeBaseStatus === 'import') {
+        r.reason = r.dedupeBaseStatus === 'transfer' ? 'Transfer between accounts' : '';
+      }
+    });
+    var contentCounts = buildExistingContentCounts(layout, accountId);
+    var existingByMatch = buildExistingEntryByMatchKey(accountId, layout);
+    var fileRowCounts = {};
+    rows.forEach(function (r) {
+      if (r.status === 'pending' || r.status === 'unreadable' || r.status === 'credit') return;
+      if (r.status !== 'import' && r.status !== 'transfer') return;
+      var sign = importRowSignFromRow(r);
+      if (sign === 'out' && importSignFromContentKey(r.contentKey) === 'in') {
+        r.isDeposit = true;
+        sign = 'in';
+      }
+      var catId = r.categoryId;
+      var acctForKey = layout === 'app-export' ? '' : accountId;
+      var contentKey = importContentKey(layout, r.ts, r.amount, r.note || '', catId, acctForKey, sign);
+      r.contentKey = contentKey;
+      var matchKey = importRowMatchKey(r.ts, r.amount, r.note || '', acctForKey, sign);
+      var matchedEntry = existingByMatch[matchKey];
+      if (r.status === 'transfer') {
+        fileRowCounts[contentKey] = (fileRowCounts[contentKey] || 0) + 1;
+        var occurrenceXfer = fileRowCounts[contentKey];
+        var existingXfer = contentCounts[contentKey] || 0;
+        if (occurrenceXfer <= existingXfer) {
+          r.dedupeBaseStatus = 'transfer';
+          r.status = 'duplicate';
+          r.reason = occurrenceXfer > 1 ? 'Duplicate transfer in file' : 'Already in your log (overlapping statement)';
+          r.existingEntryId = matchedEntry ? matchedEntry.id : null;
+          r.wasTransfer = true;
+        } else {
+          contentCounts[contentKey] = existingXfer + 1;
+        }
+        return;
+      }
+      fileRowCounts[contentKey] = (fileRowCounts[contentKey] || 0) + 1;
+      var occurrence = fileRowCounts[contentKey];
+      var existingN = contentCounts[contentKey] || 0;
+      if (occurrence <= existingN) {
+        r.dedupeBaseStatus = 'import';
+        r.status = 'duplicate';
+        r.reason = 'Already in your log (overlapping statement)';
+        r.existingEntryId = matchedEntry ? matchedEntry.id : null;
+      } else {
+        contentCounts[contentKey] = existingN + 1;
+      }
+    });
+    return rows;
+  }
+
+  function rowsFromTable(dataRows, headerRow, layout, batchId, accountId) {
+    accountId = accountId || '';
+    var contentCounts = buildExistingContentCounts(layout, accountId);
+    var existingByMatch = buildExistingEntryByMatchKey(accountId, layout);
     var fileRowCounts = {};
     var transferFileCounts = {};
     var out = [];
+    var acctForImportKey = layout === 'app-export' ? '' : accountId;
     var dateIdx = findCol(headerRow, ['transaction date', 'post date', 'date']);
     var postIdx = findCol(headerRow, ['post date']);
     var descIdx = findCol(headerRow, ['description', 'payee', 'merchant', 'note']);
@@ -5706,6 +5799,8 @@
       var amount = NaN;
       var skipReason = null;
       var rowStatus = 'import';
+      var rowIsDeposit = false;
+      var bankPresetTransfer = null;
 
       if (layout === 'bank') {
         var dateCell = postIdx !== -1 ? cols[postIdx] : (dateIdx !== -1 ? cols[dateIdx] : '');
@@ -5714,29 +5809,15 @@
         var credit = creditIdx !== -1 ? parseAmountCell(cols[creditIdx]) : NaN;
         if (!isNaN(debit) && debit > 0) amount = debit;
         else if (!isNaN(credit) && credit > 0) {
+          amount = credit;
+          rowIsDeposit = true;
           var patHit = findTransferPatternForNote(note);
           var otherIn = patHit || looksLikeOtherAccountTransfer(descRaw);
           if (otherIn) {
-            out.push({
-              status: 'transfer', reason: 'Transfer · Other account', note: note, amount: credit, ts: ts,
-              categoryId: categoryForImportRow('bank', catIdx !== -1 ? cols[catIdx] : '', note),
-              isTransfer: true, transferKind: 'other', isDeposit: true, include: true, layout: 'bank',
-              initialIsTransfer: true, userSetCategory: false, userSetTransfer: false, autoOtherAccount: !!patHit,
-              typeVal: typeVal, bankText: descRaw
-            });
-            continue;
+            bankPresetTransfer = { transferKind: 'other', autoOtherAccount: !!patHit };
           }
-          var depCat = incomeCategoryIdForDeposit(note) || categoryForImportRow('bank', catIdx !== -1 ? cols[catIdx] : '', note);
-          out.push({
-            status: 'import', reason: 'Deposit / paycheck', note: note, amount: credit, ts: ts,
-            categoryId: depCat,
-            isTransfer: false, isDeposit: true, include: true, layout: 'bank',
-            initialIsTransfer: false, initialIsDeposit: true, userSetCategory: false, userSetTransfer: false,
-            typeVal: typeVal, bankText: descRaw
-          });
-          continue;
         } else {
-          out.push({ status: 'unreadable', reason: 'No debit amount', raw: cols });
+          out.push({ status: 'unreadable', reason: 'No debit or credit amount', raw: cols });
           continue;
         }
       } else if (layout === 'card') {
@@ -5744,18 +5825,15 @@
         ts = parseUsDate(dcell);
         var rawAmt = amtIdx !== -1 ? parseAmountCell(cols[amtIdx]) : NaN;
         var tnorm = normText(typeVal);
+        var cardPaymentRow = false;
         if (CARD_PAYMENT_TYPES[tnorm] && !importSettings.countCardPayments) {
           var payAmt = Math.abs(rawAmt);
           if (!isNaN(payAmt) && payAmt > 0) {
-            out.push({
-              status: 'transfer', reason: 'Card bill payment', note: note, amount: payAmt, ts: ts,
-              categoryId: categoryForImportRow('card', catIdx !== -1 ? cols[catIdx] : '', note),
-              isTransfer: true, include: false, layout: 'card',
-              initialIsTransfer: true, userSetCategory: false, userSetTransfer: false
-            });
-            continue;
+            amount = payAmt;
+            cardPaymentRow = true;
           }
         }
+        if (!cardPaymentRow) {
         if (tnorm === 'return' || tnorm === 'refund') {
           out.push({ status: 'credit', reason: 'Card refund/return (not spending)', note: note, amount: Math.abs(rawAmt), ts: ts });
           continue;
@@ -5772,6 +5850,7 @@
         if (rawAmt > 0 && tnorm === 'sale') {
           out.push({ status: 'unreadable', reason: 'Unexpected positive sale amount', raw: cols });
           continue;
+        }
         }
       } else {
         ts = dateIdx !== -1 ? parseUsDate(cols[dateIdx]) : null;
@@ -5806,7 +5885,13 @@
       var isTransfer = (rule && rule.isTransfer) || !!patRule;
       if (rule && rule.countAsSpending) isTransfer = false;
       if (!rule && !patRule && isBuiltInTransfer(descRaw, typeVal, layout)) isTransfer = true;
+      if (bankPresetTransfer) {
+        isTransfer = true;
+      }
       var transferKind = isTransfer ? importRowTransferKind(descRaw, layout, isTransfer) : null;
+      if (bankPresetTransfer) {
+        transferKind = bankPresetTransfer.transferKind;
+      }
       if (rule && rule.categoryId && !rule.isTransfer) {
         // category from rule applied later
       }
@@ -5816,41 +5901,46 @@
 
       var catId = appExportCatId || categoryForImportRow(layout, catIdx !== -1 ? cols[catIdx] : '', note);
       if (rule && rule.categoryId && !rule.isTransfer) catId = rule.categoryId;
+      if (rowIsDeposit && layout === 'bank' && !isTransfer) {
+        var depCatId = incomeCategoryIdForDeposit(note);
+        if (depCatId) catId = depCatId;
+      }
 
-      var contentKey = importContentKey(layout, ts, amount, note, catId);
+      var rowSign = isTransfer ? 'xfer' : (rowIsDeposit ? 'in' : 'out');
+      var contentKey = importContentKey(layout, ts, amount, note, catId, acctForImportKey, rowSign);
 
-      var matchKey = importRowMatchKey(ts, amount, note);
+      var matchKey = importRowMatchKey(ts, amount, note, acctForImportKey, rowSign);
       var matchedEntry = existingByMatch[matchKey];
 
       if (isTransfer) {
         var xferKey = contentKey;
         transferFileCounts[xferKey] = (transferFileCounts[xferKey] || 0) + 1;
-        if (transferFileCounts[xferKey] > 1) {
+        var xferOccurrence = transferFileCounts[xferKey];
+        var existingXfer = contentCounts[xferKey] || 0;
+        if (xferOccurrence <= existingXfer) {
           out.push({
             status: 'duplicate',
-            reason: 'Duplicate transfer in file',
+            dedupeBaseStatus: 'transfer',
+            reason: xferOccurrence > 1 ? 'Duplicate transfer in file' : 'Already in your log (overlapping statement)',
             note: note, amount: amount, ts: ts, contentKey: contentKey,
-            existingEntryId: matchedEntry ? matchedEntry.id : null
-          });
-          continue;
-        }
-        if (matchedEntry) {
-          out.push({
-            status: 'duplicate',
-            reason: 'Already in your log (overlapping statement)',
-            note: note, amount: amount, ts: ts, contentKey: contentKey,
-            existingEntryId: matchedEntry.id,
+            existingEntryId: matchedEntry ? matchedEntry.id : null,
             wasTransfer: true
           });
           continue;
         }
+        contentCounts[xferKey] = existingXfer + 1;
+        var xferReason = transferKind === 'other' ? 'Transfer · Other account'
+          : (layout === 'card' && CARD_PAYMENT_TYPES[normText(typeVal)] ? 'Card bill payment' : 'Transfer between accounts');
         out.push({
-          status: 'transfer', reason: transferKind === 'other' ? 'Transfer · Other account' : 'Transfer between accounts',
+          status: 'transfer', reason: xferReason,
           note: note, amount: amount, ts: ts,
           categoryId: catId, importRowKey: rowKey, isTransfer: true, transferKind: transferKind, include: true,
           layout: layout, suggestedCategoryId: catId, initialCategoryId: catId,
           initialIsTransfer: true, initialTransferKind: transferKind, userSetCategory: false, userSetTransfer: false,
-          typeVal: typeVal, bankText: descRaw, autoOtherAccount: transferKind === 'other' && !!patRule
+          typeVal: typeVal, bankText: descRaw,
+          isDeposit: !!rowIsDeposit, initialIsDeposit: !!rowIsDeposit,
+          autoOtherAccount: bankPresetTransfer ? bankPresetTransfer.autoOtherAccount : (transferKind === 'other' && !!patRule),
+          dedupeBaseStatus: 'transfer', contentKey: contentKey
         });
         continue;
       }
@@ -5858,23 +5948,29 @@
       fileRowCounts[contentKey] = (fileRowCounts[contentKey] || 0) + 1;
       var occurrence = fileRowCounts[contentKey];
       var existingN = contentCounts[contentKey] || 0;
-      if (occurrence <= existingN || matchedEntry) {
+        if (occurrence <= existingN) {
         out.push({
           status: 'duplicate',
+          dedupeBaseStatus: 'import',
           reason: 'Already in your log (overlapping statement)',
           note: note, amount: amount, ts: ts, contentKey: contentKey,
-          existingEntryId: matchedEntry ? matchedEntry.id : null
+          existingEntryId: matchedEntry ? matchedEntry.id : null,
+          isDeposit: rowIsDeposit, initialIsDeposit: rowIsDeposit
         });
         continue;
       }
       contentCounts[contentKey] = existingN + 1;
 
+      var importReason = rowIsDeposit ? 'Deposit / paycheck' : '';
       out.push({
-        status: 'import', note: note, amount: amount, ts: ts, categoryId: catId,
+        status: 'import', reason: importReason, note: note, amount: amount, ts: ts, categoryId: catId,
         importRowKey: rowKey, isTransfer: false, include: true,
         typeVal: typeVal, layout: layout, contentKey: contentKey,
         suggestedCategoryId: catId, initialCategoryId: catId, initialIsTransfer: false,
-        userSetCategory: false, userSetTransfer: false
+        userSetCategory: false, userSetTransfer: false,
+        isDeposit: rowIsDeposit, initialIsDeposit: rowIsDeposit,
+        bankText: layout === 'bank' ? descRaw : undefined,
+        dedupeBaseStatus: 'import'
       });
     }
     return out;
@@ -6075,7 +6171,7 @@
         added++;
         return;
       }
-      if (r.status !== 'import' || !r.include) return;
+      if (r.status !== 'import' || r.include === false) return;
       if (r.userSetTransfer || r.userSetCategory) learnFromImportRow(r);
       pushImportedEntry(r, batchId, accountId);
       added++;
@@ -6094,8 +6190,8 @@
     renderImportRulesList();
     var parts = [added + ' new'];
     if (tagged) parts.push(tagged + ' already there, tagged');
-    if (dup > tagged) parts.push((dup - tagged) + ' skipped');
-    else if (dup && !tagged) parts.push(dup + ' duplicates');
+    if (dup > tagged) parts.push((dup - tagged) + ' already imported');
+    else if (dup && !tagged) parts.push(dup + ' already imported');
     if (skippedTransfer) parts.push(skippedTransfer + ' transfers');
     if (skippedCredit) parts.push(skippedCredit + ' credits');
     if (skippedPending) parts.push(skippedPending + ' pending');
@@ -6176,9 +6272,13 @@
     var accountId = importAccountPickId;
     importAccountPickId = null;
     closeOverlayThen($importAccountModal, function () {
+      var rows = payload.rows;
+      if (accountId !== payload.dedupeAccountId) {
+        rows = reapplyImportDedupe(payload.rows.slice(), payload.layout, accountId);
+      }
       pendingImport = {
         batchId: payload.batchId,
-        rows: payload.rows,
+        rows: rows,
         fileName: payload.fileName,
         layout: payload.layout,
         accountId: accountId
@@ -6202,8 +6302,9 @@
       return;
     }
     var dataRows = table.slice(1);
-    var rows = rowsFromTable(dataRows, header, layout, batchId);
-    pendingImportAccount = { batchId: batchId, rows: rows, fileName: fileName, layout: layout };
+    var dedupeAccountId = suggestImportAccountId(layout);
+    var rows = rowsFromTable(dataRows, header, layout, batchId, dedupeAccountId);
+    pendingImportAccount = { batchId: batchId, rows: rows, fileName: fileName, layout: layout, dedupeAccountId: dedupeAccountId };
     importAccountPickId = suggestImportAccountId(layout);
     renderImportAccountSheet();
   }
@@ -8471,6 +8572,9 @@
     BACKUP_FORMAT: BACKUP_FORMAT,
     suggestImportAccountId: suggestImportAccountId,
     importRowMatchKey: importRowMatchKey,
+    importContentKey: importContentKey,
+    reapplyImportDedupe: reapplyImportDedupe,
+    buildExistingContentCounts: buildExistingContentCounts,
     descriptionMatchKey: descriptionMatchKey,
     dayKey: dayKey,
     fmtMoney: fmtMoney,
