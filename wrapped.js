@@ -173,49 +173,113 @@
     return map;
   }
 
-  function detectRecurringProfiles(allEntries) {
-    var spending = filterSpending(allEntries);
-    var byMerchant = groupByMerchant(spending);
-    var profiles = {};
-    Object.keys(byMerchant).forEach(function (k) {
-      var g = byMerchant[k];
-      var months = {};
-      g.entries.forEach(function (e) {
-        var d = new Date(e.ts);
-        var mk = d.getFullYear() + '-' + pad2(d.getMonth() + 1);
-        if (!months[mk]) months[mk] = [];
-        months[mk].push(e);
-      });
-      var monthKeys = Object.keys(months).sort();
-      if (monthKeys.length < 2) return;
-      var amounts = [];
-      monthKeys.forEach(function (mk) {
-        var sum = months[mk].reduce(function (s, e) { return s + e.amount; }, 0);
-        amounts.push(sum);
-      });
-      var avg = amounts.reduce(function (a, b) { return a + b; }, 0) / amounts.length;
-      var stable = amounts.every(function (amt) { return amountsClose(amt, avg); });
-      if (!stable && monthKeys.length < 3) return;
-      if (!stable) {
-        var perCharge = g.entries.map(function (e) { return e.amount; });
-        avg = perCharge.reduce(function (a, b) { return a + b; }, 0) / perCharge.length;
-        stable = perCharge.every(function (amt) { return amountsClose(amt, avg); });
-      }
-      if (!stable) return;
-      profiles[k] = {
-        key: k,
-        name: g.name,
-        typicalAmount: Math.round(avg * 100) / 100,
-        monthCount: monthKeys.length
-      };
-    });
-    return profiles;
+  var WRAPPED_RECURRING_MIN = 10;
+
+  function median(nums) {
+    if (!nums.length) return 0;
+    var s = nums.slice().sort(function (a, b) { return a - b; });
+    var mid = Math.floor(s.length / 2);
+    if (s.length % 2) return s[mid];
+    return (s[mid - 1] + s[mid]) / 2;
   }
 
-  function isRecurringEntry(e, profiles, recurringIds) {
-    if (e.recurringId && recurringIds[e.recurringId]) return true;
+  function getForecastApi() {
+    if (typeof globalThis !== 'undefined' && globalThis.ExpenseForecast) return globalThis.ExpenseForecast;
+    if (typeof window !== 'undefined' && window.ExpenseForecast) return window.ExpenseForecast;
+    return null;
+  }
+
+  function amountMatchesRecurring(amt, expected) {
+    return Math.abs(amt - expected) <= Math.max(0.5, expected * 0.10);
+  }
+
+  /** Aligns with forecast.js: merchant group, schedule fit, stable amount, min ~$10. */
+  function detectWrappedRecurringSchedules(allEntries, recurringItems) {
+    var FC = getForecastApi();
+    var spending = filterSpending(allEntries);
+    var byMerchant = groupByMerchant(spending);
+    var schedules = [];
+    var seenKeys = {};
+
+    Object.keys(byMerchant).forEach(function (key) {
+      var g = byMerchant[key];
+      var list = g.entries.slice().sort(function (a, b) { return a.ts - b.ts; });
+      if (list.length < 2) return;
+      var amounts = list.map(function (e) { return e.amount; });
+      var medAmt = median(amounts);
+      if (medAmt < WRAPPED_RECURRING_MIN) return;
+      var similar = list.filter(function (e) {
+        return amountMatchesRecurring(e.amount, medAmt);
+      });
+      if (similar.length < 2) return;
+      if (similar[similar.length - 1].categoryId !== 'bills') return;
+      var spread = Math.max.apply(null, amounts) - Math.min.apply(null, amounts);
+      if (spread > Math.max(0.5, medAmt * 0.10)) return;
+      var fit = FC ? FC.fitSchedule(similar.map(function (e) { return e.ts; }), false) : null;
+      if (!fit) return;
+      seenKeys[key] = true;
+      schedules.push({
+        key: key,
+        name: g.name,
+        amount: Math.round(medAmt * 100) / 100,
+        categoryId: similar[similar.length - 1].categoryId,
+        recurringId: null
+      });
+    });
+
+    (recurringItems || []).forEach(function (r) {
+      if (!r || !r.id) return;
+      var key = 'recurring-' + r.id;
+      if (seenKeys[key]) return;
+      var rName = normText(r.name || '');
+      var dominated = schedules.some(function (s) {
+        if (s.recurringId === r.id) return true;
+        if (rName && normText(s.name) === rName) return true;
+        return amountMatchesRecurring(s.amount, r.amount)
+          && s.categoryId === r.categoryId
+          && (!rName || normText(s.name).indexOf(rName) >= 0 || rName.indexOf(normText(s.name)) >= 0);
+      });
+      if (dominated) return;
+      seenKeys[key] = true;
+      schedules.push({
+        key: key,
+        name: r.name || 'Recurring',
+        amount: r.amount,
+        categoryId: r.categoryId,
+        recurringId: r.id
+      });
+    });
+
+    return schedules;
+  }
+
+  function pickMonthRecurringCharge(monthList, sch) {
+    var candidates = monthList.filter(function (e) {
+      if (sch.recurringId && e.recurringId === sch.recurringId) return true;
+      if (merchantKey(e.note) !== sch.key) return false;
+      return amountMatchesRecurring(e.amount, sch.amount);
+    });
+    if (!candidates.length) return null;
+    if (candidates.length > 2) return null;
+    candidates.sort(function (a, b) { return b.ts - a.ts; });
+    return candidates[0];
+  }
+
+  function recurringMerchantKeys(schedules) {
+    var map = {};
+    schedules.forEach(function (s) { map[s.key] = true; });
+    return map;
+  }
+
+  function isRecurringBillPurchase(e, schedules) {
+    if (!e) return true;
+    if (e.recurringId) return true;
     var k = merchantKey(e.note);
-    return !!(k && profiles[k]);
+    if (k && schedules && schedules[k]) return true;
+    if (e.categoryId === 'bills') return true;
+    var n = normText(e.note);
+    if (/rent|duke|verizon|energy|autopay|utilities|mortgage|insurance|ach/.test(n)) return true;
+    return false;
   }
 
   function computeCoffeeFunStat(entries, y, m) {
@@ -404,10 +468,13 @@
       }
     });
 
+    var recurSchedules = detectWrappedRecurringSchedules(entries, []);
+    var recurKeys = recurringMerchantKeys(recurSchedules);
     var biggestPurchase = null;
     month.forEach(function (e) {
+      if (isRecurringBillPurchase(e, recurKeys)) return;
       if (!biggestPurchase || e.amount > biggestPurchase.amount) {
-        var cat = categories.find(function (c) { return c.id === e.categoryId; }) || { id: e.categoryId, name: e.categoryId };
+        var cat = getCategory(categories, e.categoryId);
         biggestPurchase = {
           amount: e.amount,
           merchant: normalizeMerchantName(e.note) || 'Purchase',
@@ -459,87 +526,80 @@
     });
   }
 
-  function looksLikeNewSubscription(e) {
-    if (e.amount < 4.99 || e.amount > 99.99) return false;
-    if (e.categoryId === 'bills' || e.categoryId === 'fun') return true;
-    var n = normText(e.note);
-    return /max|netflix|spotify|hulu|disney|subscription|apple|google|prime|adobe/.test(n);
-  }
-
   function computeRecurringSlide(entries, categories, recurringItems, y, m) {
-    var profiles = detectRecurringProfiles(entries);
-    var recurringIds = {};
-    (recurringItems || []).forEach(function (r) { if (r && r.id) recurringIds[r.id] = r; });
-
+    var schedules = detectWrappedRecurringSchedules(entries, recurringItems);
     var month = monthEntries(entries, y, m);
     var monthTotalAmt = month.reduce(function (s, e) { return s + e.amount; }, 0);
     if (monthTotalAmt <= 0) return null;
 
-    var charges = month.filter(function (e) {
-      return isRecurringEntry(e, profiles, recurringIds);
+    var monthCharges = [];
+    schedules.forEach(function (sch) {
+      var pick = pickMonthRecurringCharge(month, sch);
+      if (!pick) return;
+      monthCharges.push({
+        sch: sch,
+        entry: pick,
+        name: sch.name || normalizeMerchantName(pick.note) || 'Recurring',
+        key: sch.key,
+        amount: pick.amount,
+        cat: getCategory(categories, pick.categoryId),
+        ts: pick.ts
+      });
     });
-    month.forEach(function (e) {
-      var key = merchantKey(e.note);
-      if (!key) return;
-      var dup = charges.some(function (c) { return c.id === e.id; });
-      if (dup) return;
-      if (!merchantSeenBeforeMonth(entries, y, m, key, e.id) && looksLikeNewSubscription(e)) {
-        charges.push(e);
-      }
-    });
-    if (!charges.length) return null;
+    if (!monthCharges.length) return null;
 
-    var total = charges.reduce(function (s, e) { return s + e.amount; }, 0);
     var prev = shiftMonth(y, m, -1);
+    var prevMonth = monthEntries(entries, prev.y, prev.m);
     var compare = canCompareMonths(entries, y, m);
 
-    var worthLook = [];
+    var newItems = [];
+    var changeItems = [];
     var steady = [];
 
-    charges.forEach(function (e) {
-      var name = normalizeMerchantName(e.note) || 'Recurring';
-      var key = merchantKey(e.note) || ('rec:' + (e.recurringId || e.id));
-      var cat = getCategory(categories, e.categoryId);
-
-      var seenBefore = merchantSeenBeforeMonth(entries, y, m, key, e.id)
-        || (e.recurringId && filterSpending(entries).some(function (x) {
-          if (x.id === e.id) return false;
+    monthCharges.forEach(function (row) {
+      var key = row.key;
+      var seenBefore = merchantSeenBeforeMonth(entries, y, m, key, row.entry.id)
+        || (row.sch.recurringId && filterSpending(entries).some(function (x) {
+          if (x.id === row.entry.id) return false;
           var d = new Date(x.ts);
           if (d.getFullYear() > y || (d.getFullYear() === y && d.getMonth() >= m)) return false;
-          return x.recurringId === e.recurringId;
+          return x.recurringId === row.sch.recurringId;
         }));
 
-      var prevCharge = null;
+      var prevAmt = null;
       if (compare) {
-        filterSpending(entries).forEach(function (x) {
-          if (!isSameMonth(x.ts, prev.y, prev.m)) return;
-          if (merchantKey(x.note) === key || (e.recurringId && x.recurringId === e.recurringId)) {
-            if (!prevCharge || x.ts > prevCharge.ts) prevCharge = x;
-          }
-        });
+        var prevPick = pickMonthRecurringCharge(prevMonth, row.sch);
+        if (prevPick) prevAmt = prevPick.amount;
       }
 
       var item = {
-        name: name,
-        amount: e.amount,
-        cat: cat,
-        ts: e.ts,
+        name: row.name,
+        amount: row.amount,
+        cat: row.cat,
+        ts: row.ts,
         key: key
       };
 
       if (!seenBefore) {
-        worthLook.push({ type: 'new', item: item });
-      } else if (prevCharge && Math.abs(e.amount - prevCharge.amount) >= 0.02) {
-        worthLook.push({
-          type: e.amount > prevCharge.amount ? 'priceUp' : 'priceDown',
+        newItems.push({ type: 'new', item: item });
+      } else if (prevAmt != null && Math.abs(row.amount - prevAmt) >= 0.5) {
+        changeItems.push({
+          type: row.amount > prevAmt ? 'priceUp' : 'priceDown',
           item: item,
-          prevAmount: prevCharge.amount
+          prevAmount: prevAmt
         });
       } else {
         steady.push(item);
       }
     });
 
+    var worthCandidates = newItems.concat(changeItems);
+    var worthLook = worthCandidates.slice(0, 3);
+    worthCandidates.slice(3).forEach(function (w) {
+      steady.push(w.item);
+    });
+
+    var total = monthCharges.reduce(function (s, r) { return s + r.amount; }, 0);
     var steadyTotal = steady.reduce(function (s, it) { return s + it.amount; }, 0);
     var steadyNames = [];
     steady.forEach(function (it) {
@@ -548,7 +608,7 @@
 
     return {
       total: total,
-      count: charges.length,
+      count: monthCharges.length,
       sharePct: Math.round((total / monthTotalAmt) * 100),
       worthLook: worthLook,
       steady: {
@@ -654,7 +714,7 @@
       tiles.push({
         label: 'Top category',
         title: slides.topCategory.top.cat.name,
-        sub: slides.topCategory.top.sharePct + '% · $' + roundMoney(slides.topCategory.top.amount)
+        sub: slides.topCategory.top.sharePct + '% · ' + formatMoneyUSD(slides.topCategory.top.amount)
       });
     }
     if (slides.regulars && slides.regulars.regular) {
@@ -669,13 +729,13 @@
       tiles.push({
         label: 'Biggest day',
         title: d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' }),
-        sub: '$' + roundMoney(slides.bigMoments.biggestDay.total)
+        subMoney: slides.bigMoments.biggestDay.total
       });
     }
     if (slides.recurring) {
       tiles.push({
         label: 'On repeat',
-        title: '$' + roundMoney(slides.recurring.total),
+        titleMoney: slides.recurring.total,
         sub: slides.recurring.count + ' charges'
       });
     }
@@ -690,7 +750,8 @@
       tiles.push({
         label: 'Coffee runs',
         title: String(slides.regulars.fun.count),
-        sub: '$' + roundMoney(slides.regulars.fun.total) + ' total'
+        subMoney: slides.regulars.fun.total,
+        subSuffix: ' total'
       });
     }
     while (tiles.length < 6) tiles.push(null);
@@ -706,6 +767,20 @@
 
   function roundMoney(n) {
     return (Math.round(n * 100) / 100).toFixed(2);
+  }
+
+  function formatMoneyUSD(n) {
+    if (n == null || isNaN(n)) n = 0;
+    try {
+      return new Intl.NumberFormat('en-US', {
+        style: 'currency',
+        currency: 'USD',
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2
+      }).format(n);
+    } catch (e) {
+      return '$' + roundMoney(n);
+    }
   }
 
   function buildWrappedData(opts) {
@@ -772,7 +847,8 @@
     computeRecurringSlide: computeRecurringSlide,
     computeBudgetsSlide: computeBudgetsSlide,
     computeWinsAccountsSlide: computeWinsAccountsSlide,
-    detectRecurringProfiles: detectRecurringProfiles,
+    detectWrappedRecurringSchedules: detectWrappedRecurringSchedules,
+    pickMonthRecurringCharge: pickMonthRecurringCharge,
     canCompareMonths: canCompareMonths,
     monthEntries: monthEntries,
     monthTotal: monthTotal

@@ -3872,7 +3872,7 @@
       var splitHtml = (vsLeft || vsRight)
         ? '<div class="wrapped-card wrapped-card--dim wrapped-split">' + vsLeft + (vsLeft && vsRight ? '<div class="wrapped-split-divider"></div>' : '') + vsRight + '</div>' : '';
       return '<div class="wrapped-slide" data-slide="total">'
-        + '<div class="wrapped-card wrapped-hero wrapped-hero--blue">'
+        + '<div class="wrapped-card wrapped-hero wrapped-hero--blue wrapped-hero--fill">'
         + '<span class="wrapped-kicker">' + monthShort(new Date(parts.y, parts.m, 1)).toUpperCase() + ' ' + parts.y + '</span>'
         + '<h2 class="wrapped-hero-title">Your month, wrapped.</h2>'
         + '<p class="wrapped-hero-lead">You spent</p>'
@@ -3961,6 +3961,15 @@
       var wkLabels = wk.labels.map(function (l, i) {
         return '<span' + (i === wk.topIndex ? ' class="wrapped-wday-active"' : '') + '>' + l + '</span>';
       }).join('');
+      var purchaseCard = '';
+      if (d.biggestPurchase) {
+        purchaseCard = '<div class="wrapped-card wrapped-card--dim"><span class="wrapped-kicker">Biggest single purchase</span>'
+          + '<div class="wrapped-purchase-row"><span class="wrapped-row-icon">' + iconBadge(d.biggestPurchase.cat, 'sm') + '</span>'
+          + '<div><strong>' + escHtml(d.biggestPurchase.merchant) + '</strong>'
+          + '<p class="wrapped-stat-sub">' + escHtml(d.biggestPurchase.cat.name) + ' · '
+          + new Date(d.biggestPurchase.ts).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' }) + '</p></div>'
+          + '<span class="wrapped-cat-amt">' + fmtMoneyDisplay(d.biggestPurchase.amount) + '</span></div></div>';
+      }
       return '<div class="wrapped-slide" data-slide="bigMoments">'
         + '<div class="wrapped-card wrapped-hero wrapped-hero--pink">'
         + '<span class="wrapped-kicker">Big moments</span>'
@@ -3968,12 +3977,7 @@
         + '<p class="wrapped-hero-num wrapped-hero-num--text">' + escHtml(dayLabel) + '</p>'
         + '<p class="wrapped-hero-sub">' + fmtMoneyDisplay(day.total) + ' across ' + day.stops + ' stops</p>'
         + '<p class="wrapped-hero-detail">' + escHtml(day.merchants.join(' · ')) + '</p></div>'
-        + '<div class="wrapped-card wrapped-card--dim"><span class="wrapped-kicker">Biggest single purchase</span>'
-        + '<div class="wrapped-purchase-row"><span class="wrapped-row-icon">' + iconBadge(d.biggestPurchase.cat, 'sm') + '</span>'
-        + '<div><strong>' + escHtml(d.biggestPurchase.merchant) + '</strong>'
-        + '<p class="wrapped-stat-sub">' + escHtml(d.biggestPurchase.cat.name) + ' · '
-        + new Date(d.biggestPurchase.ts).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' }) + '</p></div>'
-        + '<span class="wrapped-cat-amt">' + fmtMoneyDisplay(d.biggestPurchase.amount) + '</span></div></div>'
+        + purchaseCard
         + '<div class="wrapped-card wrapped-card--dim"><span class="wrapped-kicker">' + wk.topName + 's are your day</span>'
         + '<div class="wrapped-wday-chart">' + wkBars + '</div>'
         + '<div class="wrapped-wday-labels">' + wkLabels + '</div>'
@@ -4057,8 +4061,10 @@
     if (slideId === 'summary') {
       var tiles = d.tiles.map(function (t) {
         if (!t) return '';
+        var title = t.titleMoney != null ? fmtMoneyDisplay(t.titleMoney) : escHtml(t.title || '');
+        var sub = t.subMoney != null ? fmtMoneyDisplay(t.subMoney) + (t.subSuffix || '') : escHtml(t.sub || '');
         return '<div class="wrapped-summary-tile"><span class="wrapped-kicker">' + escHtml(t.label) + '</span>'
-          + '<strong>' + escHtml(t.title) + '</strong><span class="wrapped-stat-sub">' + escHtml(t.sub) + '</span></div>';
+          + '<strong>' + title + '</strong><span class="wrapped-stat-sub">' + sub + '</span></div>';
       }).join('');
       var cmp = '';
       if (d.compare && d.vsLastPct != null) {
@@ -4298,10 +4304,12 @@
       ctx.fillText(t.label.toUpperCase(), x + 14, y + 26);
       ctx.fillStyle = '#fff';
       ctx.font = '700 17px -apple-system, BlinkMacSystemFont, sans-serif';
-      ctx.fillText(t.title, x + 14, y + 50);
+      var tileTitle = t.titleMoney != null ? fmtMoneyDisplay(t.titleMoney) : (t.title || '');
+      ctx.fillText(tileTitle, x + 14, y + 50);
       ctx.fillStyle = 'rgba(255,255,255,0.8)';
       ctx.font = '500 13px -apple-system, BlinkMacSystemFont, sans-serif';
-      ctx.fillText(t.sub, x + 14, y + 72);
+      var tileSub = t.subMoney != null ? fmtMoneyDisplay(t.subMoney) + (t.subSuffix || '') : (t.sub || '');
+      ctx.fillText(tileSub, x + 14, y + 72);
     });
 
     ctx.fillStyle = 'rgba(255,255,255,0.9)';

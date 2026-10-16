@@ -1720,12 +1720,19 @@ button.legend-row.legend-btn.active { background: color-mix(in srgb, var(--accen
   flex-shrink: 0;
 }
 .wrapped-slide > .wrapped-hero {
-  flex: 1 1 auto;
-  min-height: 0;
+  flex: 0 0 auto;
   display: flex;
   flex-direction: column;
   justify-content: flex-start;
   padding: 24px 20px 20px;
+}
+.wrapped-slide > .wrapped-hero.wrapped-hero--fill {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+.wrapped-slide > .wrapped-card--dim {
+  flex: 1 1 auto;
+  min-height: 0;
 }
 .wrapped-card--dim {
   background: var(--wrapped-card);

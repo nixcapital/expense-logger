@@ -6,9 +6,12 @@ import assert from 'assert';
 import { readFileSync } from 'fs';
 import vm from 'vm';
 
-const code = readFileSync(new URL('../wrapped.js', import.meta.url), 'utf8');
-const sandbox = { window: {}, module: { exports: {} } };
-vm.runInNewContext(code, sandbox);
+const forecastCode = readFileSync(new URL('../forecast.js', import.meta.url), 'utf8');
+const wrappedCode = readFileSync(new URL('../wrapped.js', import.meta.url), 'utf8');
+const sandbox = { window: {}, globalThis: {}, module: { exports: {} } };
+sandbox.globalThis = sandbox;
+vm.runInNewContext(forecastCode, sandbox);
+vm.runInNewContext(wrappedCode, sandbox);
 const EW = sandbox.window.ExpenseWrapped;
 
 const categories = [
@@ -43,7 +46,7 @@ const entries = [
   { id: '3', amount: 5.61, categoryId: 'dining', note: 'STARBUCKS', ts: ts(2026, 8, 8), accountId: 'acct-chase' },
   { id: '4', amount: 12.99, categoryId: 'fun', note: 'Spotify', ts: ts(2026, 8, 4), recurringId: 'r-spotify' },
   { id: '5', amount: 11.99, categoryId: 'fun', note: 'Spotify', ts: ts(2026, 7, 4), recurringId: 'r-spotify' },
-  { id: '6', amount: 16.99, categoryId: 'fun', note: 'Max', ts: ts(2026, 8, 4), accountId: 'acct-chase' },
+  { id: '6', amount: 16.99, categoryId: 'fun', note: 'Max', ts: ts(2026, 8, 4), accountId: 'acct-chase', recurringId: 'r-max' },
   { id: '7', amount: 45, categoryId: 'groceries', note: 'Trader Joe\'s', ts: ts(2026, 8, 10), accountId: 'acct-checking' },
   { id: '8', amount: 30, categoryId: 'dining', note: 'Sweetgreen', ts: ts(2026, 8, 11), accountId: 'acct-chase' },
   { id: '8b', amount: 4.5, categoryId: 'dining', note: 'Blue Bottle Coffee', ts: ts(2026, 8, 12), accountId: 'acct-chase' },
@@ -56,7 +59,10 @@ const entries = [
 ];
 
 const budgets = { groceries: 200, gas: 100, dining: 50 };
-const recurringItems = [{ id: 'r-spotify', amount: 12.99, categoryId: 'fun', dayOfMonth: 4 }];
+const recurringItems = [
+  { id: 'r-spotify', amount: 12.99, categoryId: 'fun', dayOfMonth: 4, name: 'Spotify' },
+  { id: 'r-max', amount: 16.99, categoryId: 'fun', dayOfMonth: 4, name: 'Max' }
+];
 const accounts = [
   { id: 'acct-checking', name: 'Checking', color: '#20C997' },
   { id: 'acct-chase', name: 'Chase card', color: '#748FFC' }
@@ -84,6 +90,22 @@ const newCharge = sep.parts.recurring.worthLook.find((w) => w.type === 'new');
 assert.ok(newCharge && newCharge.item.name === 'Max');
 const priceUp = sep.parts.recurring.worthLook.find((w) => w.type === 'priceUp');
 assert.ok(priceUp && priceUp.item.name === 'Spotify');
+
+const schedules = EW.detectWrappedRecurringSchedules(entries, recurringItems);
+assert.ok(!schedules.some((s) => /starbucks/i.test(s.name || s.key)));
+assert.ok(schedules.length <= 8);
+
+const coffeeOnly = [
+  { id: 'c1', amount: 6.06, categoryId: 'dining', note: 'STARBUCKS #1', ts: ts(2026, 5, 3) },
+  { id: 'c2', amount: 6.06, categoryId: 'dining', note: 'STARBUCKS #2', ts: ts(2026, 6, 5) },
+  { id: 'c3', amount: 6.06, categoryId: 'dining', note: 'STARBUCKS #3', ts: ts(2026, 7, 7) },
+  { id: 'c4', amount: 6.06, categoryId: 'dining', note: 'STARBUCKS #4', ts: ts(2026, 8, 2) },
+  { id: 'c5', amount: 6.06, categoryId: 'dining', note: 'STARBUCKS #5', ts: ts(2026, 8, 9) },
+  { id: 'c6', amount: 6.06, categoryId: 'dining', note: 'STARBUCKS #6', ts: ts(2026, 8, 16) }
+];
+assert.strictEqual(EW.detectWrappedRecurringSchedules(coffeeOnly, []).length, 0);
+const coffeeRecur = EW.computeRecurringSlide(coffeeOnly, categories, [], 2026, 7);
+assert.strictEqual(coffeeRecur, null);
 
 const oneMonthOnly = EW.buildWrappedData({
   entries: [{ id: 'a', amount: 10, categoryId: 'dining', note: 'Cafe', ts: ts(2026, 8, 1) }],

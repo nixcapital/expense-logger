@@ -65,10 +65,11 @@ const budgets = {
 };
 
 const recurringItems = [
-  { id: 'r-duke', amount: 142.4, categoryId: 'bills', dayOfMonth: 15 },
-  { id: 'r-verizon', amount: 89.99, categoryId: 'bills', dayOfMonth: 8 },
-  { id: 'r-netflix', amount: 15.99, categoryId: 'fun', dayOfMonth: 12 },
-  { id: 'r-spotify', amount: 12.99, categoryId: 'fun', dayOfMonth: 4 }
+  { id: 'r-duke', amount: 142.4, categoryId: 'bills', dayOfMonth: 15, name: 'Duke Energy' },
+  { id: 'r-verizon', amount: 89.99, categoryId: 'bills', dayOfMonth: 8, name: 'Verizon' },
+  { id: 'r-netflix', amount: 15.99, categoryId: 'fun', dayOfMonth: 12, name: 'Netflix' },
+  { id: 'r-spotify', amount: 12.99, categoryId: 'fun', dayOfMonth: 4, name: 'Spotify' },
+  { id: 'r-max', amount: 16.99, categoryId: 'fun', dayOfMonth: 4, name: 'Max' }
 ];
 
 /** Realistic ~$2.5k/mo with comparable category mix (±30% MoM). */
@@ -159,6 +160,7 @@ function buildFixtureEntries() {
     if (e.note === 'Verizon') e.recurringId = 'r-verizon';
     if (e.note === 'Netflix') e.recurringId = 'r-netflix';
     if (e.note === 'Spotify') e.recurringId = 'r-spotify';
+    if (e.note === 'Max') e.recurringId = 'r-max';
   });
 
   return entries;
