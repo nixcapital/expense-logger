@@ -94,9 +94,44 @@ async function run() {
   let n2 = await page.evaluate(() => JSON.parse(localStorage.getItem('expenseLogger.entries.v1')).length);
   results.push(['card reimport dupes', n2 === 5 && /duplicate/i.test(t2) && /5/.test(dupSummary), t2]);
 
-  await importFile(page, 'sample-bank.xlsx');
+  await page.evaluate(() => {
+    localStorage.setItem('expenseLogger.entries.v1', '[]');
+    localStorage.setItem('expenseLogger.importRules.v1', '[]');
+  });
+  await page.reload({ waitUntil: 'networkidle' });
+  await page.click('button[data-tab="settings"]');
+  await importFile(page, 'sample-card.csv');
   await page.waitForSelector('#importModal.show');
   await confirmImport(page);
+  await importFile(page, 'sample-bank.xlsx');
+  await page.waitForSelector('#importModal.show');
+  const bankReview = await page.locator('#importSummary').innerText();
+  const bankBuckets = await page.evaluate(() => {
+    const t = document.getElementById('importSummary').innerText;
+    const grab = (label) => {
+      const m = t.match(new RegExp('(\\d+)\\s*' + label));
+      return m ? parseInt(m[1], 10) : 0;
+    };
+    return {
+      import: grab('to import'),
+      duplicate: grab('duplicates'),
+      transfer: grab('transfers'),
+      credit: grab('credits'),
+      pending: grab('pending'),
+      unreadable: grab('unreadable')
+    };
+  });
+  const bucketSum = bankBuckets.import + bankBuckets.duplicate + bankBuckets.transfer +
+    bankBuckets.credit + bankBuckets.pending + bankBuckets.unreadable;
+  results.push(['bank first-import no false dupes', bankBuckets.duplicate === 0, JSON.stringify(bankBuckets)]);
+  results.push(['bank review buckets partition file', bucketSum === 8, 'sum=' + bucketSum, bankReview.replace(/\s+/g, ' ').slice(0, 70)]);
+  results.push(['bank two card payments transfer', bankBuckets.transfer === 2, 'transfers=' + bankBuckets.transfer]);
+  const rulesAfterBank = await page.evaluate(() => JSON.parse(localStorage.getItem('expenseLogger.importRules.v1') || '[]').length);
+  results.push(['no auto rules on import', rulesAfterBank === 0, 'rules=' + rulesAfterBank]);
+  await page.locator('.import-row').filter({ hasText: 'VENMO' }).locator('.import-cat-select').selectOption('dining');
+  await confirmImport(page);
+  const rulesListText = await page.locator('#importRulesList').innerText();
+  results.push(['import rules list refreshes', !/No import rules yet/i.test(rulesListText)]);
   let entries = await page.evaluate(() => JSON.parse(localStorage.getItem('expenseLogger.entries.v1')));
   const venmo = entries.some((e) => (e.note || '').toUpperCase().indexOf('VENMO') !== -1);
   const autopay = entries.some((e) => (e.note || '').indexOf('CRDAUTOPAY') !== -1);
@@ -104,9 +139,6 @@ async function run() {
   results.push(['bank venmo spending', venmo]);
   results.push(['bank crdautopay transfer', !autopay]);
   results.push(['bank student loan spending', studentLoan]);
-
-  const rulesAfterBank = await page.evaluate(() => JSON.parse(localStorage.getItem('expenseLogger.importRules.v1') || '[]').length);
-  results.push(['no auto rules on import', rulesAfterBank === 0, 'rules=' + rulesAfterBank]);
 
   // Overlapping card exports
   await page.evaluate(() => {

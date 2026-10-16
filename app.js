@@ -2291,7 +2291,7 @@
     var n = normText(desc);
     var c = compactTransferText(desc);
     if (/\bvenmo\b/.test(n)) return false;
-    if (/epayment|e-?payment/.test(c) && /(crd|card|credit|chase|amex|visa|discover|autopay)/.test(c)) return true;
+    if (/e-?payment/.test(c) && (/web/.test(c) || /(crd|card|credit|autopay)/.test(c) || CARD_ISSUER_RE.test(n))) return true;
     if (/autopay/.test(c) && (/(crd|card|credit)/.test(c) || CARD_ISSUER_RE.test(n))) return true;
     if (/crdautopay|creditautopay|creditcrd|cardpymt|cardpayment|cardpmt|ccpayment|ccpmt|creditcardpymt/.test(c)) return true;
     if (/(crd|card).*(autopay|pymt|pmt|payment)/.test(c) || /(autopay|pymt|pmt).*(crd|card)/.test(c)) return true;
@@ -2339,7 +2339,9 @@
 
   function buildExistingContentCounts(layout) {
     var counts = {};
+    var srcWanted = importSourceKind(layout);
     entries.forEach(function (e) {
+      if (layout !== 'app-export' && e.importSource && e.importSource !== srcWanted) return;
       var ck = importContentKey(layout, e.ts, e.amount, e.note || '', e.categoryId);
       counts[ck] = (counts[ck] || 0) + 1;
     });
@@ -2349,6 +2351,7 @@
   function rowsFromTable(dataRows, headerRow, layout, batchId) {
     var contentCounts = buildExistingContentCounts(layout);
     var fileRowCounts = {};
+    var transferFileCounts = {};
     var out = [];
     var dateIdx = findCol(headerRow, ['transaction date', 'post date', 'date']);
     var postIdx = findCol(headerRow, ['post date']);
@@ -2374,7 +2377,8 @@
       }
 
       var desc = descIdx !== -1 ? cols[descIdx] : '';
-      var note = layout === 'app-export' ? String(desc || '').trim() : cleanImportNote(desc);
+      var descRaw = String(desc || '');
+      var note = layout === 'app-export' ? descRaw.trim() : cleanImportNote(descRaw);
       var typeVal = typeIdx !== -1 ? cols[typeIdx] : '';
       var ts = null;
       var amount = NaN;
@@ -2459,7 +2463,7 @@
       var rule = findImportRule(note);
       var isTransfer = rule && rule.isTransfer;
       if (rule && rule.countAsSpending) isTransfer = false;
-      if (!rule && isBuiltInTransfer(note, typeVal, layout)) isTransfer = true;
+      if (!rule && isBuiltInTransfer(descRaw, typeVal, layout)) isTransfer = true;
       if (rule && rule.categoryId && !rule.isTransfer) {
         // category from rule applied later
       }
@@ -2471,6 +2475,27 @@
       if (rule && rule.categoryId && !rule.isTransfer) catId = rule.categoryId;
 
       var contentKey = importContentKey(layout, ts, amount, note, catId);
+
+      if (isTransfer) {
+        var xferKey = contentKey;
+        transferFileCounts[xferKey] = (transferFileCounts[xferKey] || 0) + 1;
+        if (transferFileCounts[xferKey] > 1) {
+          out.push({
+            status: 'duplicate',
+            reason: 'Duplicate transfer in file',
+            note: note, amount: amount, ts: ts, contentKey: contentKey
+          });
+          continue;
+        }
+        out.push({
+          status: 'transfer', reason: 'Transfer between accounts', note: note, amount: amount, ts: ts,
+          categoryId: catId, importRowKey: rowKey, isTransfer: true, include: false,
+          layout: layout, suggestedCategoryId: catId, initialCategoryId: catId,
+          initialIsTransfer: true, userSetCategory: false, userSetTransfer: false
+        });
+        continue;
+      }
+
       fileRowCounts[contentKey] = (fileRowCounts[contentKey] || 0) + 1;
       var occurrence = fileRowCounts[contentKey];
       var existingN = contentCounts[contentKey] || 0;
@@ -2483,16 +2508,6 @@
         continue;
       }
       contentCounts[contentKey] = existingN + 1;
-
-      if (isTransfer) {
-        out.push({
-          status: 'transfer', reason: 'Transfer between accounts', note: note, amount: amount, ts: ts,
-          categoryId: catId, importRowKey: rowKey, isTransfer: true, include: false,
-          layout: layout, suggestedCategoryId: catId, initialCategoryId: catId,
-          initialIsTransfer: true, userSetCategory: false, userSetTransfer: false
-        });
-        continue;
-      }
 
       out.push({
         status: 'import', note: note, amount: amount, ts: ts, categoryId: catId,
@@ -2627,6 +2642,7 @@
     renderCategoryList(); buildYearSelect(true); renderReport();
     $importModal.classList.remove('show');
     pendingImport = null;
+    renderImportRulesList();
     var parts = [added + ' new'];
     if (dup) parts.push(dup + ' duplicates');
     if (skippedTransfer) parts.push(skippedTransfer + ' transfers');
