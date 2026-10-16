@@ -19,6 +19,8 @@
   var TRANSFER_PAIRS_KEY  = 'expenseLogger.transferPairs.v1';
   var TRANSFER_UNLINK_KEY = 'expenseLogger.transferUnlink.v1';
   var IMPORT_ACCOUNT_PREFS_KEY = 'expenseLogger.importAccountPrefs.v1';
+  var TRANSFER_PATTERNS_KEY = 'expenseLogger.transferPatterns.v1';
+  var FORECAST_OVERRIDES_KEY = 'expenseLogger.forecastOverrides.v1';
 
   var APP_VERSION = '1.7.0';
   var BACKUP_FORMAT = 2;
@@ -133,8 +135,11 @@
     { id: 'gas',       name: 'Gas',       emoji: '⛽', icon: 'fuel', color: '#51cf66' },
     { id: 'bills',     name: 'Bills',     emoji: '📄', icon: 'receipt', color: '#cc5de8' },
     { id: 'fun',       name: 'Fun',       emoji: '🎉', icon: 'ticket', color: '#f783ac' },
-    { id: 'other',     name: 'Other',     emoji: '📦', icon: 'boxes', color: '#878e96' }
+    { id: 'other',     name: 'Other',     emoji: '📦', icon: 'boxes', color: '#878e96' },
+    { id: 'income',    name: 'Income',    emoji: '💵', icon: 'circle-dot', color: '#34C77B' }
   ];
+
+  var INCOME_CATEGORY_ID = 'income';
 
   // ---------- State ----------
   var entries = [];
@@ -167,6 +172,18 @@
   var newAccountType = 'bank';
   var importAccountPickId = null;
   var viewingTransferPairId = null;
+  var transferPatterns = [];
+  var forecastChartDays = 60;
+  var lastForecastSim = null;
+  var forecastScreenOpen = false;
+  var balanceSheetAccountId = null;
+  var viewingOtherTransferEntryId = null;
+  var forecastOverrides = {};
+  var lastForecastSchedules = [];
+  var editingForecastItemKey = null;
+  var editingForecastItemMeta = null;
+  var editingForecastOccurrenceTs = null;
+  var FC = window.ExpenseForecast;
 
   // ---------- DOM ----------
   var $ = function (id) { return document.getElementById(id); };
@@ -653,6 +670,26 @@
     saveAccounts();
   }
 
+  function ensureIncomeCategory() {
+    var found = false;
+    for (var i = 0; i < categories.length; i++) {
+      if (categories[i].id === INCOME_CATEGORY_ID) { found = true; break; }
+    }
+    if (!found) {
+      categories.push(DEFAULT_CATEGORIES.filter(function (c) { return c.id === INCOME_CATEGORY_ID; })[0]);
+      saveCategories();
+    }
+  }
+
+  function isPaycheckDeposit(note) {
+    var n = normText(note || '');
+    return /\bpayroll\b/.test(n) || /\bdirect\s*dep/.test(n) || /\bsalary\b/.test(n) || /\bpaycheck\b/.test(n);
+  }
+
+  function incomeCategoryIdForDeposit(note) {
+    return isPaycheckDeposit(note) ? INCOME_CATEGORY_ID : null;
+  }
+
   function loadAccounts() {
     try {
       var raw = localStorage.getItem(ACCOUNTS_KEY);
@@ -670,6 +707,102 @@
 
   function saveAccounts() {
     try { localStorage.setItem(ACCOUNTS_KEY, JSON.stringify(accounts)); } catch (e) {}
+  }
+
+  function loadTransferPatterns() {
+    try {
+      var raw = localStorage.getItem(TRANSFER_PATTERNS_KEY);
+      if (raw) {
+        var p = JSON.parse(raw);
+        if (Array.isArray(p)) {
+          return p.filter(function (x) {
+            return x && x.id && x.pattern && typeof x.pattern === 'string';
+          });
+        }
+      }
+    } catch (e) {}
+    return [];
+  }
+
+  function saveTransferPatterns() {
+    try { localStorage.setItem(TRANSFER_PATTERNS_KEY, JSON.stringify(transferPatterns)); } catch (e) {}
+  }
+
+  function loadForecastOverrides() {
+    try {
+      var raw = localStorage.getItem(FORECAST_OVERRIDES_KEY);
+      if (raw) {
+        var p = JSON.parse(raw);
+        if (p && typeof p === 'object') return p;
+      }
+    } catch (e) {}
+    return {};
+  }
+
+  function saveForecastOverrides() {
+    try { localStorage.setItem(FORECAST_OVERRIDES_KEY, JSON.stringify(forecastOverrides)); } catch (e) {}
+  }
+
+  function normalizeTransferPattern(desc) {
+    return FC ? FC.normalizeTransferPattern(desc) : String(desc || '').toLowerCase().trim();
+  }
+
+  function findTransferPatternForNote(note) {
+    var n = note || '';
+    for (var i = transferPatterns.length - 1; i >= 0; i--) {
+      var pat = transferPatterns[i].pattern;
+      if (FC && FC.patternMatches(n, pat)) return transferPatterns[i];
+      if (!FC && n.toLowerCase().indexOf(pat.toLowerCase()) !== -1) return transferPatterns[i];
+    }
+    return null;
+  }
+
+  function isOtherAccountTransferEntry(e) {
+    return !!(e && e.isTransfer && e.transferKind === 'other');
+  }
+
+  function isDepositEntry(e) {
+    return !!(e && e.isDeposit);
+  }
+
+  function getForecastCushion() {
+    var meta = loadMetaObj();
+    var v = meta.forecastCushion;
+    if (typeof v === 'number' && v >= 0) return v;
+    return 600;
+  }
+
+  function setForecastCushion(val) {
+    var meta = loadMetaObj();
+    meta.forecastCushion = val;
+    saveMetaObj(meta);
+  }
+
+  function accountBalanceAsOfMs(acct) {
+    if (!acct || !acct.balanceAsOf) return null;
+    var parts = String(acct.balanceAsOf).split('-');
+    if (parts.length !== 3) return null;
+    var y = parseInt(parts[0], 10);
+    var m = parseInt(parts[1], 10) - 1;
+    var d = parseInt(parts[2], 10);
+    if (isNaN(y) || isNaN(m) || isNaN(d)) return null;
+    return new Date(y, m, d).getTime();
+  }
+
+  function formatBalanceAsOfLabel(asOfStr) {
+    if (!asOfStr) return 'today';
+    var today = localDateStamp();
+    if (asOfStr === today) {
+      return 'Today, ' + new Date().toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+    }
+    return new Date(asOfStr + 'T12:00:00').toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+  }
+
+  function parseMoneyInput(raw) {
+    var s = String(raw || '').replace(/[^0-9.\-]/g, '');
+    var v = parseFloat(s);
+    if (isNaN(v)) return NaN;
+    return Math.round(v * 100) / 100;
   }
 
   function loadTransferPairs() {
@@ -832,6 +965,7 @@
 
   function entryQualifiesForTransferPair(e) {
     if (!e || !e.isTransfer || !e.accountId) return false;
+    if (isOtherAccountTransferEntry(e)) return false;
     var acct = getAccount(e.accountId);
     if (!acct) return false;
     if (acct.type === 'bank') return isBankCardPaymentDebit(e) || isCardBillAutopayTransfer(e.note || '');
@@ -927,6 +1061,10 @@
     storage[TRANSFER_PAIRS_KEY] = JSON.stringify(transferPairs);
     storage[TRANSFER_UNLINK_KEY] = JSON.stringify(transferUnlinkKeys);
     storage[IMPORT_ACCOUNT_PREFS_KEY] = JSON.stringify(importAccountPrefs);
+    storage[TRANSFER_PATTERNS_KEY] = JSON.stringify(transferPatterns);
+    storage[FORECAST_OVERRIDES_KEY] = JSON.stringify(forecastOverrides);
+    var meta = loadMetaObj();
+    if (meta && meta.forecastCushion != null) storage[META_KEY] = JSON.stringify(meta);
     storage[UI_KEY] = JSON.stringify({
       tab: currentTab === 'add' ? tabBeforeAdd : currentTab,
       dismissedWrapped: uiState.dismissedWrapped || {},
@@ -1078,7 +1216,10 @@
     transferPairs = loadTransferPairs();
     transferUnlinkKeys = loadTransferUnlinkKeys();
     importAccountPrefs = loadImportAccountPrefs();
+    transferPatterns = loadTransferPatterns();
+    forecastOverrides = loadForecastOverrides();
     ensureDefaultAccounts();
+    ensureIncomeCategory();
     entries = loadEntries();
     if ($countCardPayments) $countCardPayments.checked = importSettings.countCardPayments;
   }
@@ -1310,6 +1451,14 @@
       }
     });
     if (changed) saveCategories();
+    ensureIncomeCategory();
+    entries.forEach(function (e) {
+      if (isDepositEntry(e) && isPaycheckDeposit(e.note) && e.categoryId !== INCOME_CATEGORY_ID) {
+        e.categoryId = INCOME_CATEGORY_ID;
+        changed = true;
+      }
+    });
+    if (changed) saveEntries();
     ensureDefaultAccounts();
     entries.forEach(function (e) {
       if (e.isTransfer && !e.accountId) {
@@ -1466,6 +1615,7 @@
 
   function entryCountsAsSpending(e) {
     if (!e || typeof e.amount !== 'number') return false;
+    if (isDepositEntry(e)) return false;
     if (e.isTransfer) return false;
     if (e.excluded) return false;
     if (e.countAsSpending === false) return false;
@@ -1756,7 +1906,8 @@
     row.dataset.id = e.id;
     row.addEventListener('click', function (ev) {
       if (ev.target.closest && ev.target.closest('button')) return;
-      openEntryEditor(e.id);
+      if (isOtherAccountTransferEntry(e)) openOtherTransferSheet(e.id);
+      else openEntryEditor(e.id);
     });
     if (e.isTransfer) row.classList.add('is-transfer-row');
     var chip = document.createElement('span');
@@ -1771,7 +1922,13 @@
     var noteRaw = String(e.note || '').trim();
     var hasNote = !!noteRaw;
     var subBits = [];
-    if (hasNote) {
+    if (isOtherAccountTransferEntry(e)) {
+      title.textContent = noteRaw || 'Transfer';
+      subBits.push('Transfer \u00B7 Other account');
+    } else if (isDepositEntry(e) && (e.categoryId === INCOME_CATEGORY_ID || isPaycheckDeposit(noteRaw))) {
+      title.textContent = noteRaw || 'Paycheck';
+      subBits.push('Income \u00B7 Paycheck');
+    } else if (hasNote) {
       var parsed = parseActivityNoteForRow(noteRaw, cat.name);
       title.textContent = parsed.title;
       subBits.push(activitySubtitleLine(cat.name, parsed.title, parsed.noteTag));
@@ -1799,8 +1956,14 @@
       main.appendChild(sub);
     }
     var amt = document.createElement('span');
-    amt.className = 'row-amt';
-    amt.textContent = fmtMoneyDisplay(e.amount);
+    amt.className = 'row-amt' + (isDepositEntry(e) ? ' row-amt-in' : '');
+    if (isOtherAccountTransferEntry(e) && !isDepositEntry(e)) {
+      amt.textContent = fmtMoneyDisplay(e.amount);
+    } else if (isDepositEntry(e)) {
+      amt.textContent = '+' + fmtMoneyDisplay(e.amount);
+    } else {
+      amt.textContent = fmtMoneyDisplay(e.amount);
+    }
     row.appendChild(chip);
     row.appendChild(main);
     row.appendChild(amt);
@@ -3481,6 +3644,7 @@
     var trendMonths = prepareTrendChart(y, m);
     var dailyTotals = prepareDailyChart(y, m);
     renderInsights(y, m);
+    renderHomeForecastCard();
     renderBudgets(data.byCat);
     if ($donutChart) {
       drawDonutFrame(data.byCat, data.total, 1, selectedLegendCatId);
@@ -5092,7 +5256,7 @@
     if (/mortgage|rent\b|hoa\b|property\s*tax/.test(n)) return 'bills';
     if (/tuition|university|college|school/.test(n)) return 'bills';
     if (/verizon|at&t|att|t-?mobile|comcast|xfinity|spectrum|utility|electric|water\s*bill|pg&e|coned/.test(n)) return 'bills';
-    if (/payroll|direct\s*dep|salary/.test(n)) return defaultImportCategoryId('bank');
+    if (/payroll|direct\s*dep|salary|paycheck/.test(n)) return INCOME_CATEGORY_ID;
     return defaultImportCategoryId('bank');
   }
   function categoryForImportRow(layout, extCatName, note) {
@@ -5151,19 +5315,39 @@
     return null;
   }
 
+  function looksLikeOtherAccountTransfer(desc) {
+    var note = normText(desc);
+    if (!note) return false;
+    if (/\bvenmo\b/.test(note)) return false;
+    if (isCardBillAutopayTransfer(desc)) return false;
+    if (/\btransfer\s*to\s*savings\b/.test(note)) return true;
+    if (/\bonline\s*transfer\s*to\b/.test(note)) return true;
+    if (/\btransfer\s*from\b/.test(note)) return true;
+    if (/\bxfer\b/.test(note) && !/\b(card|credit|crd)\b/.test(note)) return true;
+    return false;
+  }
+
   function isBuiltInTransfer(desc, type, layout) {
     var t = normText(type);
     if (layout === 'card') {
       if (CARD_PAYMENT_TYPES[t] && !importSettings.countCardPayments) return true;
     }
     if (layout === 'bank' && isCardBillAutopayTransfer(desc)) return true;
+    if (layout === 'bank' && looksLikeOtherAccountTransfer(desc)) return true;
+    if (findTransferPatternForNote(desc)) return true;
     var note = normText(desc);
     if (!note) return false;
     if (/\bvenmo\b/.test(note)) return false;
-    if (/\btransfer\s*to\s*savings\b/.test(note) || /\bxfer\b/.test(note)) return true;
     if (/\bonline\s*payment\b/.test(note) && /\b(credit|card|crd)\b/.test(note)) return true;
     if (/\bpayment\s*thank\s*you\b/.test(note)) return true;
     return false;
+  }
+
+  function importRowTransferKind(desc, layout, isTransfer) {
+    if (!isTransfer) return null;
+    if (layout === 'bank' && isCardBillAutopayTransfer(desc)) return null;
+    if (layout === 'bank' && (looksLikeOtherAccountTransfer(desc) || findTransferPatternForNote(desc))) return 'other';
+    return null;
   }
 
   function buildExistingContentCounts(layout) {
@@ -5222,7 +5406,26 @@
         var credit = creditIdx !== -1 ? parseAmountCell(cols[creditIdx]) : NaN;
         if (!isNaN(debit) && debit > 0) amount = debit;
         else if (!isNaN(credit) && credit > 0) {
-          out.push({ status: 'credit', reason: 'Credit / deposit (not spending)', note: note, amount: credit, ts: ts });
+          var patHit = findTransferPatternForNote(note);
+          var otherIn = patHit || looksLikeOtherAccountTransfer(descRaw);
+          if (otherIn) {
+            out.push({
+              status: 'transfer', reason: 'Transfer · Other account', note: note, amount: credit, ts: ts,
+              categoryId: categoryForImportRow('bank', catIdx !== -1 ? cols[catIdx] : '', note),
+              isTransfer: true, transferKind: 'other', isDeposit: true, include: true, layout: 'bank',
+              initialIsTransfer: true, userSetCategory: false, userSetTransfer: false, autoOtherAccount: !!patHit,
+              typeVal: typeVal, bankText: descRaw
+            });
+            continue;
+          }
+          var depCat = incomeCategoryIdForDeposit(note) || categoryForImportRow('bank', catIdx !== -1 ? cols[catIdx] : '', note);
+          out.push({
+            status: 'import', reason: 'Deposit / paycheck', note: note, amount: credit, ts: ts,
+            categoryId: depCat,
+            isTransfer: false, isDeposit: true, include: true, layout: 'bank',
+            initialIsTransfer: false, initialIsDeposit: true, userSetCategory: false, userSetTransfer: false,
+            typeVal: typeVal, bankText: descRaw
+          });
           continue;
         } else {
           out.push({ status: 'unreadable', reason: 'No debit amount', raw: cols });
@@ -5291,9 +5494,11 @@
       amount = Math.round(amount * 100) / 100;
 
       var rule = findImportRule(note);
-      var isTransfer = rule && rule.isTransfer;
+      var patRule = !isCardBillAutopayTransfer(descRaw) && findTransferPatternForNote(note);
+      var isTransfer = (rule && rule.isTransfer) || !!patRule;
       if (rule && rule.countAsSpending) isTransfer = false;
-      if (!rule && isBuiltInTransfer(descRaw, typeVal, layout)) isTransfer = true;
+      if (!rule && !patRule && isBuiltInTransfer(descRaw, typeVal, layout)) isTransfer = true;
+      var transferKind = isTransfer ? importRowTransferKind(descRaw, layout, isTransfer) : null;
       if (rule && rule.categoryId && !rule.isTransfer) {
         // category from rule applied later
       }
@@ -5332,11 +5537,12 @@
           continue;
         }
         out.push({
-          status: 'transfer', reason: 'Transfer between accounts', note: note, amount: amount, ts: ts,
-          categoryId: catId, importRowKey: rowKey, isTransfer: true, include: true,
+          status: 'transfer', reason: transferKind === 'other' ? 'Transfer · Other account' : 'Transfer between accounts',
+          note: note, amount: amount, ts: ts,
+          categoryId: catId, importRowKey: rowKey, isTransfer: true, transferKind: transferKind, include: true,
           layout: layout, suggestedCategoryId: catId, initialCategoryId: catId,
-          initialIsTransfer: true, userSetCategory: false, userSetTransfer: false,
-          typeVal: typeVal
+          initialIsTransfer: true, initialTransferKind: transferKind, userSetCategory: false, userSetTransfer: false,
+          typeVal: typeVal, bankText: descRaw, autoOtherAccount: transferKind === 'other' && !!patRule
         });
         continue;
       }
@@ -5372,6 +5578,43 @@
     return counts;
   }
 
+  function importRowXferMode(row) {
+    if (row.isDeposit && !row.isTransfer) return 'income';
+    if (!row.isTransfer) return 'expense';
+    if (row.transferKind === 'other') return 'other';
+    return 'paired';
+  }
+
+  function setImportRowXferMode(row, mode) {
+    if (mode === 'income') {
+      row.isTransfer = false;
+      row.transferKind = null;
+      row.isDeposit = true;
+      row.status = 'import';
+      var inc = incomeCategoryIdForDeposit(row.note) || INCOME_CATEGORY_ID;
+      row.categoryId = inc;
+    } else if (mode === 'expense') {
+      row.isTransfer = false;
+      row.transferKind = null;
+      row.isDeposit = false;
+      row.status = 'import';
+    } else if (mode === 'other') {
+      row.isTransfer = true;
+      row.transferKind = 'other';
+      row.isDeposit = false;
+      row.status = 'transfer';
+    } else {
+      row.isTransfer = true;
+      row.isDeposit = false;
+      row.transferKind = importRowTransferKind(row.bankText || row.note, row.layout, true);
+      row.status = 'transfer';
+    }
+    row.include = true;
+    row.userSetTransfer = row.isTransfer !== row.initialIsTransfer
+      || (row.transferKind || null) !== (row.initialTransferKind || null)
+      || !!row.isDeposit !== !!row.initialIsDeposit;
+  }
+
   function renderImportReview() {
     if (!pendingImport) return;
     var rows = pendingImport.rows;
@@ -5403,7 +5646,17 @@
       listHtml += '<div class="import-row-note">' + (r.note || '(no description)') + '</div>';
       listHtml += '<div class="import-row-actions">';
       listHtml += '<select class="import-cat-select" data-idx="' + i + '">' + catOpts + '</select>';
-      listHtml += '<label class="check-row import-transfer-toggle"><input type="checkbox" data-transfer="' + i + '"' + (r.isTransfer ? ' checked' : '') + '><span>Transfer</span></label>';
+      if (r.autoOtherAccount) listHtml += '<span class="import-other-tag">Auto</span>';
+      var rowMode = importRowXferMode(r);
+      if (!r.initialIsDeposit && (r.isDeposit || r.categoryId === INCOME_CATEGORY_ID || incomeCategoryIdForDeposit(r.note))) {
+        r.initialIsDeposit = !!r.isDeposit;
+      }
+      listHtml += '<div class="seg-control import-xfer-seg import-xfer-seg--4" role="group" aria-label="Row type" data-idx="' + i + '">';
+      listHtml += '<button type="button" class="seg-btn' + (rowMode === 'expense' ? ' is-active' : '') + '" data-mode="expense">Expense</button>';
+      listHtml += '<button type="button" class="seg-btn' + (rowMode === 'income' ? ' is-active' : '') + '" data-mode="income">Income</button>';
+      listHtml += '<button type="button" class="seg-btn' + (rowMode === 'paired' ? ' is-active' : '') + '" data-mode="paired">Transfer</button>';
+      listHtml += '<button type="button" class="seg-btn' + (rowMode === 'other' ? ' is-active' : '') + '" data-mode="other">Other</button>';
+      listHtml += '</div>';
       listHtml += '</div></div>';
     });
     if (!listHtml) listHtml = '<div class="empty">No rows to import. Skipped items are counted above.</div>';
@@ -5417,15 +5670,17 @@
         row.userSetCategory = sel.value !== row.initialCategoryId;
       });
     });
-    Array.prototype.forEach.call($importRowList.querySelectorAll('[data-transfer]'), function (cb) {
-      cb.addEventListener('change', function () {
-        var idx = parseInt(cb.dataset.transfer, 10);
-        var row = pendingImport.rows[idx];
-        row.isTransfer = cb.checked;
-        row.status = cb.checked ? 'transfer' : 'import';
-        row.include = true;
-        row.userSetTransfer = cb.checked !== row.initialIsTransfer;
-        cb.closest('.import-row').classList.toggle('is-transfer', cb.checked);
+    Array.prototype.forEach.call($importRowList.querySelectorAll('.import-xfer-seg'), function (seg) {
+      var idx = parseInt(seg.dataset.idx, 10);
+      Array.prototype.forEach.call(seg.querySelectorAll('.seg-btn'), function (btn) {
+        btn.addEventListener('click', function () {
+          var row = pendingImport.rows[idx];
+          setImportRowXferMode(row, btn.dataset.mode);
+          Array.prototype.forEach.call(seg.querySelectorAll('.seg-btn'), function (b) {
+            b.classList.toggle('is-active', b === btn);
+          });
+          seg.closest('.import-row').classList.toggle('is-transfer', row.isTransfer);
+        });
       });
     });
     $importModal.classList.add('show');
@@ -5461,7 +5716,7 @@
   }
 
   function pushImportedEntry(r, batchId, accountId) {
-    entries.push({
+    var entry = {
       id: uid(),
       amount: r.amount,
       categoryId: r.categoryId,
@@ -5473,7 +5728,15 @@
       accountId: accountId,
       isTransfer: !!r.isTransfer,
       typeVal: r.typeVal || ''
-    });
+    };
+    if (r.transferKind) entry.transferKind = r.transferKind;
+    if (r.isDeposit) {
+      entry.isDeposit = true;
+      var inc = incomeCategoryIdForDeposit(r.note);
+      if (inc) entry.categoryId = inc;
+    }
+    if (r.bankText) entry.bankText = r.bankText;
+    entries.push(entry);
   }
 
   function commitImport() {
@@ -6064,7 +6327,634 @@
     }
   }
 
+  function getCheckingAccount() {
+    ensureDefaultAccounts();
+    var acct = getAccount(DEFAULT_ACCOUNT_CHECKING);
+    if (acct) return acct;
+    for (var i = 0; i < accounts.length; i++) {
+      if (accounts[i].type === 'bank') return accounts[i];
+    }
+    return accounts[0] || null;
+  }
+
+  function buildForecastPayload(chartDays) {
+    if (!FC) return null;
+    var checking = getCheckingAccount();
+    if (!checking) return null;
+    var asOfMs = accountBalanceAsOfMs(checking);
+    var nowMs = Date.now();
+    return {
+      nowMs: nowMs,
+      checkingId: checking.id,
+      chaseId: DEFAULT_ACCOUNT_CHASE,
+      balance: typeof checking.currentBalance === 'number' ? checking.currentBalance : null,
+      balanceAsOfMs: asOfMs,
+      cushion: getForecastCushion(),
+      entries: entries,
+      recurringItems: recurringItems,
+      transferPairs: transferPairs,
+      overrides: forecastOverrides,
+      chartDays: chartDays || forecastChartDays,
+      maxLookaheadDays: 365
+    };
+  }
+
+  function formatForecastDate(ts) {
+    return new Date(ts).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+  }
+
+  function formatForecastShortDate(ts) {
+    return new Date(ts).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  }
+
+  function fmtForecastMoneyShort(n) {
+    var v = Math.round(n);
+    if (Math.abs(v) >= 1000) return '$' + (v / 1000).toFixed(v % 1000 === 0 ? 0 : 1).replace(/\.0$/, '') + 'k';
+    return '$' + v;
+  }
+
+  function renderHomeForecastCard() {
+    var card = $('homeForecastCard');
+    if (!card) return;
+    var checking = getCheckingAccount();
+    if (!checking || typeof checking.currentBalance !== 'number') {
+      card.hidden = true;
+      return;
+    }
+    var payload = buildForecastPayload(60);
+    var result = payload && FC ? FC.runForecast(payload) : null;
+    if (!result || !result.ok) {
+      card.hidden = true;
+      return;
+    }
+    card.hidden = false;
+    var dateEl = $('homeForecastDate');
+    var daysEl = $('homeForecastDays');
+    var balEl = $('homeForecastBalanceVal');
+    if (result.neverRunsOut) {
+      if (dateEl) {
+        dateEl.textContent = 'Stays positive for a year+';
+        dateEl.classList.add('is-long');
+      }
+      if (daysEl) daysEl.textContent = '';
+    } else {
+      if (dateEl) dateEl.classList.remove('is-long');
+      if (dateEl) dateEl.textContent = formatForecastDate(result.lastsUntil);
+      if (daysEl) daysEl.textContent = result.daysAway + ' days away';
+    }
+    if (balEl) balEl.textContent = fmtMoneyDisplay(result.startingBalance);
+  }
+
+  function closeForecastScreen() {
+    forecastScreenOpen = false;
+    var fs = $('tab-forecast');
+    if (fs) fs.hidden = true;
+    if ($('tab-summary')) $('tab-summary').hidden = currentTab !== 'summary';
+  }
+
+  function openForecastScreen() {
+    forecastScreenOpen = true;
+    if ($('tab-summary')) $('tab-summary').hidden = true;
+    var fs = $('tab-forecast');
+    if (fs) fs.hidden = false;
+    renderForecastScreen();
+    window.scrollTo(0, 0);
+  }
+
+  function renderForecastScreen() {
+    var checking = getCheckingAccount();
+    var empty = $('forecastEmptyState');
+    var main = $('forecastMain');
+    if (!checking || typeof checking.currentBalance !== 'number') {
+      if (empty) empty.hidden = false;
+      if (main) main.hidden = true;
+      if ($('forecastEmptyTitle')) $('forecastEmptyTitle').textContent = 'Set your checking balance';
+      if ($('forecastEmptyText')) $('forecastEmptyText').textContent = 'Add the balance from your bank app so we can project cash flow.';
+      return;
+    }
+    var checkingEntries = entries.filter(function (e) { return e.accountId === checking.id; });
+    if (checkingEntries.length < 3) {
+      if (empty) empty.hidden = false;
+      if (main) main.hidden = true;
+      if ($('forecastEmptyTitle')) $('forecastEmptyTitle').textContent = 'Need more checking history';
+      if ($('forecastEmptyText')) $('forecastEmptyText').textContent = 'Import a few weeks of checking transactions so we can detect bills, paychecks, and spending pace.';
+      return;
+    }
+    if (empty) empty.hidden = true;
+    if (main) main.hidden = false;
+
+    var payload = buildForecastPayload(forecastChartDays);
+    var result = FC.runForecast(payload);
+    if (!result.ok) return;
+
+    var chip = $('forecastAccountChip');
+    if (chip) chip.innerHTML = accountMiniIconHTML(checking) + '<span>' + escHtml(accountShortName(checking)) + '</span>';
+
+    var lastsEl = $('forecastLastsDate');
+    var daysEl = $('forecastDaysAway');
+    if (result.neverRunsOut) {
+      if (lastsEl) {
+        lastsEl.textContent = 'Stays positive for a year+';
+        lastsEl.classList.add('is-long');
+      }
+      if (daysEl) daysEl.textContent = '';
+    } else {
+      if (lastsEl) lastsEl.classList.remove('is-long');
+      if (lastsEl) lastsEl.textContent = formatForecastDate(result.lastsUntil);
+      if (daysEl) daysEl.textContent = result.daysAway + ' days away';
+    }
+    if ($('forecastBalanceVal')) $('forecastBalanceVal').textContent = fmtMoneyDisplay(result.startingBalance);
+    if ($('forecastBalanceLabel')) {
+      $('forecastBalanceLabel').textContent = checking.name + ' balance \u00B7 as of today';
+    }
+    if ($('forecastUpcomingWindow')) $('forecastUpcomingWindow').textContent = 'Next ' + forecastChartDays + ' days';
+    if ($('forecastUpcomingLabel')) $('forecastUpcomingLabel').textContent = 'Upcoming \u00B7 ' + accountShortName(checking);
+
+    var sim = FC.simulateBalanceTimeline({
+      nowMs: payload.nowMs,
+      startingBalance: result.startingBalance,
+      entries: entries,
+      checkingId: checking.id,
+      chaseId: DEFAULT_ACCOUNT_CHASE,
+      transferPairs: transferPairs,
+      recurringItems: recurringItems,
+      overrides: forecastOverrides,
+      chartDays: forecastChartDays,
+      maxLookaheadDays: 365,
+      cushion: getForecastCushion()
+    });
+    if (sim.schedules) lastForecastSchedules = sim.schedules;
+    lastForecastSim = sim;
+    if (sim.ok && $('forecastLowestSub')) {
+      var lowPt = sim.lowestInWindow || sim.lowest;
+      $('forecastLowestSub').textContent = 'Lowest ' + fmtMoneyDisplay(lowPt.balance) + ' on ' + formatForecastShortDate(lowPt.ts);
+    }
+    drawForecastChart(sim, getForecastCushion());
+    renderForecastUpcoming(sim, getForecastCushion());
+  }
+
+  function drawForecastChart(sim, cushion) {
+    var canvas = $('forecastChart');
+    var wrap = $('forecastChartWrap');
+    if (!canvas || !sim || !sim.ok) return;
+    var todayMs = FC.startOfDay(Date.now());
+    var horizon = FC.addDays(todayMs, forecastChartDays);
+    var points = sim.points.filter(function (p) { return p.ts <= horizon; });
+    if (!points.length) return;
+    var dpr = Math.min(window.devicePixelRatio || 1, 2);
+    var cssW = canvas.clientWidth || 360;
+    var cssH = 200;
+    canvas.width = Math.round(cssW * dpr);
+    canvas.height = Math.round(cssH * dpr);
+    var ctx = canvas.getContext('2d');
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    var padL = 8;
+    var padR = 44;
+    var padT = 12;
+    var padB = 26;
+    var w = cssW - padL - padR;
+    var h = cssH - padT - padB;
+    var dataMin = points[0].balance;
+    var dataMax = points[0].balance;
+    points.forEach(function (p) {
+      if (p.balance < dataMin) dataMin = p.balance;
+      if (p.balance > dataMax) dataMax = p.balance;
+    });
+    var span = Math.max(80, dataMax - dataMin);
+    var cushionNear = cushion >= dataMin - span * 0.25 && cushion <= dataMax + span * 0.2;
+    if (cushionNear) {
+      dataMin = Math.min(dataMin, cushion);
+      dataMax = Math.max(dataMax, cushion);
+    }
+    var step = FC.forecastChartAxisStep(dataMax - dataMin);
+    var minBal = Math.floor((dataMin - step * 0.35) / step) * step;
+    var maxBal = Math.ceil((dataMax + step * 0.35) / step) * step;
+    if (maxBal - minBal < step * 2) maxBal = minBal + step * 2;
+    if (minBal < 0 && dataMin >= 0) minBal = 0;
+    var t0 = points[0].ts;
+    var t1 = points[points.length - 1].ts;
+    function xAt(ts) { return padL + ((ts - t0) / (t1 - t0 || 1)) * w; }
+    function yAt(bal) { return padT + h - ((bal - minBal) / (maxBal - minBal)) * h; }
+    var gridColor = cssVar('--text-dim', '#8A91A3');
+    var lineColor = cssVar('--accent', '#5B8CFF');
+    var histColor = cssVar('--text-secondary', '#6B7280');
+    var warnColor = cssVar('--warn', '#F5A524');
+    ctx.clearRect(0, 0, cssW, cssH);
+    var cy = cushionNear ? yAt(cushion) : null;
+    if (cushionNear && cy >= padT && cy <= padT + h) {
+      ctx.fillStyle = 'rgba(245, 165, 36, 0.14)';
+      ctx.fillRect(padL, cy, w, padT + h - cy);
+      ctx.strokeStyle = warnColor;
+      ctx.setLineDash([4, 4]);
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(padL, cy);
+      ctx.lineTo(padL + w, cy);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+    function strokeBalanceSegment(seg, color, width) {
+      if (!seg.length) return;
+      ctx.strokeStyle = color;
+      ctx.lineWidth = width;
+      ctx.beginPath();
+      seg.forEach(function (p, i) {
+        var x = xAt(p.ts);
+        var y = yAt(p.balance);
+        if (i === 0) ctx.moveTo(x, y);
+        else {
+          var px = xAt(seg[i - 1].ts);
+          ctx.lineTo(px, y);
+          ctx.lineTo(x, y);
+        }
+      });
+      ctx.stroke();
+    }
+    var hist = [];
+    var future = [];
+    points.forEach(function (p) {
+      if (p.ts <= todayMs) hist.push(p);
+      else future.push(p);
+    });
+    if (hist.length) strokeBalanceSegment(hist, histColor, 2);
+    if (future.length) {
+      if (hist.length) future.unshift(hist[hist.length - 1]);
+      strokeBalanceSegment(future, lineColor, 2.5);
+    }
+    ctx.strokeStyle = gridColor;
+    ctx.setLineDash([3, 3]);
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    var tx = xAt(todayMs);
+    ctx.moveTo(tx, padT);
+    ctx.lineTo(tx, padT + h);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle = lineColor;
+    points.forEach(function (p) {
+      if (!p.today) return;
+      ctx.beginPath();
+      ctx.arc(xAt(p.ts), yAt(p.balance), 4, 0, Math.PI * 2);
+      ctx.fill();
+    });
+    var axisPlan = FC.planForecastChartYAxisLabels({
+      minBal: minBal,
+      maxBal: maxBal,
+      step: step,
+      cushion: cushion,
+      cushionNear: cushionNear,
+      padT: padT,
+      innerH: h,
+      baselineNudge: 4
+    });
+    ctx.font = '11px system-ui, sans-serif';
+    ctx.textAlign = 'right';
+    axisPlan.labels.forEach(function (lb) {
+      ctx.fillStyle = lb.isCushion ? warnColor : gridColor;
+      ctx.font = lb.isCushion ? '600 11px system-ui, sans-serif' : '11px system-ui, sans-serif';
+      ctx.fillText(fmtForecastMoneyShort(lb.bal), padL + w + padR - 4, lb.y);
+    });
+    if (axisPlan.showCushionNote) {
+      ctx.textAlign = 'left';
+      ctx.fillStyle = warnColor;
+      ctx.font = '600 11px system-ui, sans-serif';
+      ctx.fillText('Cushion ' + fmtForecastMoneyShort(cushion), padL, axisPlan.cushionLabelY);
+    }
+    if (typeof window !== 'undefined') {
+      window.__forecastChartAxisDebug = {
+        chartDays: forecastChartDays,
+        colorScheme: window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light',
+        cushionNear: cushionNear,
+        plan: axisPlan,
+        collides: FC.yAxisLabelsCollide(axisPlan)
+      };
+    }
+    ctx.textAlign = 'center';
+    ctx.fillStyle = gridColor;
+    var labels = [
+      { ts: todayMs, text: 'Today' },
+      { ts: FC.addDays(todayMs, Math.round(forecastChartDays * 0.35)), text: null },
+      { ts: FC.addDays(todayMs, Math.round(forecastChartDays * 0.65)), text: null },
+      { ts: FC.addDays(todayMs, forecastChartDays), text: null }
+    ];
+    labels.forEach(function (lb, idx) {
+      if (idx > 0) {
+        var d = new Date(lb.ts);
+        lb.text = d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+      }
+      ctx.fillText(lb.text, xAt(lb.ts), cssH - 6);
+    });
+    if (wrap && !prefersReducedMotion()) {
+      wrap.classList.add('is-loading');
+      requestAnimationFrame(function () {
+        wrap.classList.remove('is-loading');
+      });
+    }
+  }
+
+  function formatForecastEditAmount(n) {
+    var v = Math.round(n * 100) / 100;
+    return v.toFixed(2);
+  }
+
+  function openForecastItemEditor(itemKey, label, amount, ts, kind, categoryId) {
+    if (!itemKey || itemKey === 'daily-spend') return;
+    editingForecastItemKey = itemKey;
+    editingForecastOccurrenceTs = ts;
+    editingForecastItemMeta = { label: label, kind: kind, categoryId: categoryId };
+    var title = $('forecastItemEditTitle');
+    if (title) title.textContent = label || 'Upcoming item';
+    var amtIn = $('forecastItemAmountInput');
+    if (amtIn) amtIn.value = formatForecastEditAmount(amount);
+    var dateIn = $('forecastItemDateInput');
+    if (dateIn) {
+      var d = new Date(ts);
+      dateIn.value = d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate());
+    }
+    var m = $('forecastItemEditModal');
+    if (m) m.classList.add('show');
+  }
+
+  function saveForecastItemOverride() {
+    if (!editingForecastItemKey) return;
+    var amt = parseFloat($('forecastItemAmountInput') && $('forecastItemAmountInput').value);
+    var dateVal = $('forecastItemDateInput') && $('forecastItemDateInput').value;
+    if (isNaN(amt) || amt <= 0) { toast('Enter a valid amount'); return; }
+    if (!dateVal) { toast('Pick a date'); return; }
+    var parts = dateVal.split('-');
+    var nextTs = new Date(parseInt(parts[0], 10), parseInt(parts[1], 10) - 1, parseInt(parts[2], 10)).getTime();
+    var meta = editingForecastItemMeta || {};
+    forecastOverrides[editingForecastItemKey] = {
+      amount: Math.round(amt * 100) / 100,
+      nextTs: nextTs,
+      applyFromTs: editingForecastOccurrenceTs,
+      label: meta.label,
+      kind: meta.kind,
+      categoryId: meta.categoryId
+    };
+    saveForecastOverrides();
+    editingForecastItemKey = null;
+    editingForecastOccurrenceTs = null;
+    var m = $('forecastItemEditModal');
+    if (m) m.classList.remove('show');
+    renderHomeForecastCard();
+    if (forecastScreenOpen) renderForecastScreen();
+    toast('Forecast updated');
+  }
+
+  function renderForecastUpcoming(sim, cushion) {
+    var list = $('forecastUpcomingList');
+    if (!list || !sim) return;
+    var html = '';
+    var items = sim.upcoming.slice().sort(function (a, b) {
+      if (b.amount !== a.amount) return b.amount - a.amount;
+      return a.ts - b.ts;
+    });
+    var majorAmt = 250;
+    var majorKeys = {};
+    items.forEach(function (u) {
+      if (u.amount >= majorAmt && u.itemKey) majorKeys[u.itemKey] = true;
+    });
+    items = items.sort(function (a, b) { return a.ts - b.ts; }).slice(0, 14);
+    if (!items.length) {
+      list.innerHTML = '<div class="empty" style="padding:16px">No scheduled items in this window.</div>';
+      return;
+    }
+    items.forEach(function (u) {
+      var cat = u.categoryId ? getCat(u.categoryId) : null;
+      var iconBg = '#cc5de822';
+      var iconColor = '#cc5de8';
+      var iconSvg = iconBadge(cat || { icon: 'receipt', color: '#cc5de8' }, 'sm');
+      var sub = formatForecastShortDate(u.ts);
+      if (u.kind === 'inflow') {
+        iconBg = '#34C77B22'; iconColor = '#34C77B';
+        iconSvg = '<svg width="18" height="18" viewBox="0 0 18 18" fill="none"><path d="M4 9h10M10 5l4 4-4 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>';
+        sub += ' \u00B7 Paycheck';
+      } else if (u.kind === 'card-payment') {
+        iconBg = '#748FFC22'; iconColor = '#748FFC';
+        iconSvg = '<svg width="18" height="18" viewBox="0 0 18 18" fill="none"><rect x="2" y="4" width="14" height="10" rx="1.5" stroke="currentColor"/><path d="M2 7h14" stroke="currentColor"/></svg>';
+        sub += ' \u00B7 Card bill';
+      } else if (u.kind === 'transfer-other') {
+        iconBg = 'var(--raised)'; iconColor = 'var(--text-secondary)';
+        iconSvg = '<svg width="18" height="18" viewBox="0 0 18 18" fill="none"><path d="M3 7h8M9 5l3 2-3 2M15 11H7M9 13l-3-2 3-2" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>';
+        sub += ' \u00B7 Transfer';
+      } else if (cat) {
+        sub += ' \u00B7 ' + cat.name;
+        if (/duke|energy/i.test(u.label)) sub += ' \u00B7 Autopay';
+        if (/rent|apts/i.test(u.label)) sub += ' \u00B7 Rent';
+      }
+      var amtClass = 'forecast-up-amt';
+      var amtTxt = '';
+      if (u.kind === 'inflow') {
+        amtClass += ' is-in';
+        amtTxt = '+' + fmtMoneyDisplay(u.amount);
+      } else if (u.kind === 'transfer-other') {
+        amtClass += ' is-xfer';
+        amtTxt = fmtMoneyDisplay(u.amount);
+      } else {
+        amtTxt = '-' + fmtMoneyDisplay(u.amount);
+      }
+      var rowClass = 'forecast-up-row';
+      if ((u.amount >= majorAmt || majorKeys[u.itemKey]) && u.itemKey && u.itemKey !== 'daily-spend') {
+        rowClass += ' forecast-up-row--major';
+      }
+      var tap = '';
+      if (u.itemKey && u.itemKey !== 'daily-spend') {
+        tap = ' data-forecast-item="' + escHtml(u.itemKey) + '" data-forecast-ts="' + u.ts + '"';
+      }
+      html += '<button type="button" class="' + rowClass + '"' + tap + '>';
+      html += '<div class="forecast-up-icon" style="background:' + iconBg + ';color:' + iconColor + '">' + iconSvg + '</div>';
+      html += '<div><p class="forecast-up-title">' + escHtml(u.label) + '</p><p class="forecast-up-sub">' + escHtml(sub) + '</p></div>';
+      html += '<div class="forecast-up-amt-col"><div class="' + amtClass + '">' + amtTxt + '</div>';
+      html += '<div class="forecast-up-run">\u2192 ' + fmtForecastMoneyShort(u.balanceAfter) + '</div>';
+      if (u.balanceAfter < cushion) {
+        html += '<div class="forecast-cushion-chip"><svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M6 2.2v4M6 8.2h.01" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/><path d="M2.2 9.2h7.6L10.2 6 6 2.2 1.8 6l.4 3.2z" stroke="currentColor" stroke-width="1"/></svg>';
+        html += 'Below ' + fmtForecastMoneyShort(cushion) + ' \u00B7 ' + fmtForecastMoneyShort(u.balanceAfter) + '</div>';
+      }
+      html += '</div></button>';
+    });
+    list.innerHTML = html;
+    Array.prototype.forEach.call(list.querySelectorAll('[data-forecast-item]'), function (btn) {
+      btn.addEventListener('click', function () {
+        var key = btn.getAttribute('data-forecast-item');
+        var occTs = parseInt(btn.getAttribute('data-forecast-ts'), 10);
+        var match = null;
+        items.forEach(function (u) {
+          if (u.itemKey === key && u.ts === occTs) match = u;
+        });
+        if (match) openForecastItemEditor(key, match.label, match.amount, match.ts, match.kind, match.categoryId);
+      });
+    });
+  }
+
+  function renderForecastScheduleInfo() {
+    var el = $('forecastScheduleList');
+    if (!el) return;
+    if (!lastForecastSchedules.length) {
+      el.innerHTML = '<p class="hint">No recurring patterns detected yet.</p>';
+      return;
+    }
+    var html = '<div class="forecast-schedule-list">';
+    lastForecastSchedules.forEach(function (s) {
+      html += '<div class="forecast-schedule-row"><div class="forecast-schedule-name">' + escHtml(s.label) + '</div>';
+      html += '<div class="forecast-schedule-detail">' + escHtml(s.inferenceDetail || '') + '</div></div>';
+    });
+    html += '</div>';
+    el.innerHTML = html;
+  }
+
+  function openBalanceSheet(accountId) {
+    var acct = getAccount(accountId) || getCheckingAccount();
+    if (!acct) return;
+    balanceSheetAccountId = acct.id;
+    var sheet = $('balanceSheet');
+    var acctRow = $('balanceSheetAccount');
+    if (acctRow) {
+      acctRow.innerHTML = accountMiniIconHTML(acct) + '<div><div class="settings-account-name">' + escHtml(acct.name) + '</div><div class="settings-account-sub">Bank account</div></div>';
+    }
+    var inp = $('balanceAmountInput');
+    if (inp) inp.value = typeof acct.currentBalance === 'number' ? fmtMoneyDisplay(acct.currentBalance) : '';
+    var asOf = acct.balanceAsOf || localDateStamp();
+    if ($('balanceAsOfInput')) $('balanceAsOfInput').value = asOf;
+    if ($('balanceAsOfPreview')) $('balanceAsOfPreview').textContent = formatBalanceAsOfLabel(asOf);
+    var foot = $('balanceSheetFoot');
+    if (foot) {
+      var hist = acct.balanceHistory;
+      if (hist && hist.amount != null && hist.asOf) {
+        foot.textContent = acct.name + ' transactions dated after ' + formatBalanceAsOfLabel(asOf).split(',')[0].replace('Today', 'today')
+          + ' adjust it automatically. Last set: ' + fmtMoneyDisplay(hist.amount) + ' on ' + formatForecastShortDate(new Date(hist.asOf + 'T12:00:00').getTime()) + '.';
+      } else {
+        foot.textContent = acct.name + ' transactions dated after ' + formatBalanceAsOfLabel(asOf).split(',')[0].replace('Today', 'today') + ' adjust it automatically.';
+      }
+    }
+    if (sheet) sheet.classList.add('show');
+    if (EI && EI.hydrateUiIcons) EI.hydrateUiIcons(sheet);
+  }
+
+  function saveBalanceSheet() {
+    var acct = getAccount(balanceSheetAccountId);
+    if (!acct) return;
+    var val = parseMoneyInput($('balanceAmountInput') && $('balanceAmountInput').value);
+    if (isNaN(val)) { toast('Enter a valid balance'); return; }
+    var asOf = ($('balanceAsOfInput') && $('balanceAsOfInput').value) || localDateStamp();
+    if (typeof acct.currentBalance === 'number' && acct.balanceAsOf) {
+      acct.balanceHistory = { amount: acct.currentBalance, asOf: acct.balanceAsOf };
+    }
+    acct.currentBalance = val;
+    acct.balanceAsOf = asOf;
+    saveAccounts();
+    var sheet = $('balanceSheet');
+    if (sheet) sheet.classList.remove('show');
+    renderHomeForecastCard();
+    if (forecastScreenOpen) renderForecastScreen();
+    renderSettingsAccounts();
+    toast('Balance saved');
+  }
+
+  function renderSettingsAccounts() {
+    var el = $('settingsAccountsList');
+    if (!el) return;
+    ensureDefaultAccounts();
+    var html = '';
+    accounts.forEach(function (a) {
+      html += '<div class="settings-account-row">';
+      html += '<div class="settings-account-main">' + accountMiniIconHTML(a) + '<div><div class="settings-account-name">' + escHtml(a.name) + '</div>';
+      html += '<div class="settings-account-sub">' + (a.type === 'bank' ? 'Bank account' : 'Credit card') + '</div></div></div>';
+      if (a.type === 'bank') {
+        html += '<button type="button" class="settings-account-action" data-balance-acct="' + escHtml(a.id) + '">Balance</button>';
+      } else {
+        html += '<span class="settings-account-sub">—</span>';
+      }
+      html += '</div>';
+    });
+    el.innerHTML = html;
+    Array.prototype.forEach.call(el.querySelectorAll('[data-balance-acct]'), function (btn) {
+      btn.addEventListener('click', function () { openBalanceSheet(btn.dataset.balanceAcct); });
+    });
+  }
+
+  function otherTransferPatternEnabled(entry) {
+    var pat = normalizeTransferPattern(entry.bankText || entry.note || '');
+    if (!pat) return false;
+    for (var i = 0; i < transferPatterns.length; i++) {
+      if (transferPatterns[i].pattern === pat) return true;
+    }
+    return false;
+  }
+
+  function setOtherTransferPattern(entry, enabled) {
+    var pat = normalizeTransferPattern(entry.bankText || entry.note || '');
+    if (!pat) return;
+    var idx = -1;
+    for (var i = 0; i < transferPatterns.length; i++) {
+      if (transferPatterns[i].pattern === pat) { idx = i; break; }
+    }
+    if (enabled && idx === -1) {
+      transferPatterns.push({ id: uid(), pattern: pat, createdAt: Date.now() });
+      saveTransferPatterns();
+    } else if (!enabled && idx !== -1) {
+      transferPatterns.splice(idx, 1);
+      saveTransferPatterns();
+    }
+  }
+
+  function openOtherTransferSheet(entryId) {
+    viewingOtherTransferEntryId = entryId;
+    var entry = getEntryById(entryId);
+    if (!entry) return;
+    var checking = getAccount(entry.accountId);
+    var body = $('otherTransferSheetBody');
+    if (!body) return;
+    var title = (entry.note || 'Transfer').trim();
+    var bankText = entry.bankText || entry.note || '';
+    var pairedMap = {};
+    transferPairs.forEach(function (p) {
+      if (!p || p.unlinked) return;
+      pairedMap[p.entryIds[0]] = true;
+      pairedMap[p.entryIds[1]] = true;
+    });
+    var delta = FC ? FC.entryCheckingDelta(entry, entry.accountId, pairedMap) : (isDepositEntry(entry) ? entry.amount : -entry.amount);
+    var html = '';
+    html += '<div class="other-transfer-hero">';
+    html += '<div class="other-transfer-icon"><svg width="24" height="24" viewBox="0 0 20 20" fill="none"><path d="M4 7h9.5M13.5 7L11 4.5M13.5 7L11 9.5M16 13H6.5M6.5 13L9 10.5M6.5 13L9 15.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg></div>';
+    html += '<div><h3 class="other-transfer-title">' + escHtml(title) + '</h3>';
+    html += '<p class="other-transfer-sub">' + escHtml(checking ? checking.name : 'Checking') + ' \u2192 Other account</p></div>';
+    html += '<div class="other-transfer-amt">' + fmtMoneyDisplay(entry.amount) + '</div></div>';
+    html += '<div class="other-transfer-chip"><svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M3.5 7.2l2.2 2.2 5-5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>Not counted as spending or income</div>';
+    html += '<div class="transfer-section-label">Details</div>';
+    html += '<div class="transfer-details-card">';
+    html += '<div class="transfer-details-row"><span>Type</span><span>Transfer \u00B7 Other account</span></div>';
+    html += '<div class="transfer-details-row"><span>Date</span><span>' + new Date(entry.ts).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' }) + '</span></div>';
+    html += '<div class="transfer-details-row"><span>Balance effect</span><span>' + (delta >= 0 ? '+' : '') + fmtMoneyDisplay(Math.abs(delta)) + ' ' + escHtml(checking ? checking.name : 'Checking') + '</span></div>';
+    html += '<div class="transfer-details-row"><span>Bank text</span><span style="font-family:ui-monospace,Menlo,monospace;font-size:12px;text-align:right;max-width:58%">' + escHtml(bankText) + '</span></div>';
+    html += '</div>';
+    var patOn = otherTransferPatternEnabled(entry);
+    html += '<div class="other-transfer-toggle-card"><div><p>Treat future matches as transfers</p><span>Remembers &ldquo;' + escHtml(normalizeTransferPattern(bankText).slice(0, 28)) + '&rdquo;</span></div>';
+    html += '<button type="button" class="toggle-switch' + (patOn ? ' is-on' : '') + '" id="otherTransferPatternToggle" role="switch" aria-checked="' + (patOn ? 'true' : 'false') + '" aria-label="Treat future matches as transfers"></button></div>';
+    html += '<p class="other-transfer-foot"><span aria-hidden="true"><svg width="14" height="14" viewBox="0 0 14 14" fill="none"><circle cx="7" cy="7" r="5.5" stroke="currentColor"/><path d="M7 6.2v3.6M7 4.4h.01" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg></span><span>Moves your Checking balance and the forecast, but never counts as income or spending.</span></p>';
+    body.innerHTML = html;
+    var toggle = document.getElementById('otherTransferPatternToggle');
+    if (toggle) {
+      toggle.addEventListener('click', function () {
+        var on = !toggle.classList.contains('is-on');
+        toggle.classList.toggle('is-on', on);
+        toggle.setAttribute('aria-checked', on ? 'true' : 'false');
+        setOtherTransferPattern(entry, on);
+      });
+    }
+    var sheet = $('otherTransferSheet');
+    if (sheet) sheet.classList.add('show');
+  }
+
+  function closeOtherTransferSheet() {
+    viewingOtherTransferEntryId = null;
+    var sheet = $('otherTransferSheet');
+    if (sheet) sheet.classList.remove('show');
+  }
+
   function switchTab(tab) {
+    closeForecastScreen();
+    closeOtherTransferSheet();
     closeTransferDetail();
     if (tab === 'add') {
       tabBeforeAdd = currentTab === 'add' ? tabBeforeAdd : currentTab;
@@ -6090,13 +6980,14 @@
     $('tab-settings').hidden = tab !== 'settings';
     if (tab === 'summary') {
       renderTotals(); renderMonthlySummary(); renderRecent(); renderBackupReminder();
+      renderHomeForecastCard();
       requestAnimationFrame(layoutDonutCenter);
     }
     if (tab === 'history') { renderEntries(); updateActivityStickyTop(); }
     if (tab === 'report') renderReport();
     if (tab === 'settings') {
       renderCategoryList(); renderBudgetSettings(); renderRecurringList();
-      renderImportRulesList();
+      renderImportRulesList(); renderSettingsAccounts();
       if ($countCardPayments) $countCardPayments.checked = importSettings.countCardPayments;
       renderDataMetaLines();
       renderBackupReminder();
@@ -6146,6 +7037,92 @@
   });
   if ($wrappedCloseBtn) $wrappedCloseBtn.addEventListener('click', closeWrappedModal);
   if ($wrappedDoneBtn) $wrappedDoneBtn.addEventListener('click', closeWrappedModal);
+  var $homeForecastCard = $('homeForecastCard');
+  if ($homeForecastCard) $homeForecastCard.addEventListener('click', openForecastScreen);
+  var $forecastBackBtn = $('forecastBackBtn');
+  if ($forecastBackBtn) $forecastBackBtn.addEventListener('click', closeForecastScreen);
+  var $forecastUpdateBtn = $('forecastUpdateBtn');
+  if ($forecastUpdateBtn) $forecastUpdateBtn.addEventListener('click', function () {
+    var c = getCheckingAccount();
+    if (c) openBalanceSheet(c.id);
+  });
+  var $forecastEmptySetBtn = $('forecastEmptySetBtn');
+  if ($forecastEmptySetBtn) $forecastEmptySetBtn.addEventListener('click', function () {
+    var c = getCheckingAccount();
+    if (c) openBalanceSheet(c.id);
+  });
+  var $forecastInfoBtn = $('forecastInfoBtn');
+  if ($forecastInfoBtn) $forecastInfoBtn.addEventListener('click', function () {
+    var inp = $('forecastCushionInput');
+    if (inp) inp.value = String(getForecastCushion());
+    var note = $('forecastInfoDailyNote');
+    var payload = buildForecastPayload(60);
+    if (note && payload && FC) {
+      var r = FC.runForecast(payload);
+      if (r.ok && r.dailySpend > 0) note.textContent = 'Includes ~' + fmtMoneyDisplay(r.dailySpend) + '/day typical checking spending.';
+      else note.textContent = '';
+      if (r.schedules) lastForecastSchedules = r.schedules;
+    }
+    renderForecastScheduleInfo();
+    var m = $('forecastInfoModal');
+    if (m) m.classList.add('show');
+  });
+  if ($('forecastInfoCloseBtn')) $('forecastInfoCloseBtn').addEventListener('click', function () {
+    var m = $('forecastInfoModal');
+    if (m) m.classList.remove('show');
+  });
+  if ($('forecastCushionInput')) $('forecastCushionInput').addEventListener('change', function () {
+    var v = parseFloat($('forecastCushionInput').value);
+    if (!isNaN(v) && v >= 0) {
+      setForecastCushion(v);
+      renderHomeForecastCard();
+      if (forecastScreenOpen) renderForecastScreen();
+    }
+  });
+  if (typeof window !== 'undefined' && window.matchMedia) {
+    var chartSchemeMq = window.matchMedia('(prefers-color-scheme: dark)');
+    var onChartSchemeChange = function () {
+      if (forecastScreenOpen && lastForecastSim) {
+        drawForecastChart(lastForecastSim, getForecastCushion());
+      }
+    };
+    if (chartSchemeMq.addEventListener) chartSchemeMq.addEventListener('change', onChartSchemeChange);
+    else if (chartSchemeMq.addListener) chartSchemeMq.addListener(onChartSchemeChange);
+  }
+  Array.prototype.forEach.call(document.querySelectorAll('.forecast-range-btn'), function (btn) {
+    btn.addEventListener('click', function () {
+      var days = parseInt(btn.dataset.forecastDays, 10);
+      if (!days) return;
+      forecastChartDays = days;
+      Array.prototype.forEach.call(document.querySelectorAll('.forecast-range-btn'), function (b) {
+        b.setAttribute('aria-pressed', b === btn ? 'true' : 'false');
+      });
+      if (forecastScreenOpen) renderForecastScreen();
+    });
+  });
+  if ($('balanceSheetClose')) $('balanceSheetClose').addEventListener('click', function () {
+    var s = $('balanceSheet');
+    if (s) s.classList.remove('show');
+  });
+  if ($('balanceSaveBtn')) $('balanceSaveBtn').addEventListener('click', saveBalanceSheet);
+  if ($('balanceAsOfRow')) $('balanceAsOfRow').addEventListener('click', function () {
+    var inp = $('balanceAsOfInput');
+    if (inp && inp.showPicker) try { inp.showPicker(); } catch (e) { inp.focus(); }
+    else if (inp) inp.focus();
+  });
+  if ($('balanceAsOfInput')) $('balanceAsOfInput').addEventListener('change', function () {
+    if ($('balanceAsOfPreview')) $('balanceAsOfPreview').textContent = formatBalanceAsOfLabel($('balanceAsOfInput').value);
+  });
+  if ($('forecastItemEditCancelBtn')) $('forecastItemEditCancelBtn').addEventListener('click', function () {
+    editingForecastItemKey = null;
+    editingForecastOccurrenceTs = null;
+    var m = $('forecastItemEditModal');
+    if (m) m.classList.remove('show');
+  });
+  if ($('forecastItemEditSaveBtn')) $('forecastItemEditSaveBtn').addEventListener('click', saveForecastItemOverride);
+  if ($('otherTransferSheet')) $('otherTransferSheet').addEventListener('click', function (ev) {
+    if (ev.target === $('otherTransferSheet')) closeOtherTransferSheet();
+  });
   if ($wrappedShareBtn) $wrappedShareBtn.addEventListener('click', shareWrapped);
   if ($wrappedTapBack) $wrappedTapBack.addEventListener('click', function () { wrappedGo(-1); });
   if ($wrappedTapNext) $wrappedTapNext.addEventListener('click', function () { wrappedGo(1); });
@@ -6516,7 +7493,10 @@
   transferPairs = loadTransferPairs();
   transferUnlinkKeys = loadTransferUnlinkKeys();
   importAccountPrefs = loadImportAccountPrefs();
+  transferPatterns = loadTransferPatterns();
+  forecastOverrides = loadForecastOverrides();
   ensureDefaultAccounts();
+  ensureIncomeCategory();
   if ($countCardPayments) $countCardPayments.checked = importSettings.countCardPayments;
   entries = loadEntries();
 
@@ -6642,7 +7622,22 @@
     buildWrappedPayload: buildWrappedPayload,
     drawWrappedToCanvas: drawWrappedToCanvas,
     openWrappedModal: openWrappedModal,
-    updateHomeRecapTeaser: updateHomeRecapTeaser
+    updateHomeRecapTeaser: updateHomeRecapTeaser,
+    ExpenseForecast: FC,
+    normalizeTransferPattern: normalizeTransferPattern,
+    isOtherAccountTransferEntry: isOtherAccountTransferEntry,
+    projectedStartingBalance: function (balance, asOfMs) {
+      var checking = getCheckingAccount();
+      if (!checking || !FC) return null;
+      return FC.projectedStartingBalance(balance, asOfMs, entries, checking.id, transferPairs, Date.now());
+    },
+    runForecast: function (opts) {
+      var p = buildForecastPayload(opts && opts.chartDays);
+      if (!p) return { ok: false };
+      return FC.runForecast(p);
+    },
+    getTransferPatterns: function () { return transferPatterns; },
+    setTransferPatterns: function (p) { transferPatterns = p; saveTransferPatterns(); }
   };
 
 })();
