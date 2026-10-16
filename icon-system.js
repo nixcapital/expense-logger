@@ -117,6 +117,45 @@
     return '<span class="' + cls + '"' + dataId + ' style="' + style + '" aria-hidden="true">' + art + '</span>';
   }
 
+  /** Flat glyph for category picker tiles (no nested tint badge). */
+  function pickerTileHTML(cat) {
+    var id = resolveIconId(cat);
+    var dataId = ' data-icon-id="' + escHtml(id) + '"';
+    var cls = 'cat-badge cat-badge--picker-tile';
+    if (id === LETTER_ID) {
+      return '<span class="' + cls + ' cat-badge--letter"' + dataId + ' aria-hidden="true">'
+        + '<span class="cat-badge-letter">' + escHtml(letterFor(cat)) + '</span></span>';
+    }
+    var art = inlineArtMarkup(id);
+    if (!art) {
+      var url = escHtml(iconAssetUrl(id));
+      return '<span class="' + cls + '"' + dataId + ' aria-hidden="true">'
+        + '<span class="cat-badge-icon" style="-webkit-mask-image:url(\'' + url + '\');mask-image:url(\'' + url + '\')"></span></span>';
+    }
+    return '<span class="' + cls + '"' + dataId + ' aria-hidden="true">' + art + '</span>';
+  }
+
+  /** 34px tinted preview badge for the category name field. */
+  function pickerNamePreviewHTML(cat) {
+    var id = resolveIconId(cat);
+    var color = (cat && cat.color) || '#adb5bd';
+    var style = 'background:color-mix(in srgb,' + color + ' 18%,transparent);--badge-fg:var(--picker-fg,'
+      + color + ');';
+    var dataId = ' data-icon-id="' + escHtml(id) + '"';
+    var cls = 'cat-badge cat-badge--name-preview';
+    if (id === LETTER_ID) {
+      return '<span class="' + cls + ' cat-badge--letter"' + dataId + ' style="' + style + '" aria-hidden="true">'
+        + '<span class="cat-badge-letter">' + escHtml(letterFor(cat)) + '</span></span>';
+    }
+    var art = inlineArtMarkup(id);
+    if (!art) {
+      var url = escHtml(iconAssetUrl(id));
+      return '<span class="' + cls + '"' + dataId + ' style="' + style + '" aria-hidden="true">'
+        + '<span class="cat-badge-icon" style="-webkit-mask-image:url(\'' + url + '\');mask-image:url(\'' + url + '\')"></span></span>';
+    }
+    return '<span class="' + cls + '"' + dataId + ' style="' + style + '" aria-hidden="true">' + art + '</span>';
+  }
+
   function uiIconHTML(iconId, opts) {
     opts = opts || {};
     if (!isKnownIcon(iconId)) iconId = 'boxes';
@@ -249,6 +288,8 @@
     letterFor: letterFor,
     iconAssetUrl: iconAssetUrl,
     badgeHTML: badgeHTML,
+    pickerTileHTML: pickerTileHTML,
+    pickerNamePreviewHTML: pickerNamePreviewHTML,
     uiIconHTML: uiIconHTML,
     hydrateUiIcons: hydrateUiIcons,
     categoryLabelHTML: categoryLabelHTML,
