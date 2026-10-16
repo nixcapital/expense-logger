@@ -187,34 +187,143 @@
     return sum / slice.length;
   }
 
-  function amountTolerance(amt) {
-    return Math.max(5, amt * 0.10);
+  function amountTolerance(amt, wide) {
+    return amountToleranceFrac(amt, wide ? 0.15 : 0.10);
+  }
+
+  function amountToleranceFrac(amt, frac) {
+    return Math.max(5, amt * frac);
+  }
+
+  function isP2PNote(note) {
+    var n = normText(note || '');
+    return /\bvenmo\b/.test(n) || /\bzelle\b/.test(n) || /\bcash app\b/.test(n) || /\bpaypal\b/.test(n);
+  }
+
+  function p2pScheduleAllowed(list) {
+    var bills = (list || []).filter(function (e) { return e.categoryId === 'bills'; });
+    if (bills.length < 3) return false;
+    var amounts = bills.map(function (e) { return e.amount; });
+    var med = median(amounts);
+    var same = bills.filter(function (e) {
+      return Math.abs(e.amount - med) <= amountToleranceFrac(med, 0.10);
+    });
+    return same.length >= 3;
+  }
+
+  function projectedClusterAmount(cluster) {
+    var recent = cluster.slice(-Math.min(3, cluster.length));
+    return median(recent.map(function (e) { return e.amount; }));
+  }
+
+  function buildAmountClusters(sorted, tolFn) {
+    var clusters = [];
+    sorted.forEach(function (e) {
+      var placed = false;
+      for (var i = 0; i < clusters.length; i++) {
+        var cent = median(clusters[i].map(function (x) { return x.amount; }));
+        if (Math.abs(e.amount - cent) <= tolFn(cent)) {
+          clusters[i].push(e);
+          placed = true;
+          break;
+        }
+      }
+      if (!placed) clusters.push([e]);
+    });
+    return clusters.filter(function (c) { return c.length >= 2; });
+  }
+
+  function clusterCadenceScore(fit) {
+    if (!fit) return 0;
+    if (fit.scheduleType === 'monthly_dom' || fit.scheduleType === 'semimonthly') return 3;
+    if (fit.scheduleType === 'biweekly' || fit.scheduleType === 'weekly') return 2;
+    if (fit.scheduleType === 'quarterly' || fit.scheduleType === 'semiannual' || fit.scheduleType === 'annual') return 2;
+    return 1;
+  }
+
+  function pickScheduleClusters(list, isInflow) {
+    if (!list || list.length < 2) return [];
+    var sorted = list.slice().sort(function (a, b) { return a.ts - b.ts; });
+    var seen = {};
+    var out = [];
+    function addClusters(tolFn) {
+      buildAmountClusters(sorted, tolFn).forEach(function (cluster) {
+        cluster.sort(function (a, b) { return a.ts - b.ts; });
+        var proj = Math.round(projectedClusterAmount(cluster) * 100) / 100;
+        var sig = proj + '|' + cluster.length;
+        if (seen[sig]) return;
+        var fit = fitSchedule(cluster.map(function (e) { return e.ts; }), isInflow);
+        if (!fit) return;
+        seen[sig] = true;
+        out.push({
+          cluster: cluster,
+          projectedAmount: proj,
+          fit: fit,
+          score: clusterCadenceScore(fit) * 1000 + cluster.length * 10 + cluster.reduce(function (s, e) { return s + e.amount; }, 0)
+        });
+      });
+    }
+    addClusters(function (a) { return amountToleranceFrac(a, 0.10); });
+    addClusters(function (a) { return amountToleranceFrac(a, 0.15); });
+    out.sort(function (a, b) { return b.score - a.score; });
+    return out;
   }
 
   function pickScheduleCluster(list) {
-    if (!list || list.length < 2) return null;
-    var sorted = list.slice().sort(function (a, b) { return a.ts - b.ts; });
-    var recent = sorted.slice(-Math.min(3, sorted.length));
-    var recentMed = median(recent.map(function (e) { return e.amount; }));
-    var cluster = sorted.filter(function (e) {
-      return Math.abs(e.amount - recentMed) <= amountTolerance(recentMed);
+    var multi = pickScheduleClusters(list, false);
+    return multi.length ? { cluster: multi[0].cluster, projectedAmount: multi[0].projectedAmount } : null;
+  }
+
+  function scheduleItemKey(merchantKey, amount) {
+    return merchantKey + '|a' + Math.round(amount * 100);
+  }
+
+  function entryMatchesScheduleRow(e, schedule) {
+    var mk = descriptionKey(e.note || '');
+    if (schedule.merchantKey && mk !== schedule.merchantKey) return false;
+    var tol = amountToleranceFrac(schedule.amount,
+      schedule.scheduleType === 'semiannual' || schedule.scheduleType === 'annual' ? 0.15 : 0.10);
+    return Math.abs(e.amount - schedule.amount) <= tol;
+  }
+
+  function schedulePeriodMs(scheduleType) {
+    if (scheduleType === 'weekly') return 7 * MS_DAY;
+    if (scheduleType === 'biweekly') return 14 * MS_DAY;
+    if (scheduleType === 'semimonthly') return 15 * MS_DAY;
+    if (scheduleType === 'quarterly') return 91 * MS_DAY;
+    if (scheduleType === 'semiannual') return 182 * MS_DAY;
+    if (scheduleType === 'annual') return 365 * MS_DAY;
+    return 30 * MS_DAY;
+  }
+
+  function paymentPostedInCycle(entries, checkingId, schedule, projectedTs) {
+    if (!entries || !schedule) return false;
+    var period = schedulePeriodMs(schedule.scheduleType);
+    var windowStart = addDays(projectedTs, -Math.round(period / MS_DAY / 2));
+    var projDay = startOfDay(projectedTs);
+    var tol = amountToleranceFrac(schedule.amount,
+      schedule.scheduleType === 'semiannual' || schedule.scheduleType === 'annual' ? 0.15 : 0.10);
+    var found = false;
+    (entries || []).forEach(function (e) {
+      if (found) return;
+      if (e.accountId !== checkingId) return;
+      var ets = startOfDay(e.ts);
+      if (ets < windowStart || ets > projDay) return;
+      if (!entryMatchesScheduleRow(e, schedule)) return;
+      found = true;
     });
-    if (cluster.length < 2) {
-      var bestCluster = [];
-      sorted.forEach(function (seed) {
-        var group = sorted.filter(function (e) {
-          return Math.abs(e.amount - seed.amount) <= amountTolerance(seed.amount);
-        });
-        if (group.length > bestCluster.length) bestCluster = group;
-      });
-      cluster = bestCluster;
-    }
-    if (cluster.length < 2) return null;
-    cluster.sort(function (a, b) { return a.ts - b.ts; });
-    return {
-      cluster: cluster,
-      projectedAmount: cluster[cluster.length - 1].amount
-    };
+    return found;
+  }
+
+  function domDaySpread(doms) {
+    if (!doms.length) return 99;
+    var min = doms[0];
+    var max = doms[0];
+    doms.forEach(function (d) {
+      if (d < min) min = d;
+      if (d > max) max = d;
+    });
+    return max - min;
   }
 
   function scheduleStale(lastTs, nowMs, scheduleType) {
@@ -226,6 +335,7 @@
     else if (scheduleType === 'semimonthly') maxGap = 35 * MS_DAY;
     else if (scheduleType === 'quarterly') maxGap = 200 * MS_DAY;
     else if (scheduleType === 'semiannual') maxGap = 400 * MS_DAY;
+    else if (scheduleType === 'annual') maxGap = 760 * MS_DAY;
     else maxGap = 62 * MS_DAY;
     return gap > maxGap;
   }
@@ -433,6 +543,38 @@
           confidence: 'low'
         };
       }
+      if (gapOnly >= 165 && gapOnly <= 200) {
+        var dom2s = Math.round(median(ts.map(function (t) { return new Date(t).getDate(); })));
+        var shift2s = learnShiftRule(ts, function (y, m) {
+          var dim = new Date(y, m + 1, 0).getDate();
+          return dateMs(y, m, Math.min(dom2s, dim));
+        });
+        return {
+          scheduleType: 'semiannual',
+          dayOfMonth: dom2s,
+          anchorMs: ts[0],
+          shiftRule: shift2s || 'next',
+          inferenceDetail: 'About every 6 months on the ' + ordinal(dom2s) + ' (2 posts — lower confidence)' + shiftHint(shift2s || 'next'),
+          lastTs: ts[1],
+          confidence: 'low'
+        };
+      }
+      if (gapOnly >= 350 && gapOnly <= 380) {
+        var dom2a = Math.round(median(ts.map(function (t) { return new Date(t).getDate(); })));
+        var shift2a = learnShiftRule(ts, function (y, m) {
+          var dim = new Date(y, m + 1, 0).getDate();
+          return dateMs(y, m, Math.min(dom2a, dim));
+        });
+        return {
+          scheduleType: 'annual',
+          dayOfMonth: dom2a,
+          anchorMs: ts[0],
+          shiftRule: shift2a || 'next',
+          inferenceDetail: 'About once a year on the ' + ordinal(dom2a) + ' (2 posts — lower confidence)' + shiftHint(shift2a || 'next'),
+          lastTs: ts[1],
+          confidence: 'low'
+        };
+      }
       return null;
     }
     var gaps = [];
@@ -505,20 +647,38 @@
       };
     }
 
+    if (medGap >= 27 && medGap <= 33 && domDaySpread(doms) <= 3) {
+      var domT = Math.round(median(doms));
+      var shiftT = learnShiftRule(ts, function (y, m) {
+        var dim = new Date(y, m + 1, 0).getDate();
+        return dateMs(y, m, Math.min(domT, dim));
+      });
+      return {
+        scheduleType: 'monthly_dom',
+        dayOfMonth: domT,
+        shiftRule: shiftT,
+        inferenceDetail: 'Usually on the ' + ordinal(domT) + shiftHint(shiftT),
+        lastTs: ts[ts.length - 1]
+      };
+    }
+
     var dows = ts.map(function (t) { return new Date(t).getDay(); });
     var woms = ts.map(weekOfMonth);
-    if (mode(dows) === dows[0] && mode(woms) === woms[0] && medGap >= 25 && medGap <= 35) {
-      var n = mode(woms);
-      var wd = mode(dows);
+    var wdMode = mode(dows);
+    var womMode = mode(woms);
+    var nthWeekdayOk = medGap >= 25 && medGap <= 35 && domDaySpread(doms) > 3
+      && dows.every(function (d) { return d === wdMode; })
+      && woms.every(function (w) { return w === womMode; });
+    if (nthWeekdayOk) {
       var shiftN = learnShiftRule(ts, function (y, m) {
-        return nthWeekdayOfMonth(y, m, wd, n);
+        return nthWeekdayOfMonth(y, m, wdMode, womMode);
       });
       return {
         scheduleType: 'monthly_nth_weekday',
-        weekday: wd,
-        nth: n,
+        weekday: wdMode,
+        nth: womMode,
         shiftRule: shiftN,
-        inferenceDetail: ordinal(n) + ' ' + weekdayName(wd) + ' of the month' + shiftHint(shiftN),
+        inferenceDetail: ordinal(womMode) + ' ' + weekdayName(wdMode) + ' of the month' + shiftHint(shiftN),
         lastTs: ts[ts.length - 1]
       };
     }
@@ -554,7 +714,7 @@
       };
     }
 
-    if (medGap >= 170 && medGap <= 200) {
+    if (medGap >= 165 && medGap <= 200) {
       var domS = Math.round(median(doms));
       var shiftS = learnShiftRule(ts, function (y, m) {
         var dim = new Date(y, m + 1, 0).getDate();
@@ -566,6 +726,22 @@
         anchorMs: ts[0],
         shiftRule: shiftS,
         inferenceDetail: 'About every 6 months on the ' + ordinal(domS) + shiftHint(shiftS),
+        lastTs: ts[ts.length - 1]
+      };
+    }
+
+    if (medGap >= 350 && medGap <= 380) {
+      var domA = Math.round(median(doms));
+      var shiftA = learnShiftRule(ts, function (y, m) {
+        var dim = new Date(y, m + 1, 0).getDate();
+        return dateMs(y, m, Math.min(domA, dim));
+      });
+      return {
+        scheduleType: 'annual',
+        dayOfMonth: domA,
+        anchorMs: ts[0],
+        shiftRule: shiftA,
+        inferenceDetail: 'About once a year on the ' + ordinal(domA) + shiftHint(shiftA),
         lastTs: ts[ts.length - 1]
       };
     }
@@ -607,40 +783,40 @@
     Object.keys(groups).forEach(function (key) {
       var list = groups[key].sort(function (a, b) { return a.ts - b.ts; });
       if (list.length < 2) return;
-      var picked = pickScheduleCluster(list);
-      if (!picked) return;
-      var cluster = picked.cluster;
-      var sample = cluster[cluster.length - 1];
-      var projAmt = picked.projectedAmount;
-      var isIn = isDepositEntry(sample);
-      if (kind === 'inflow' && !isIn) return;
-      if (kind === 'outflow' && isIn) return;
-      if (kind === 'transfer-other' && !isOtherAccountTransfer(sample)) return;
-      if (kind === 'outflow' && projAmt < 25) return;
-      if (kind === 'transfer-other' && projAmt < 25) return;
+      if (isP2PNote(list[0].note) && !p2pScheduleAllowed(list)) return;
+      var isIn = isDepositEntry(list[list.length - 1]);
+      var pickedList = pickScheduleClusters(list, isIn);
+      pickedList.forEach(function (picked) {
+        var cluster = picked.cluster;
+        var sample = cluster[cluster.length - 1];
+        var projAmt = picked.projectedAmount;
+        var fit = picked.fit;
+        if (kind === 'inflow' && !isIn) return;
+        if (kind === 'outflow' && isIn) return;
+        if (kind === 'transfer-other' && !isOtherAccountTransfer(sample)) return;
+        if (kind === 'outflow' && projAmt < 25) return;
+        if (kind === 'transfer-other' && projAmt < 25) return;
+        if (nowMs != null && scheduleStale(fit.lastTs, nowMs, fit.scheduleType)) return;
 
-      var fit = fitSchedule(cluster.map(function (e) { return e.ts; }), isIn);
-      if (!fit) return;
-      if (nowMs != null && scheduleStale(fit.lastTs, nowMs, fit.scheduleType)) return;
-
-      out.push({
-        itemKey: key,
-        label: (sample.note || key).slice(0, 48),
-        amount: Math.round(projAmt * 100) / 100,
-        kind: isOtherAccountTransfer(sample) ? 'transfer-other' : (isIn ? 'inflow' : 'outflow'),
-        inflow: !!isIn,
-        categoryId: sample.categoryId,
-        scheduleType: fit.scheduleType,
-        dayOfMonth: fit.dayOfMonth,
-        daysOfMonth: fit.daysOfMonth,
-        anchorMs: fit.anchorMs,
-        weekday: fit.weekday,
-        nth: fit.nth,
-        shiftRule: fit.shiftRule,
-        inferenceDetail: fit.inferenceDetail,
-        lastTs: fit.lastTs,
-        confidence: fit.confidence || 'high',
-        merchantKey: key
+        out.push({
+          itemKey: scheduleItemKey(key, projAmt),
+          label: (sample.note || key).slice(0, 48),
+          amount: Math.round(projAmt * 100) / 100,
+          kind: isOtherAccountTransfer(sample) ? 'transfer-other' : (isIn ? 'inflow' : 'outflow'),
+          inflow: !!isIn,
+          categoryId: sample.categoryId,
+          scheduleType: fit.scheduleType,
+          dayOfMonth: fit.dayOfMonth,
+          daysOfMonth: fit.daysOfMonth,
+          anchorMs: fit.anchorMs,
+          weekday: fit.weekday,
+          nth: fit.nth,
+          shiftRule: fit.shiftRule,
+          inferenceDetail: fit.inferenceDetail,
+          lastTs: fit.lastTs,
+          confidence: fit.confidence || 'high',
+          merchantKey: key
+        });
       });
     });
     return out;
@@ -668,33 +844,32 @@
     Object.keys(groups).forEach(function (key) {
       var list = groups[key].sort(function (a, b) { return a.ts - b.ts; });
       if (list.length < 2) return;
-      var picked = pickScheduleCluster(list);
-      if (!picked) return;
-      var cluster = picked.cluster;
-      var sample = cluster[cluster.length - 1];
-      var projAmt = picked.projectedAmount;
-      if (projAmt < 25) return;
-      var fit = fitSchedule(cluster.map(function (e) { return e.ts; }), false);
-      if (!fit) return;
-      if (nowMs != null && scheduleStale(fit.lastTs, nowMs, fit.scheduleType)) return;
-      out.push({
-        itemKey: key,
-        label: (sample.note || key).slice(0, 48),
-        amount: Math.round(projAmt * 100) / 100,
-        kind: 'outflow',
-        inflow: false,
-        categoryId: sample.categoryId,
-        scheduleType: fit.scheduleType,
-        dayOfMonth: fit.dayOfMonth,
-        daysOfMonth: fit.daysOfMonth,
-        anchorMs: fit.anchorMs,
-        weekday: fit.weekday,
-        nth: fit.nth,
-        shiftRule: fit.shiftRule,
-        inferenceDetail: (fit.inferenceDetail || 'Recurring payment') + ' (to another account)',
-        lastTs: fit.lastTs,
-        confidence: fit.confidence || 'high',
-        merchantKey: key
+      pickScheduleClusters(list, false).forEach(function (picked) {
+        var cluster = picked.cluster;
+        var sample = cluster[cluster.length - 1];
+        var projAmt = picked.projectedAmount;
+        var fit = picked.fit;
+        if (projAmt < 25) return;
+        if (nowMs != null && scheduleStale(fit.lastTs, nowMs, fit.scheduleType)) return;
+        out.push({
+          itemKey: scheduleItemKey(key, projAmt),
+          label: (sample.note || key).slice(0, 48),
+          amount: Math.round(projAmt * 100) / 100,
+          kind: 'outflow',
+          inflow: false,
+          categoryId: sample.categoryId,
+          scheduleType: fit.scheduleType,
+          dayOfMonth: fit.dayOfMonth,
+          daysOfMonth: fit.daysOfMonth,
+          anchorMs: fit.anchorMs,
+          weekday: fit.weekday,
+          nth: fit.nth,
+          shiftRule: fit.shiftRule,
+          inferenceDetail: (fit.inferenceDetail || 'Recurring payment') + ' (to another account)',
+          lastTs: fit.lastTs,
+          confidence: fit.confidence || 'high',
+          merchantKey: key
+        });
       });
     });
     return out;
@@ -758,7 +933,7 @@
       }
       return out;
     }
-    if (schedule.scheduleType === 'quarterly' || schedule.scheduleType === 'semiannual') {
+    if (schedule.scheduleType === 'quarterly' || schedule.scheduleType === 'semiannual' || schedule.scheduleType === 'annual') {
       return generateQuarterlySemiannualDates(schedule, afterMs, untilMs);
     }
 
@@ -789,7 +964,7 @@
 
   function generateQuarterlySemiannualDates(schedule, afterMs, untilMs) {
     var out = [];
-    var stepMo = schedule.scheduleType === 'semiannual' ? 6 : 3;
+    var stepMo = schedule.scheduleType === 'annual' ? 12 : (schedule.scheduleType === 'semiannual' ? 6 : 3);
     var anchor = startOfDay(schedule.anchorMs || schedule.lastTs);
     if (!validMs(anchor)) return out;
     var dom = schedule.dayOfMonth || new Date(anchor).getDate();
@@ -806,12 +981,13 @@
     return out;
   }
 
-  function expandSchedule(schedule, afterMs, untilMs) {
+  function expandSchedule(schedule, afterMs, untilMs, entries, checkingId) {
     var nominals = generateNominalDates(schedule, afterMs, untilMs);
     var events = [];
     nominals.forEach(function (nom) {
       var ts = adjustToBusinessDay(nom, schedule.shiftRule || 'next');
       if (ts <= afterMs || ts > untilMs) return;
+      if (entries && checkingId && paymentPostedInCycle(entries, checkingId, schedule, ts)) return;
       events.push({
         ts: ts,
         amount: schedule.amount,
@@ -867,22 +1043,21 @@
     var windowDays = 75;
     var since = addDays(nowMs, -windowDays);
     var paired = pairedEntryIds(transferPairs);
-    var recurringKeys = {};
-    (schedules || []).forEach(function (s) {
-      if (s.merchantKey) recurringKeys[s.merchantKey] = true;
-      recurringKeys[s.itemKey] = true;
-    });
+    var scheduleList = schedules || [];
     var eligible = [];
     (entries || []).forEach(function (e) {
       if (e.accountId !== checkingId) return;
       if (e.ts < since || e.ts > nowMs) return;
       if (isDepositEntry(e) || isOtherAccountTransfer(e)) return;
       if (e.isTransfer) return;
-      var mk = descriptionKey(e.note || '');
-      if (recurringKeys[mk]) return;
+      var matched = false;
+      for (var si = 0; si < scheduleList.length; si++) {
+        if (entryMatchesScheduleRow(e, scheduleList[si])) { matched = true; break; }
+      }
+      if (matched) return;
       eligible.push(e);
     });
-    if (eligible.length < 7) return 0;
+    if (!eligible.length) return 0;
     var rowMed = median(eligible.map(function (e) { return e.amount; }));
     var total = 0;
     eligible.forEach(function (e) {
@@ -920,7 +1095,7 @@
       })
       : 'next';
     var confNote = debits.length < 2 ? ' (1 post — lower confidence)' : '';
-    var recentAmt = debits[debits.length - 1].amount;
+    var recentAmt = median(debits.slice(-3).map(function (d) { return d.amount; }));
     return {
       itemKey: 'card-payment|chase',
       label: 'Chase card payment',
@@ -984,7 +1159,7 @@
         transferPairs: input.transferPairs
       }).forEach(function (s) {
         schedules.push(s);
-        events = events.concat(expandSchedule(s, nowMs, untilMs));
+        events = events.concat(expandSchedule(s, nowMs, untilMs, input.entries, checkingId));
       });
     });
 
@@ -997,13 +1172,13 @@
       var dup = schedules.some(function (x) { return x.itemKey === s.itemKey; });
       if (dup) return;
       schedules.push(s);
-      events = events.concat(expandSchedule(s, nowMs, untilMs));
+      events = events.concat(expandSchedule(s, nowMs, untilMs, input.entries, checkingId));
     });
 
     var cardSched = detectCardPaymentSchedule(input.entries, input.transferPairs, checkingId);
     if (cardSched) {
       schedules.push(cardSched);
-      events = events.concat(expandSchedule(cardSched, nowMs, untilMs));
+      events = events.concat(expandSchedule(cardSched, nowMs, untilMs, input.entries, checkingId));
     } else {
       var cardEst = estimateCardPayment(input.entries, input.transferPairs, checkingId, input.chaseId, nowMs);
       if (cardEst && cardEst.amount > 0) {
@@ -1019,7 +1194,7 @@
           lastTs: cardEst.lastTs
         };
         schedules.push(fallback);
-        events = events.concat(expandSchedule(fallback, nowMs, untilMs));
+        events = events.concat(expandSchedule(fallback, nowMs, untilMs, input.entries, checkingId));
       }
     }
 
@@ -1040,7 +1215,7 @@
         lastTs: nowMs
       };
       schedules.push(s);
-      events = events.concat(expandSchedule(s, nowMs, untilMs));
+      events = events.concat(expandSchedule(s, nowMs, untilMs, input.entries, checkingId));
     });
 
     events = applyForecastOverrides(events, input.overrides, nowMs);
@@ -1503,6 +1678,10 @@
     detectRecurringSchedules: detectRecurringSchedules,
     detectCardPaymentSchedule: detectCardPaymentSchedule,
     detectUnpairedTransferSchedules: detectUnpairedTransferSchedules,
+    pickScheduleClusters: pickScheduleClusters,
+    paymentPostedInCycle: paymentPostedInCycle,
+    scheduleItemKey: scheduleItemKey,
+    isP2PNote: isP2PNote,
     isBusinessDay: isBusinessDay,
     isBankHoliday: isBankHoliday,
     adjustToBusinessDay: adjustToBusinessDay,
