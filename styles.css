@@ -1,4 +1,4 @@
-/* Expense Logger 1.6.1 — dark-first, iOS-style */
+/* Expense Logger 1.6.2 — dark-first, iOS-style */
 
 :root {
   --bg: #0B0C10;
@@ -1954,6 +1954,15 @@ button.legend-row.legend-btn.active { background: color-mix(in srgb, var(--accen
 }
 .forecast-home-balance-val { font-size: 17px; font-weight: 700; color: var(--text); white-space: nowrap; }
 .forecast-home-chevron { position: absolute; right: 14px; top: 50%; transform: translateY(-50%); color: var(--text-dim); }
+
+.home-section-error {
+  border: 1px solid color-mix(in srgb, var(--danger, #ff6b6b) 35%, var(--card-border, #2a2d36));
+  background: color-mix(in srgb, var(--danger, #ff6b6b) 8%, var(--card));
+  padding: var(--sp-3) var(--sp-4);
+  margin-bottom: var(--sp-3);
+}
+.home-section-error-title { margin: 0 0 6px; font-size: 15px; font-weight: 600; color: var(--text); }
+.home-section-error-text { margin: 0; font-size: 13px; line-height: 1.45; color: var(--text-dim); }
 
 .forecast-screen { padding-bottom: calc(80px + env(safe-area-inset-bottom, 0px)); }
 .forecast-nav {

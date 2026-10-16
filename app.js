@@ -22,7 +22,7 @@
   var TRANSFER_PATTERNS_KEY = 'expenseLogger.transferPatterns.v1';
   var FORECAST_OVERRIDES_KEY = 'expenseLogger.forecastOverrides.v1';
 
-  var APP_VERSION = '1.6.1';
+  var APP_VERSION = '1.6.2';
   var BACKUP_FORMAT = 2;
   var BACKUP_FORMAT_LEGACY = 1;
   var DEFAULT_ACCOUNT_CHECKING = 'acct-checking';
@@ -722,7 +722,7 @@
       var raw = localStorage.getItem(FORECAST_OVERRIDES_KEY);
       if (raw) {
         var p = JSON.parse(raw);
-        if (p && typeof p === 'object') return p;
+        if (p && typeof p === 'object' && !Array.isArray(p)) return p;
       }
     } catch (e) {}
     return {};
@@ -2449,7 +2449,7 @@
     pendingDelete = null;
     pendingRestoreUndo = null;
   }
-  $undoBtn.addEventListener('click', function () {
+  if ($undoBtn) $undoBtn.addEventListener('click', function () {
     if (pendingRestoreUndo) {
       applyStorageSnapshot(pendingRestoreUndo.storage);
       reloadAllStateFromStorage();
@@ -4049,12 +4049,40 @@
   }
 
   function dismissSplash() {
+    window.__elBootCompleted = true;
     if (!$splashScreen) return;
     $splashScreen.style.pointerEvents = 'none';
     $splashScreen.classList.add('hide');
     setTimeout(function () {
       $splashScreen.style.display = 'none';
     }, prefersReducedMotion() ? 50 : 350);
+  }
+
+  function clearHomeForecastError() {
+    var el = $('homeForecastError');
+    if (el) el.hidden = true;
+  }
+
+  function showHomeForecastError(msg) {
+    var card = $('homeForecastCard');
+    if (card) card.hidden = true;
+    var el = $('homeForecastError');
+    var txt = $('homeForecastErrorText');
+    if (txt && msg) txt.textContent = msg;
+    if (el) el.hidden = false;
+  }
+
+  function showHomeBootError(msg) {
+    var el = $('homeBootError');
+    var txt = $('homeBootErrorText');
+    if (txt && msg) txt.textContent = msg;
+    if (el) el.hidden = false;
+  }
+
+  function logBootSectionError(section, err) {
+    try {
+      console.error('[ExpenseLogger] ' + section, err && err.message ? err.message : err);
+    } catch (e) {}
   }
 
   function updateActivityStickyTop() {
@@ -6086,35 +6114,44 @@
   }
 
   function renderHomeForecastCard() {
-    var card = $('homeForecastCard');
-    if (!card) return;
-    var checking = getCheckingAccount();
-    if (!checking || typeof checking.currentBalance !== 'number') {
-      card.hidden = true;
-      return;
-    }
-    var payload = buildForecastPayload(60);
-    var result = payload && FC ? FC.runForecast(payload) : null;
-    if (!result || !result.ok) {
-      card.hidden = true;
-      return;
-    }
-    card.hidden = false;
-    var dateEl = $('homeForecastDate');
-    var daysEl = $('homeForecastDays');
-    var balEl = $('homeForecastBalanceVal');
-    if (result.neverRunsOut) {
-      if (dateEl) {
-        dateEl.textContent = 'Stays positive for a year+';
-        dateEl.classList.add('is-long');
+    clearHomeForecastError();
+    try {
+      if (typeof window !== 'undefined' && window.__elTestThrowForecastBoot) {
+        throw new Error('__elTestThrowForecastBoot');
       }
-      if (daysEl) daysEl.textContent = '';
-    } else {
-      if (dateEl) dateEl.classList.remove('is-long');
-      if (dateEl) dateEl.textContent = formatForecastDate(result.lastsUntil);
-      if (daysEl) daysEl.textContent = result.daysAway + ' days away';
+      var card = $('homeForecastCard');
+      if (!card) return;
+      var checking = getCheckingAccount();
+      if (!checking || typeof checking.currentBalance !== 'number') {
+        card.hidden = true;
+        return;
+      }
+      var payload = buildForecastPayload(60);
+      var result = payload && FC ? FC.runForecast(payload) : null;
+      if (!result || !result.ok) {
+        card.hidden = true;
+        return;
+      }
+      card.hidden = false;
+      var dateEl = $('homeForecastDate');
+      var daysEl = $('homeForecastDays');
+      var balEl = $('homeForecastBalanceVal');
+      if (result.neverRunsOut) {
+        if (dateEl) {
+          dateEl.textContent = 'Stays positive for a year+';
+          dateEl.classList.add('is-long');
+        }
+        if (daysEl) daysEl.textContent = '';
+      } else {
+        if (dateEl) dateEl.classList.remove('is-long');
+        if (dateEl) dateEl.textContent = formatForecastDate(result.lastsUntil);
+        if (daysEl) daysEl.textContent = result.daysAway + ' days away';
+      }
+      if (balEl) balEl.textContent = fmtMoneyDisplay(result.startingBalance);
+    } catch (err) {
+      logBootSectionError('home forecast card', err);
+      showHomeForecastError('Forecast could not be shown. Your balance and entries on this device are unchanged.');
     }
-    if (balEl) balEl.textContent = fmtMoneyDisplay(result.startingBalance);
   }
 
   function closeForecastScreen() {
@@ -6134,6 +6171,7 @@
   }
 
   function renderForecastScreen() {
+    try {
     var checking = getCheckingAccount();
     var empty = $('forecastEmptyState');
     var main = $('forecastMain');
@@ -6154,6 +6192,16 @@
     }
     if (empty) empty.hidden = true;
     if (main) main.hidden = false;
+
+    if (!FC) {
+      if (empty) {
+        empty.hidden = false;
+        if ($('forecastEmptyTitle')) $('forecastEmptyTitle').textContent = 'Forecast unavailable';
+        if ($('forecastEmptyText')) $('forecastEmptyText').textContent = 'Close the app completely and reopen on a connection to load the latest version.';
+      }
+      if (main) main.hidden = true;
+      return;
+    }
 
     var payload = buildForecastPayload(forecastChartDays);
     var result = FC.runForecast(payload);
@@ -6199,10 +6247,23 @@
     lastForecastSim = sim;
     if (sim.ok && $('forecastLowestSub')) {
       var lowPt = sim.lowestInWindow || sim.lowest;
-      $('forecastLowestSub').textContent = 'Lowest ' + fmtMoneyDisplay(lowPt.balance) + ' on ' + formatForecastShortDate(lowPt.ts);
+      if (lowPt) {
+        $('forecastLowestSub').textContent = 'Lowest ' + fmtMoneyDisplay(lowPt.balance) + ' on ' + formatForecastShortDate(lowPt.ts);
+      }
     }
     drawForecastChart(sim, getForecastCushion());
     renderForecastUpcoming(sim, getForecastCushion());
+    } catch (err) {
+      logBootSectionError('forecast screen', err);
+      var emptySt = $('forecastEmptyState');
+      var mainSt = $('forecastMain');
+      if (mainSt) mainSt.hidden = true;
+      if (emptySt) {
+        emptySt.hidden = false;
+        if ($('forecastEmptyTitle')) $('forecastEmptyTitle').textContent = 'Forecast unavailable';
+        if ($('forecastEmptyText')) $('forecastEmptyText').textContent = 'Something went wrong reading saved forecast data. Your entries and balance are unchanged.';
+      }
+    }
   }
 
   function drawForecastChart(sim, cushion) {
@@ -6712,10 +6773,19 @@
       b.setAttribute('aria-selected', on ? 'true' : 'false');
     });
     if ($('tab-add')) $('tab-add').hidden = true;
-    $('tab-summary').hidden = tab !== 'summary';
-    $('tab-report').hidden = tab !== 'report';
-    $('tab-history').hidden = tab !== 'history';
-    $('tab-settings').hidden = tab !== 'settings';
+    var tabSummary = $('tab-summary');
+    var tabReport = $('tab-report');
+    var tabHistory = $('tab-history');
+    var tabSettings = $('tab-settings');
+    if (tabSummary) tabSummary.hidden = tab !== 'summary';
+    if (tabReport) tabReport.hidden = tab !== 'report';
+    if (tabHistory) tabHistory.hidden = tab !== 'history';
+    if (tabSettings) tabSettings.hidden = tab !== 'settings';
+    if (tab !== 'summary' && tab !== 'report' && tab !== 'history' && tab !== 'settings') {
+      tab = 'summary';
+      currentTab = tab;
+      if (tabSummary) tabSummary.hidden = false;
+    }
     if (tab === 'summary') {
       renderTotals(); renderMonthlySummary(); renderRecent(); renderBackupReminder();
       renderHomeForecastCard();
@@ -7222,70 +7292,88 @@
   registerSW();
 
   function bootApp() {
-  // ---------- Boot ----------
-  initPersistentStorage();
-  categories = loadCategories();
-  budgets = loadBudgets();
-  recurringItems = loadRecurring();
-  importRules = loadImportRules();
-  importSettings = loadImportSettings();
-  accounts = loadAccounts();
-  transferPairs = loadTransferPairs();
-  transferUnlinkKeys = loadTransferUnlinkKeys();
-  importAccountPrefs = loadImportAccountPrefs();
-  transferPatterns = loadTransferPatterns();
-  forecastOverrides = loadForecastOverrides();
-  ensureDefaultAccounts();
-  ensureIncomeCategory();
-  if ($countCardPayments) $countCardPayments.checked = importSettings.countCardPayments;
-  entries = loadEntries();
+    var bootFailed = false;
+    try {
+      // ---------- Boot ----------
+      initPersistentStorage();
+      categories = loadCategories();
+      budgets = loadBudgets();
+      recurringItems = loadRecurring();
+      importRules = loadImportRules();
+      importSettings = loadImportSettings();
+      accounts = loadAccounts();
+      transferPairs = loadTransferPairs();
+      transferUnlinkKeys = loadTransferUnlinkKeys();
+      importAccountPrefs = loadImportAccountPrefs();
+      transferPatterns = loadTransferPatterns();
+      forecastOverrides = loadForecastOverrides();
+      ensureDefaultAccounts();
+      ensureIncomeCategory();
+      if ($countCardPayments) $countCardPayments.checked = importSettings.countCardPayments;
+      entries = loadEntries();
 
-  var ui = loadUI();
-  currentTab = ui.tab || 'summary';
-  if (currentTab === 'add') currentTab = 'summary';
-  tabBeforeAdd = currentTab;
+      var ui = loadUI();
+      currentTab = ui.tab || 'summary';
+      if (currentTab === 'add') currentTab = 'summary';
+      tabBeforeAdd = currentTab;
 
-  (function () {
-    var now = new Date();
-    var v = now.getFullYear() + '-' + pad2(now.getMonth() + 1);
-    $summaryMonth.value = v;
-    $reportMonth.value = v;
-  })();
+      (function () {
+        var now = new Date();
+        var v = now.getFullYear() + '-' + pad2(now.getMonth() + 1);
+        if ($summaryMonth) $summaryMonth.value = v;
+        if ($reportMonth) $reportMonth.value = v;
+      })();
 
-  migrate();
-  buildCategoryButtons();
-  rebuildFilterDropdowns();
-  renderAll();
-  renderCategoryList();
-  renderBudgetSettings();
-  renderRecurringList();
-  buildYearSelect(true);
-  renderReport();
-  updateSaveState();
-  renderRecent();
-  $versionLine.textContent = 'Version ' + APP_VERSION;
-  renderDataMetaLines();
-  renderBackupReminder();
+      migrate();
+      buildCategoryButtons();
+      rebuildFilterDropdowns();
+      renderAll();
+      renderCategoryList();
+      renderBudgetSettings();
+      renderRecurringList();
+      buildYearSelect(true);
+      renderReport();
+      updateSaveState();
+      renderRecent();
+      if ($versionLine) $versionLine.textContent = 'Version ' + APP_VERSION;
+      renderDataMetaLines();
+      renderBackupReminder();
 
-  // Passcode label derived from stored state
-  $togglePinBtn.textContent = getStoredPin() ? 'On' : 'Off';
+      if ($togglePinBtn) $togglePinBtn.textContent = getStoredPin() ? 'On' : 'Off';
 
-  if (getStoredPin()) showLock();
-  else showApp();
+      if (getStoredPin()) showLock();
+      else showApp();
 
-  initScreenTitleObservers();
-  wireActivityFilters();
-  syncActivityRangeChips();
-  updateMonthPillLabels();
-  addEntryDate = localDateStamp();
-  if ($addDate) $addDate.value = addEntryDate;
-  updateAddDatePreview();
+      initScreenTitleObservers();
+      wireActivityFilters();
+      syncActivityRangeChips();
+      updateMonthPillLabels();
+      addEntryDate = localDateStamp();
+      if ($addDate) $addDate.value = addEntryDate;
+      updateAddDatePreview();
 
-  switchTab(currentTab);
+      switchTab(currentTab);
 
-  if (EI && EI.hydrateUiIcons) EI.hydrateUiIcons(document);
-  refreshIconObservers(document);
-  setTimeout(dismissSplash, prefersReducedMotion() ? 80 : 400);
+      if (EI && EI.hydrateUiIcons) EI.hydrateUiIcons(document);
+      refreshIconObservers(document);
+    } catch (err) {
+      bootFailed = true;
+      logBootSectionError('boot', err);
+      showHomeBootError('Something went wrong while opening the app. Your saved entries and settings on this device were not changed.');
+      try {
+        if (getStoredPin()) showLock();
+        else showApp();
+      } catch (e2) {
+        if ($app) $app.hidden = false;
+        if ($lockScreen) $lockScreen.hidden = true;
+      }
+      try {
+        if ($('tab-summary')) $('tab-summary').hidden = false;
+      } catch (e3) {}
+    } finally {
+      setTimeout(dismissSplash, prefersReducedMotion() ? 80 : 400);
+    }
+    return !bootFailed;
   }
 
   bootApp();
