@@ -53,7 +53,7 @@
   var TRANSFER_PATTERNS_KEY = 'expenseLogger.transferPatterns.v1';
   var FORECAST_OVERRIDES_KEY = 'expenseLogger.forecastOverrides.v1';
   var FORECAST_ONEOFFS_KEY = 'expenseLogger.forecastCountedOneOffs.v1';
-  var APP_VERSION = '1.7.4';
+  var APP_VERSION = '1.7.5';
   var BACKUP_FORMAT = 2;
   var BACKUP_FORMAT_LEGACY = 1;
   var DEFAULT_ACCOUNT_CHECKING = 'acct-checking';
@@ -349,7 +349,7 @@
   var $backupRestoreConfirmBtn = $('backupRestoreConfirmBtn');
   var $importFileInput = $('importFileInput');
   var $importModal = $('importModal');
-  var $importDiscardModal = $('importDiscardModal');
+  var $importReviewDiscardScrim = $('importReviewDiscardScrim');
   var $importDiscardKeepBtn = $('importDiscardKeepBtn');
   var $importDiscardConfirmBtn = $('importDiscardConfirmBtn');
   var $importSummary = $('importSummary');
@@ -6118,16 +6118,23 @@
   }
 
   function dismissImportReview() {
+    hideImportDiscardPrompt();
     pendingImport = null;
     if ($importModal) $importModal.classList.remove('show');
   }
 
   function hideImportDiscardPrompt() {
-    if ($importDiscardModal) $importDiscardModal.classList.remove('show');
+    if ($importReviewDiscardScrim) {
+      $importReviewDiscardScrim.classList.remove('show');
+      $importReviewDiscardScrim.setAttribute('aria-hidden', 'true');
+    }
   }
 
   function showImportDiscardPrompt() {
-    if ($importDiscardModal) $importDiscardModal.classList.add('show');
+    if ($importReviewDiscardScrim) {
+      $importReviewDiscardScrim.classList.add('show');
+      $importReviewDiscardScrim.setAttribute('aria-hidden', 'false');
+    }
   }
 
   function requestDismissImportReview() {
@@ -6140,6 +6147,7 @@
 
   function renderImportReview() {
     if (!pendingImport) return;
+    hideImportDiscardPrompt();
     var rows = pendingImport.rows;
     var counts = summarizeImportRows(rows);
     var html = '<div class="import-stats">';
@@ -6650,9 +6658,9 @@
       dismissImportReview();
     });
   }
-  if ($importDiscardModal) {
-    $importDiscardModal.addEventListener('click', function (e) {
-      if (e.target === $importDiscardModal) hideImportDiscardPrompt();
+  if ($importReviewDiscardScrim) {
+    $importReviewDiscardScrim.addEventListener('click', function (e) {
+      if (e.target === $importReviewDiscardScrim) hideImportDiscardPrompt();
     });
   }
   if ($importConfirmBtn) {

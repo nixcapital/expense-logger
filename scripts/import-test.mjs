@@ -381,7 +381,7 @@ async function run() {
   await page.waitForSelector('#importModal.show');
   await page.locator('.import-row').first().locator('.import-cat-select').selectOption('groceries');
   await page.locator('#importModal').click({ position: { x: 20, y: 20 } });
-  await page.waitForSelector('#importDiscardModal.show');
+  await page.waitForSelector('#importReviewDiscardScrim.show');
   const discardTitle = await page.locator('#importDiscardTitle').innerText();
   results.push(['import review discard prompt', /discard changes/i.test(discardTitle)]);
   await page.click('#importDiscardKeepBtn');
@@ -389,7 +389,7 @@ async function run() {
   const reviewStillOpen = await page.locator('#importModal.show').count();
   results.push(['import review backdrop keep editing', reviewStillOpen === 1]);
   await page.locator('#importModal').click({ position: { x: 20, y: 20 } });
-  await page.waitForSelector('#importDiscardModal.show');
+  await page.waitForSelector('#importReviewDiscardScrim.show');
   await page.click('#importDiscardConfirmBtn');
   await page.waitForTimeout(300);
   const reviewClosed = await page.locator('#importModal.show').count();

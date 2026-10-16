@@ -1,5 +1,5 @@
 /**
- * Capture import review "Discard changes?" prompt at 428×926.
+ * Capture import review "Discard changes?" prompt at 428×926 (viewport only).
  * Run: node scripts/import-review-discard-screenshot.mjs
  */
 import { chromium } from 'playwright';
@@ -9,7 +9,7 @@ import { join, extname } from 'path';
 
 const PORT = 8892;
 const ROOT = '/workspace';
-const OUT = '/opt/cursor/artifacts/screenshots/import-review-discard-prompt-428x926.png';
+const OUT_DIR = '/opt/cursor/artifacts/screenshots';
 
 const MIME = {
   '.html': 'text/html',
@@ -36,12 +36,7 @@ const server = createServer((req, res) => {
   res.end(readFileSync(file));
 });
 
-async function run() {
-  mkdirSync('/opt/cursor/artifacts/screenshots', { recursive: true });
-  await new Promise((r) => server.listen(PORT, r));
-  const browser = await chromium.launch();
-  const page = await browser.newPage({ viewport: { width: 428, height: 926 } });
-  await page.goto(`http://127.0.0.1:${PORT}/index.html`, { waitUntil: 'networkidle' });
+async function openDiscardPrompt(page) {
   await page.evaluate(() => {
     localStorage.setItem('expenseLogger.categories.v1', JSON.stringify([
       { id: 'groceries', name: 'Groceries', emoji: '🛒', color: '#4dabf7' },
@@ -61,11 +56,35 @@ async function run() {
   await page.waitForSelector('#importModal.show', { timeout: 8000 });
   await page.locator('.import-row').first().locator('.import-cat-select').selectOption('groceries');
   await page.locator('#importModal').click({ position: { x: 20, y: 20 } });
-  await page.waitForSelector('#importDiscardModal.show');
-  await page.screenshot({ path: OUT, fullPage: true });
+  await page.waitForSelector('#importReviewDiscardScrim.show');
+}
+
+async function run() {
+  mkdirSync(OUT_DIR, { recursive: true });
+  await new Promise((r) => server.listen(PORT, r));
+  const browser = await chromium.launch();
+
+  for (const scheme of ['dark', 'light']) {
+    const context = await browser.newContext({
+      viewport: { width: 428, height: 926 },
+      colorScheme: scheme
+    });
+    const page = await context.newPage();
+    await page.goto(`http://127.0.0.1:${PORT}/index.html`, { waitUntil: 'networkidle' });
+    await openDiscardPrompt(page);
+    const scrimBg = await page.evaluate(() => {
+      const el = document.getElementById('importReviewDiscardScrim');
+      return el ? getComputedStyle(el).backgroundColor : '';
+    });
+    console.log('Scrim background (' + scheme + '):', scrimBg);
+    const out = join(OUT_DIR, `import-review-discard-prompt-428x926-${scheme}.png`);
+    await page.screenshot({ path: out, fullPage: false });
+    console.log('Saved', out);
+    await context.close();
+  }
+
   await browser.close();
   server.close();
-  console.log('Saved', OUT);
 }
 
 run().catch((e) => {
