@@ -13,7 +13,7 @@
   var UI_KEY        = 'expenseLogger.ui.v1';
   var PIN_KEY       = 'expenseLogger.pin.v1';
 
-  var APP_VERSION = '1.0.0';
+  var APP_VERSION = '1.1.0';
 
   // ---------- IndexedDB for receipts ----------
   var DB_NAME = 'expenseLogger';
@@ -137,7 +137,17 @@
   var $entriesEl = $('entries');
   var $recentEl = $('recentEntries');
   var $legendEl = $('legend');
-  var $chart = $('chart');
+  var $insightsList = $('insightsList');
+  var $donutChart = $('donutChart');
+  var $donutCenterLabel = $('donutCenterLabel');
+  var $donutCenterValue = $('donutCenterValue');
+  var $donutCenterSub = $('donutCenterSub');
+  var $trendChart = $('trendChart');
+  var $trendCompare = $('trendCompare');
+  var $dailyChart = $('dailyChart');
+  var $dailyMonthLabel = $('dailyMonthLabel');
+  var $dailySubtitle = $('dailySubtitle');
+  var $dailyLegend = $('dailyLegend');
   var $exportBtn = $('exportBtn');
   var $toast = $('toast');
   var $undoToast = $('undoToast');
@@ -604,6 +614,541 @@
     return { entries: monthEntries, total: total, byCat: byCat };
   }
 
+  function getMonthTotal(y, m) {
+    return entries
+      .filter(function (e) { return isSameMonth(e.ts, y, m); })
+      .reduce(function (s, e) { return s + e.amount; }, 0);
+  }
+
+  function getTotalBudgetLimit() {
+    var sum = 0;
+    categories.forEach(function (c) {
+      if (budgets[c.id] && budgets[c.id] > 0) sum += budgets[c.id];
+    });
+    return sum;
+  }
+
+  function cssVar(name, fallback) {
+    var v = getComputedStyle(document.documentElement).getPropertyValue(name);
+    return (v && v.trim()) ? v.trim() : fallback;
+  }
+
+  function prefersReducedMotion() {
+    return !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+  }
+
+  function easeOutCubic(t) { return 1 - Math.pow(1 - t, 3); }
+
+  var summaryAnimId = null;
+  var totalAnimId = null;
+  var summaryAnimGen = 0;
+  var selectedLegendCatId = null;
+  var displayedTotal = 0;
+  var lastDonutData = null;
+
+  function cancelSummaryAnim() {
+    if (summaryAnimId) {
+      cancelAnimationFrame(summaryAnimId);
+      summaryAnimId = null;
+    }
+  }
+
+  function runChartAnim(duration, onFrame, onDone) {
+    cancelSummaryAnim();
+    var gen = ++summaryAnimGen;
+    if (prefersReducedMotion()) {
+      onFrame(1);
+      if (onDone) onDone();
+      return;
+    }
+    var start = null;
+    function frame(ts) {
+      if (gen !== summaryAnimGen) return;
+      if (!start) start = ts;
+      var p = Math.min(1, (ts - start) / duration);
+      onFrame(easeOutCubic(p));
+      if (p < 1) summaryAnimId = requestAnimationFrame(frame);
+      else {
+        summaryAnimId = null;
+        if (onDone) onDone();
+      }
+    }
+    summaryAnimId = requestAnimationFrame(frame);
+  }
+
+  function animateTotalDisplay(target) {
+    if (totalAnimId) cancelAnimationFrame(totalAnimId);
+    var from = displayedTotal;
+    if (prefersReducedMotion()) {
+      $totalVal.textContent = fmtMoney(target);
+      displayedTotal = target;
+      return;
+    }
+    var start = null;
+    function frame(ts) {
+      if (!start) start = ts;
+      var p = Math.min(1, (ts - start) / 650);
+      var e = easeOutCubic(p);
+      $totalVal.textContent = fmtMoney(from + (target - from) * e);
+      if (p < 1) totalAnimId = requestAnimationFrame(frame);
+      else {
+        totalAnimId = null;
+        displayedTotal = target;
+      }
+    }
+    totalAnimId = requestAnimationFrame(frame);
+  }
+
+  function updateDonutCenter(catId, total, byCat) {
+    if (catId && byCat[catId] > 0) {
+      var c = getCat(catId);
+      var amt = byCat[catId];
+      var pct = total > 0 ? Math.round((amt / total) * 100) : 0;
+      $donutCenterLabel.textContent = c.emoji + ' ' + c.name;
+      $donutCenterValue.textContent = '$' + fmtMoney(amt);
+      $donutCenterSub.textContent = pct + '% of spending';
+    } else {
+      $donutCenterLabel.textContent = 'Total';
+      $donutCenterValue.textContent = '$' + fmtMoney(total);
+      $donutCenterSub.textContent = total > 0 ? 'Tap a slice or category' : '';
+    }
+  }
+
+  function polarToCartesian(cx, cy, r, angleDeg) {
+    var rad = (angleDeg - 90) * Math.PI / 180;
+    return { x: cx + r * Math.cos(rad), y: cy + r * Math.sin(rad) };
+  }
+
+  function describeDonutArc(cx, cy, rOuter, rInner, startAngle, endAngle) {
+    if (endAngle - startAngle >= 359.99) endAngle = startAngle + 359.99;
+    var startOuter = polarToCartesian(cx, cy, rOuter, endAngle);
+    var endOuter = polarToCartesian(cx, cy, rOuter, startAngle);
+    var startInner = polarToCartesian(cx, cy, rInner, endAngle);
+    var endInner = polarToCartesian(cx, cy, rInner, startAngle);
+    var large = endAngle - startAngle <= 180 ? '0' : '1';
+    return [
+      'M', startOuter.x, startOuter.y,
+      'A', rOuter, rOuter, 0, large, 0, endOuter.x, endOuter.y,
+      'L', endInner.x, endInner.y,
+      'A', rInner, rInner, 0, large, 1, startInner.x, startInner.y,
+      'Z'
+    ].join(' ');
+  }
+
+  function drawDonutFrame(byCat, total, progress, highlightId) {
+    var cx = 110, cy = 110, rOuter = 92, rInner = 58;
+    var rows = categories
+      .map(function (c) { return { c: c, amt: byCat[c.id] || 0 }; })
+      .filter(function (r) { return r.amt > 0; })
+      .sort(function (a, b) { return b.amt - a.amt; });
+
+    if (total === 0 || rows.length === 0) {
+      $donutChart.innerHTML = '<circle cx="110" cy="110" r="92" fill="none" stroke="' + cssVar('--card-2', '#1f232e') + '" stroke-width="34"/>'
+        + '<text x="110" y="118" text-anchor="middle" fill="' + cssVar('--text-dim', '#8b93a7') + '" font-size="13" font-family="-apple-system,sans-serif">No spending</text>';
+      return;
+    }
+
+    var html = '';
+    var angle = 0;
+    var dimOpacity = highlightId ? 0.35 : 1;
+    rows.forEach(function (r) {
+      var slice = (r.amt / total) * 360 * progress;
+      if (slice < 0.05) return;
+      var end = angle + slice;
+      var path = describeDonutArc(cx, cy, rOuter, rInner, angle, end);
+      var opacity = highlightId && highlightId !== r.c.id ? dimOpacity : 1;
+      var strokeW = highlightId === r.c.id ? 3 : 0;
+      html += '<path class="donut-seg" data-cat="' + r.c.id + '" d="' + path + '" fill="' + r.c.color + '"'
+        + ' opacity="' + opacity + '" stroke="' + cssVar('--bg', '#0f1117') + '" stroke-width="' + strokeW + '"/>';
+      angle = end;
+    });
+    $donutChart.innerHTML = html;
+  }
+
+  $donutChart.addEventListener('click', function (e) {
+    var path = e.target.closest ? e.target.closest('.donut-seg') : null;
+    if (!path || !lastDonutData) return;
+    var id = path.getAttribute('data-cat');
+    var byCat = lastDonutData.byCat;
+    var total = lastDonutData.total;
+    selectedLegendCatId = selectedLegendCatId === id ? null : id;
+    renderLegendInteractive(byCat, total);
+    drawDonutFrame(byCat, total, 1, selectedLegendCatId);
+    updateDonutCenter(selectedLegendCatId, total, byCat);
+  });
+
+  var lastSummaryYm = '';
+
+  function prepareDonutChart(byCat, total) {
+    lastDonutData = { byCat: byCat, total: total };
+    updateDonutCenter(selectedLegendCatId, total, byCat);
+  }
+
+  function renderLegendInteractive(byCat, total) {
+    if (total === 0) {
+      $legendEl.innerHTML = '<div class="empty chart-empty">Add expenses to see your category breakdown.</div>';
+      return;
+    }
+    var rows = categories
+      .map(function (c) { return { c: c, amt: byCat[c.id] || 0 }; })
+      .filter(function (r) { return r.amt > 0; })
+      .sort(function (a, b) { return b.amt - a.amt; });
+    $legendEl.innerHTML = '';
+    rows.forEach(function (r) {
+      var pct = total > 0 ? Math.round((r.amt / total) * 100) : 0;
+      var row = document.createElement('button');
+      row.type = 'button';
+      row.className = 'legend-row legend-btn' + (selectedLegendCatId === r.c.id ? ' active' : '');
+      row.innerHTML = '<span class="name"><span class="dot" style="background:' + r.c.color + '"></span>'
+        + r.c.emoji + ' ' + r.c.name + ' <span class="pct">· ' + pct + '%</span></span>'
+        + '<span class="amt">$' + fmtMoney(r.amt) + '</span>';
+      row.addEventListener('click', function () {
+        selectedLegendCatId = selectedLegendCatId === r.c.id ? null : r.c.id;
+        renderLegendInteractive(byCat, total);
+        drawDonutFrame(byCat, total, 1, selectedLegendCatId);
+        updateDonutCenter(selectedLegendCatId, total, byCat);
+      });
+      $legendEl.appendChild(row);
+    });
+  }
+
+  var trendCtx = $trendChart.getContext('2d');
+  var dailyCtx = $dailyChart.getContext('2d');
+  var chartDpr = Math.min(window.devicePixelRatio || 1, 2);
+
+  function sizeChartCanvas(canvas, ctx, cssH) {
+    var cssW = canvas.clientWidth || canvas.parentNode.clientWidth || 320;
+    canvas.style.height = cssH + 'px';
+    canvas.width = Math.round(cssW * chartDpr);
+    canvas.height = Math.round(cssH * chartDpr);
+    ctx.setTransform(chartDpr, 0, 0, chartDpr, 0, 0);
+    return { W: cssW, H: cssH };
+  }
+
+  function getTrendMonths(endY, endM, count) {
+    var list = [];
+    var y = endY, m = endM;
+    for (var i = 0; i < count; i++) {
+      list.unshift({ y: y, m: m, total: getMonthTotal(y, m) });
+      m -= 1;
+      if (m < 0) { m = 11; y -= 1; }
+    }
+    return list;
+  }
+
+  function renderTrendCompare(endY, endM, months) {
+    if (months.length < 2) {
+      $trendCompare.textContent = '';
+      return;
+    }
+    var cur = months[months.length - 1].total;
+    var prev = months[months.length - 2].total;
+    var now = new Date();
+    var isCurrent = endY === now.getFullYear() && endM === now.getMonth();
+    var label = isCurrent ? 'This month' : monthShort(new Date(endY, endM, 1));
+    if (cur === 0 && prev === 0) {
+      $trendCompare.textContent = 'No spending in recent months yet.';
+      return;
+    }
+    var diff = cur - prev;
+    var pct = prev > 0 ? Math.round((diff / prev) * 100) : (cur > 0 ? 100 : 0);
+    var arrow = diff > 0 ? '↑' : diff < 0 ? '↓' : '→';
+    var tone = diff > 0 ? 'up' : diff < 0 ? 'down' : 'flat';
+    $trendCompare.innerHTML = '<span class="trend-pill ' + tone + '">' + arrow + ' $' + fmtMoney(Math.abs(diff))
+      + (prev > 0 ? ' (' + (diff >= 0 ? '+' : '') + pct + '%)' : '')
+      + '</span> <span class="trend-words">' + label + ' vs last month</span>';
+  }
+
+  function drawTrendFrame(months, progress, endY, endM) {
+    var dim = sizeChartCanvas($trendChart, trendCtx, 168);
+    var W = dim.W, H = dim.H;
+    trendCtx.clearRect(0, 0, W, H);
+    var hasData = months.some(function (mo) { return mo.total > 0; });
+    if (!hasData) {
+      trendCtx.fillStyle = cssVar('--text-dim', '#8b93a7');
+      trendCtx.font = '14px -apple-system, sans-serif';
+      trendCtx.textAlign = 'center';
+      trendCtx.textBaseline = 'middle';
+      trendCtx.fillText('Trend appears as you log more months', W / 2, H / 2);
+      return;
+    }
+    var padL = 8, padR = 8, padT = 12, padB = 28;
+    var chartW = W - padL - padR;
+    var chartH = H - padT - padB;
+    var max = Math.max.apply(null, months.map(function (mo) { return mo.total; })) || 1;
+    var barGap = 6;
+    var barW = (chartW - barGap * (months.length - 1)) / months.length;
+    var now = new Date();
+
+    months.forEach(function (mo, i) {
+      var x = padL + i * (barW + barGap);
+      var targetH = (mo.total / max) * chartH;
+      var h = Math.max(0, targetH * progress);
+      var y = padT + chartH - h;
+      var isSel = mo.y === endY && mo.m === endM;
+      var isNow = mo.y === now.getFullYear() && mo.m === now.getMonth();
+      trendCtx.fillStyle = cssVar('--card-2', '#1f232e');
+      roundRect(trendCtx, x, padT, barW, chartH, 4);
+      trendCtx.fill();
+      if (mo.total > 0 && h >= 1) {
+        var grad = trendCtx.createLinearGradient(0, y, 0, padT + chartH);
+        grad.addColorStop(0, isSel || isNow ? cssVar('--accent', '#4dabf7') : hexLighten(cssVar('--accent', '#4dabf7'), 0.25));
+        grad.addColorStop(1, isSel || isNow ? hexLighten(cssVar('--accent', '#4dabf7'), 0.15) : cssVar('--card-2', '#1f232e'));
+        trendCtx.fillStyle = grad;
+        roundRect(trendCtx, x, y, barW, h, 4);
+        trendCtx.fill();
+      }
+      if (isSel || isNow) {
+        trendCtx.strokeStyle = cssVar('--accent', '#4dabf7');
+        trendCtx.lineWidth = 2;
+        roundRect(trendCtx, x - 1, padT - 1, barW + 2, chartH + 2, 5);
+        trendCtx.stroke();
+      }
+      trendCtx.fillStyle = cssVar('--text-dim', '#8b93a7');
+      trendCtx.font = '600 10px -apple-system, sans-serif';
+      trendCtx.textAlign = 'center';
+      trendCtx.textBaseline = 'top';
+      trendCtx.fillText(monthShort(new Date(mo.y, mo.m, 1)), x + barW / 2, padT + chartH + 6);
+    });
+  }
+
+  function prepareTrendChart(endY, endM) {
+    var months = getTrendMonths(endY, endM, 12);
+    renderTrendCompare(endY, endM, months);
+    return months;
+  }
+
+  function getDailyTotals(y, m) {
+    var days = daysInMonth(y, m);
+    var arr = [];
+    for (var d = 1; d <= days; d++) arr.push(0);
+    entries.forEach(function (e) {
+      var dt = new Date(e.ts);
+      if (dt.getFullYear() === y && dt.getMonth() === m) {
+        arr[dt.getDate() - 1] += e.amount;
+      }
+    });
+    return arr;
+  }
+
+  function drawDailyFrame(daily, y, m, progress) {
+    var dim = sizeChartCanvas($dailyChart, dailyCtx, 200);
+    var W = dim.W, H = dim.H;
+    dailyCtx.clearRect(0, 0, W, H);
+    var total = daily.reduce(function (s, v) { return s + v; }, 0);
+    $dailyMonthLabel.textContent = '· ' + monthShort(new Date(y, m, 1));
+    var budget = getTotalBudgetLimit();
+    var now = new Date();
+    var isCurrentMonth = y === now.getFullYear() && m === now.getMonth();
+    var dayOfMonth = isCurrentMonth ? now.getDate() : daysInMonth(y, m);
+
+    if (total === 0) {
+      dailyCtx.fillStyle = cssVar('--text-dim', '#8b93a7');
+      dailyCtx.font = '14px -apple-system, sans-serif';
+      dailyCtx.textAlign = 'center';
+      dailyCtx.textBaseline = 'middle';
+      dailyCtx.fillText('No daily spending this month', W / 2, H / 2);
+      $dailySubtitle.textContent = budget > 0 ? 'Monthly budget: $' + fmtMoney(budget) : 'Log expenses to see your daily rhythm.';
+      $dailyLegend.innerHTML = '';
+      return;
+    }
+
+    var cum = [];
+    var run = 0;
+    daily.forEach(function (v) { run += v; cum.push(run); });
+    var maxY = Math.max(total, budget || 0, cum[cum.length - 1] || 0) * 1.08 || 1;
+
+    if (isCurrentMonth && dayOfMonth > 0) {
+      var pace = (total / dayOfMonth) * daysInMonth(y, m);
+      $dailySubtitle.textContent = 'On pace for ~$' + fmtMoney(pace) + ' by month end'
+        + (budget > 0 ? ' (budget $' + fmtMoney(budget) + ')' : '');
+    } else {
+      $dailySubtitle.textContent = 'Total $' + fmtMoney(total)
+        + (budget > 0 ? ' · budget $' + fmtMoney(budget) : '');
+    }
+
+    var padL = 36, padR = 8, padT = 10, padB = 22;
+    var chartW = W - padL - padR;
+    var chartH = H - padT - padB;
+    var n = daily.length;
+    var gap = 2;
+    var barW = Math.max(2, (chartW - gap * (n - 1)) / n);
+
+    dailyCtx.strokeStyle = cssVar('--border', '#2a2f3d');
+    dailyCtx.lineWidth = 1;
+    dailyCtx.beginPath();
+    dailyCtx.moveTo(padL, padT + chartH);
+    dailyCtx.lineTo(padL + chartW, padT + chartH);
+    dailyCtx.stroke();
+
+    daily.forEach(function (v, i) {
+      var x = padL + i * (barW + gap);
+      var h = Math.max(0, (v / maxY) * chartH * progress);
+      var yBar = padT + chartH - h;
+      dailyCtx.fillStyle = cssVar('--card-2', '#1f232e');
+      dailyCtx.fillRect(x, padT + chartH - 1, barW, 1);
+      if (v > 0 && h >= 1) {
+        dailyCtx.fillStyle = cssVar('--accent', '#4dabf7');
+        dailyCtx.globalAlpha = 0.85;
+        roundRect(dailyCtx, x, yBar, barW, h, 2);
+        dailyCtx.fill();
+        dailyCtx.globalAlpha = 1;
+      }
+    });
+
+    if (budget > 0) {
+      dailyCtx.setLineDash([4, 4]);
+      dailyCtx.strokeStyle = cssVar('--success', '#51cf66');
+      dailyCtx.lineWidth = 1.5;
+      dailyCtx.beginPath();
+      for (var d = 1; d <= n; d++) {
+        var bx = padL + (d - 0.5) * (barW + gap);
+        var by = padT + chartH - (budget * (d / n) / maxY) * chartH;
+        if (d === 1) dailyCtx.moveTo(bx, by);
+        else dailyCtx.lineTo(bx, by);
+      }
+      dailyCtx.stroke();
+      dailyCtx.setLineDash([]);
+    }
+
+    dailyCtx.strokeStyle = cssVar('--text', '#e8ecf3');
+    dailyCtx.lineWidth = 2;
+    dailyCtx.lineJoin = 'round';
+    dailyCtx.beginPath();
+    var lastX = 0, lastY = 0;
+    cum.forEach(function (c, i) {
+      var cx = padL + (i + 0.5) * (barW + gap);
+      var cy = padT + chartH - (c / maxY) * chartH * progress;
+      if (i === 0) dailyCtx.moveTo(cx, cy);
+      else dailyCtx.lineTo(cx, cy);
+      lastX = cx; lastY = cy;
+    });
+    dailyCtx.stroke();
+    if (progress > 0.9 && isCurrentMonth) {
+      dailyCtx.fillStyle = cssVar('--accent', '#4dabf7');
+      dailyCtx.beginPath();
+      dailyCtx.arc(lastX, lastY, 4, 0, Math.PI * 2);
+      dailyCtx.fill();
+    }
+
+    dailyCtx.fillStyle = cssVar('--text-dim', '#8b93a7');
+    dailyCtx.font = '10px -apple-system, sans-serif';
+    dailyCtx.textAlign = 'right';
+    dailyCtx.fillText('$' + fmtMoney(maxY), padL - 4, padT + 8);
+    dailyCtx.fillText('$0', padL - 4, padT + chartH);
+
+    var leg = '';
+    if (budget > 0) {
+      leg += '<span class="mini-leg"><span class="swatch dash green"></span>Budget pace</span>';
+    }
+    leg += '<span class="mini-leg"><span class="swatch line"></span>Cumulative</span>';
+    leg += '<span class="mini-leg"><span class="swatch bar"></span>Daily</span>';
+    $dailyLegend.innerHTML = leg;
+  }
+
+  function prepareDailyChart(y, m) {
+    return getDailyTotals(y, m);
+  }
+
+  function topMerchantNote(monthEntries) {
+    var byNote = {};
+    monthEntries.forEach(function (e) {
+      var n = (e.note || '').trim();
+      if (!n) return;
+      if (!byNote[n]) byNote[n] = { sum: 0, count: 0 };
+      byNote[n].sum += e.amount;
+      byNote[n].count += 1;
+    });
+    var best = null;
+    Object.keys(byNote).forEach(function (k) {
+      var o = byNote[k];
+      if (!best || o.sum > best.sum) best = { note: k, sum: o.sum, count: o.count };
+    });
+    return best;
+  }
+
+  function renderInsights(y, m) {
+    var data = getSummaryData(y, m);
+    var now = new Date();
+    var isCurrent = y === now.getFullYear() && m === now.getMonth();
+    var prevM = m - 1, prevY = y;
+    if (prevM < 0) { prevM = 11; prevY -= 1; }
+    var prevTotal = getMonthTotal(prevY, prevM);
+    var items = [];
+
+    if (data.total === 0 && prevTotal === 0) {
+      $insightsList.innerHTML = '<div class="insight-empty"><span class="insight-icon">✨</span>'
+        + '<p>Your insights will light up once you start logging expenses.</p></div>';
+      return;
+    }
+
+    var topCat = null;
+    categories.forEach(function (c) {
+      var amt = data.byCat[c.id] || 0;
+      if (amt > 0 && (!topCat || amt > topCat.amt)) topCat = { c: c, amt: amt };
+    });
+    if (topCat) {
+      var share = Math.round((topCat.amt / data.total) * 100);
+      items.push({
+        icon: topCat.c.emoji,
+        title: 'Top category',
+        text: topCat.c.name + ' leads at $' + fmtMoney(topCat.amt) + ' (' + share + '% of the month).'
+      });
+    }
+
+    if (prevTotal > 0 || data.total > 0) {
+      var diff = data.total - prevTotal;
+      var dir = diff > 0 ? 'more' : diff < 0 ? 'less' : 'the same as';
+      var pctTxt = prevTotal > 0 ? ' (' + (diff >= 0 ? '+' : '') + Math.round((diff / prevTotal) * 100) + '%)' : '';
+      items.push({
+        icon: diff > 0 ? '📈' : diff < 0 ? '📉' : '➡️',
+        title: 'Vs last month',
+        text: diff === 0
+          ? 'Spending matches last month at $' + fmtMoney(data.total) + '.'
+          : 'You spent $' + fmtMoney(Math.abs(diff)) + ' ' + dir + ' than last month' + pctTxt + '.'
+      });
+    }
+
+    var merchant = topMerchantNote(data.entries);
+    if (merchant) {
+      items.push({
+        icon: '🏷️',
+        title: 'Top note',
+        text: '"' + merchant.note + '" — $' + fmtMoney(merchant.sum)
+          + (merchant.count > 1 ? ' across ' + merchant.count + ' entries' : '') + '.'
+      });
+    }
+
+    if (isCurrent && data.total > 0) {
+      var dom = now.getDate();
+      var dim = daysInMonth(y, m);
+      if (dom > 0) {
+        var projected = (data.total / dom) * dim;
+        items.push({
+          icon: '🔮',
+          title: 'Month-end forecast',
+          text: 'At today\'s pace you\'ll land around $' + fmtMoney(projected) + ' by the ' + monthShort(new Date(y, m, 1)) + ' close.'
+        });
+      }
+    } else if (!isCurrent && data.total > 0) {
+      items.push({
+        icon: '📅',
+        title: 'Month closed',
+        text: 'You spent $' + fmtMoney(data.total) + ' across ' + data.entries.length + ' transaction'
+          + (data.entries.length === 1 ? '' : 's') + '.'
+      });
+    }
+
+    var html = '';
+    items.forEach(function (it) {
+      html += '<div class="insight-item" role="listitem">'
+        + '<span class="insight-icon" aria-hidden="true">' + it.icon + '</span>'
+        + '<div class="insight-body"><div class="insight-title">' + it.title + '</div>'
+        + '<div class="insight-text">' + it.text + '</div></div></div>';
+    });
+    $insightsList.innerHTML = html;
+  }
+
   function renderTotals() {
     var val = $summaryMonth.value;
     var y, m;
@@ -616,28 +1161,28 @@
       $summaryMonth.value = y + '-' + pad2(m + 1);
     }
     var data = getSummaryData(y, m);
-    $totalVal.textContent = fmtMoney(data.total);
+    var ymKey = y + '-' + m;
+    if (ymKey !== lastSummaryYm) {
+      selectedLegendCatId = null;
+      lastSummaryYm = ymKey;
+    }
     $monthLbl.textContent = '· ' + monthName(new Date(y, m, 1));
-    drawChart(data.byCat, data.total);
-    renderLegend(data.byCat, data.total);
+    animateTotalDisplay(data.total);
+    prepareDonutChart(data.byCat, data.total);
+    renderLegendInteractive(data.byCat, data.total);
+    var trendMonths = prepareTrendChart(y, m);
+    var dailyTotals = prepareDailyChart(y, m);
+    renderInsights(y, m);
     renderBudgets(data.byCat);
-  }
-
-  function renderLegend(byCat, total) {
-    if (total === 0) { $legendEl.innerHTML = ''; return; }
-    var rows = categories
-      .map(function (c) { return { c: c, amt: byCat[c.id] || 0 }; })
-      .filter(function (r) { return r.amt > 0; })
-      .sort(function (a, b) { return b.amt - a.amt; });
-    var html = '';
-    rows.forEach(function (r) {
-      var pct = total > 0 ? Math.round((r.amt / total) * 100) : 0;
-      html += '<div class="legend-row">'
-        + '<span class="name"><span class="dot" style="background:' + r.c.color + '"></span>'
-        + r.c.name + ' <span style="opacity:0.6">· ' + pct + '%</span></span>'
-        + '<span class="amt">$' + fmtMoney(r.amt) + '</span></div>';
+    runChartAnim(750, function (p) {
+      drawDonutFrame(data.byCat, data.total, p, selectedLegendCatId);
+      drawTrendFrame(trendMonths, p, y, m);
+      drawDailyFrame(dailyTotals, y, m, p);
+    }, function () {
+      drawDonutFrame(data.byCat, data.total, 1, selectedLegendCatId);
+      drawTrendFrame(trendMonths, 1, y, m);
+      drawDailyFrame(dailyTotals, y, m, 1);
     });
-    $legendEl.innerHTML = html;
   }
 
   function renderBudgets(byCat) {
@@ -664,21 +1209,14 @@
     $budgetList.innerHTML = html;
   }
 
-  // ---------- Canvas chart ----------
-  var chartCtx = $chart.getContext('2d');
-  var dpr = Math.min(window.devicePixelRatio || 1, 2);
-  function sizeCanvas() {
-    var cssW = $chart.clientWidth || $chart.parentNode.clientWidth || 320;
-    var cssH = 180;
-    $chart.style.height = cssH + 'px';
-    $chart.width = Math.round(cssW * dpr);
-    $chart.height = Math.round(cssH * dpr);
-    chartCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    return { W: cssW, H: cssH };
-  }
   function roundRect(ctx, x, y, w, h, r) {
+    if (w <= 0 || h <= 0) return;
     if (w < r * 2) r = w / 2;
     if (h < r * 2) r = h / 2;
+    if (r <= 0) {
+      ctx.rect(x, y, w, h);
+      return;
+    }
     ctx.beginPath();
     ctx.moveTo(x + r, y);
     ctx.arcTo(x + w, y, x + w, y + h, r);
@@ -686,54 +1224,6 @@
     ctx.arcTo(x, y + h, x, y, r);
     ctx.arcTo(x, y, x + w, y, r);
     ctx.closePath();
-  }
-  function drawChart(byCat, total) {
-    var dim = sizeCanvas();
-    var W = dim.W, H = dim.H;
-    chartCtx.clearRect(0, 0, W, H);
-    if (total === 0) {
-      chartCtx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--text-dim') || '#4a5268';
-      chartCtx.font = '14px -apple-system, sans-serif';
-      chartCtx.textAlign = 'center';
-      chartCtx.textBaseline = 'middle';
-      chartCtx.fillText('No spending this month', W / 2, H / 2);
-      return;
-    }
-    var rows = categories
-      .map(function (c) { return { c: c, amt: byCat[c.id] || 0 }; })
-      .filter(function (r) { return r.amt > 0; })
-      .sort(function (a, b) { return b.amt - a.amt; });
-    var padTop = 8, padBottom = 8;
-    var rowH = Math.max(22, Math.floor((H - padTop - padBottom) / rows.length));
-    var labelW = 92, valueW = 68;
-    var barX = labelW;
-    var barMaxW = W - labelW - valueW;
-    var max = rows[0].amt || 1;
-    chartCtx.font = '13px -apple-system, BlinkMacSystemFont, sans-serif';
-    chartCtx.textBaseline = 'middle';
-    rows.forEach(function (r, i) {
-      var y = padTop + i * rowH;
-      var barH = Math.min(rowH - 8, 18);
-      var barY = y + (rowH - barH) / 2;
-      chartCtx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--text-dim').trim() || '#8b93a7';
-      chartCtx.textAlign = 'left';
-      chartCtx.fillText(r.c.name, 6, y + rowH / 2);
-      chartCtx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--card-2').trim() || '#222836';
-      roundRect(chartCtx, barX, barY, barMaxW, barH, 5);
-      chartCtx.fill();
-      var w = Math.max(3, (r.amt / max) * barMaxW);
-      var grad = chartCtx.createLinearGradient(barX, 0, barX + w, 0);
-      grad.addColorStop(0, r.c.color);
-      grad.addColorStop(1, hexLighten(r.c.color, 0.18));
-      chartCtx.fillStyle = grad;
-      roundRect(chartCtx, barX, barY, w, barH, 5);
-      chartCtx.fill();
-      chartCtx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--text').trim() || '#e8ecf3';
-      chartCtx.textAlign = 'right';
-      chartCtx.font = '600 13px -apple-system, BlinkMacSystemFont, sans-serif';
-      chartCtx.fillText('$' + fmtMoney(r.amt), W - 6, y + rowH / 2);
-      chartCtx.font = '13px -apple-system, BlinkMacSystemFont, sans-serif';
-    });
   }
 
   // ---------- Monthly / yearly summary ----------

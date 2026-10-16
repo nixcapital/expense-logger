@@ -4,7 +4,7 @@
    - Navigation requests: network-first, fall back to cached index.html.
    - Bump CACHE_VERSION on each release to force a clean update.
 */
-const CACHE_VERSION = 'expense-logger-v1.0.2-rollback';
+const CACHE_VERSION = 'expense-logger-v1.1.0';
 const SHELL = [
   './',
   './index.html',
