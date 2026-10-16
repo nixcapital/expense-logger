@@ -3,8 +3,8 @@
    Offline: fall back to the current release cache only.
    Install precache uses network no-store (not HTTP cache / addAll).
 */
-const CACHE_VERSION = 'expense-logger-v1.6.1';
-const ASSET_V = '1.6.1';
+const CACHE_VERSION = 'expense-logger-v1.6.2';
+const ASSET_V = '1.6.2';
 const SHELL_URLS = [
   './',
   './index.html',
@@ -86,6 +86,23 @@ self.addEventListener('activate', (event) => {
   );
 });
 
+function shellOfflineFallback(request, cache) {
+  return cache.match(request).then((cached) => {
+    if (cached) return cached;
+    const url = new URL(request.url);
+    const path = url.pathname;
+    const isDoc = request.mode === 'navigate'
+      || path.endsWith('/') || path.endsWith('/index.html');
+    if (isDoc) {
+      return cache.match('./index.html').then((doc) => {
+        if (doc) return doc;
+        return new Response('Offline', { status: 503, statusText: 'Offline' });
+      });
+    }
+    return new Response('Offline', { status: 503, statusText: 'Offline' });
+  });
+}
+
 function networkFirstShell(request) {
   return fetchNoStore(request.url).then((res) => {
     if (res.ok) {
@@ -94,12 +111,7 @@ function networkFirstShell(request) {
     }
     return res;
   }).catch(() =>
-    caches.open(CACHE_VERSION).then((cache) =>
-      cache.match(request).then((cached) => {
-        if (cached) return cached;
-        return cache.match('./index.html');
-      })
-    )
+    caches.open(CACHE_VERSION).then((cache) => shellOfflineFallback(request, cache))
   );
 }
 

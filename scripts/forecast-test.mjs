@@ -271,4 +271,22 @@ console.log('forecast-test: y-axis plan across chart windows');
   }
 });
 
+console.log('forecast-test: invalid / iOS-style date inputs');
+var badForecast = FC.runForecast({
+  nowMs: Date.now(),
+  checkingId: CHECKING,
+  balance: 1200,
+  balanceAsOfMs: Date.now(),
+  entries: [
+    entry('bad1', 10, 'note', '2026-10-16 09:15', { accountId: CHECKING }),
+    entry('bad2', 5, 'note', NaN, { accountId: CHECKING }),
+    { id: 'bad3', amount: 3, accountId: CHECKING, categoryId: 'other', note: 'no ts' }
+  ],
+  transferPairs: [],
+  chartDays: 60,
+  cushion: 600
+});
+assert.ok(badForecast && typeof badForecast.ok === 'boolean', 'invalid ts must not throw');
+assert.ok(!FC.isBankHoliday(NaN), 'NaN ts is not a bank holiday');
+
 console.log('PASS');

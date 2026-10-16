@@ -13,8 +13,8 @@
 <link rel="manifest" href="manifest.json">
 <link rel="icon" href="icon-192.png">
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
-<link rel="stylesheet" href="styles.css?v=1.6.1">
-<link rel="stylesheet" href="icon-animations.css?v=1.6.1">
+<link rel="stylesheet" href="styles.css?v=1.6.2">
+<link rel="stylesheet" href="icon-animations.css?v=1.6.2">
 <title>Expense Logger</title>
 </head>
 <body>
@@ -25,6 +25,21 @@
   <p class="splash-title">Expense Logger</p>
   <p class="splash-tag">Quick entries, saved on this device</p>
 </div>
+<script>
+(function () {
+  'use strict';
+  function hideSplashEarly() {
+    var s = document.getElementById('splashScreen');
+    if (!s || s.classList.contains('hide')) return;
+    s.style.pointerEvents = 'none';
+    s.classList.add('hide');
+    setTimeout(function () { s.style.display = 'none'; }, 300);
+  }
+  setTimeout(hideSplashEarly, 600);
+  setTimeout(hideSplashEarly, 2000);
+  setTimeout(hideSplashEarly, 5000);
+})();
+</script>
 
 <!-- LOCK SCREEN -->
 <div id="lockScreen" class="lock-screen" hidden>
@@ -72,6 +87,16 @@
       </div>
       <p class="hero-budget-meta" id="heroBudgetMeta"></p>
     </div>
+  </div>
+
+  <div class="card home-section-error" id="homeBootError" hidden role="alert">
+    <p class="home-section-error-title">Couldn&apos;t load some home data</p>
+    <p class="home-section-error-text" id="homeBootErrorText">Your entries and settings on this device are unchanged. Try closing and reopening the app.</p>
+  </div>
+
+  <div class="card home-section-error" id="homeForecastError" hidden role="alert">
+    <p class="home-section-error-title">Forecast unavailable</p>
+    <p class="home-section-error-text" id="homeForecastErrorText">Your saved balance and transactions are safe. Tap to open Forecast and try again.</p>
   </div>
 
   <button type="button" class="card forecast-home-card" id="homeForecastCard" hidden>
@@ -789,8 +814,37 @@
   </div>
 </div>
 
-<script src="icon-system.js?v=1.6.1"></script>
-<script src="forecast.js?v=1.6.1"></script>
-<script src="app.js?v=1.6.1"></script>
+<script src="icon-system.js?v=1.6.2"></script>
+<script src="forecast.js?v=1.6.2"></script>
+<script src="app.js?v=1.6.2"></script>
+<script>
+(function () {
+  'use strict';
+  var MAX_MS = 5000;
+  function dismissSplashFailsafe() {
+    var splash = document.getElementById('splashScreen');
+    if (!splash || splash.classList.contains('hide')) return;
+    splash.style.pointerEvents = 'none';
+    splash.classList.add('hide');
+    setTimeout(function () { splash.style.display = 'none'; }, 350);
+    if (!window.__elBootCompleted) {
+      var err = document.getElementById('homeBootError');
+      var txt = document.getElementById('homeBootErrorText');
+      var app = document.getElementById('app');
+      var lock = document.getElementById('lockScreen');
+      if (app) app.hidden = false;
+      if (lock) lock.hidden = true;
+      if (err) err.hidden = false;
+      if (txt) {
+        txt.textContent = 'The app did not finish starting (often a cached update). Force-quit and reopen, or refresh once on a connection.';
+      }
+      var summary = document.getElementById('tab-summary');
+      if (summary) summary.hidden = false;
+    }
+  }
+  window.__elDismissSplashFailsafe = dismissSplashFailsafe;
+  setTimeout(dismissSplashFailsafe, MAX_MS);
+})();
+</script>
 </body>
 </html>
