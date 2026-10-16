@@ -689,6 +689,32 @@
       <p class="hint">Shown as a dashed line on the chart. Default $600.</p>
     </div>
     <p class="hint" id="forecastInfoDailyNote"></p>
+    <h4 class="field-label" style="margin-top:12px">Recurring timing</h4>
+    <div id="forecastScheduleList"></div>
+  </div>
+</div>
+
+<!-- Modal: edit forecast upcoming item -->
+<div class="modal-overlay sheet modal-front" id="forecastItemEditModal">
+  <div class="modal sheet-modal">
+    <div class="sheet-grabber" aria-hidden="true"></div>
+    <div class="sheet-header">
+      <button class="btn-secondary sheet-cancel" id="forecastItemEditCancelBtn" type="button">Cancel</button>
+      <h3 id="forecastItemEditTitle">Upcoming item</h3>
+      <button class="link-btn" id="forecastItemEditSaveBtn" type="button">Save</button>
+    </div>
+    <div class="field">
+      <label for="forecastItemAmountInput">Amount</label>
+      <div class="amount-wrap">
+        <span class="dollar">$</span>
+        <input type="number" id="forecastItemAmountInput" inputmode="decimal" step="0.01" min="0">
+      </div>
+    </div>
+    <div class="field">
+      <label for="forecastItemDateInput">Next date</label>
+      <input type="date" id="forecastItemDateInput">
+    </div>
+    <p class="hint">Applies to this item until you change it again.</p>
   </div>
 </div>
 

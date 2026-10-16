@@ -20,6 +20,7 @@
   var TRANSFER_UNLINK_KEY = 'expenseLogger.transferUnlink.v1';
   var IMPORT_ACCOUNT_PREFS_KEY = 'expenseLogger.importAccountPrefs.v1';
   var TRANSFER_PATTERNS_KEY = 'expenseLogger.transferPatterns.v1';
+  var FORECAST_OVERRIDES_KEY = 'expenseLogger.forecastOverrides.v1';
 
   var APP_VERSION = '1.6.0';
   var BACKUP_FORMAT = 2;
@@ -173,6 +174,10 @@
   var forecastScreenOpen = false;
   var balanceSheetAccountId = null;
   var viewingOtherTransferEntryId = null;
+  var forecastOverrides = {};
+  var lastForecastSchedules = [];
+  var editingForecastItemKey = null;
+  var editingForecastItemMeta = null;
   var FC = window.ExpenseForecast;
 
   // ---------- DOM ----------
@@ -687,6 +692,21 @@
     try { localStorage.setItem(TRANSFER_PATTERNS_KEY, JSON.stringify(transferPatterns)); } catch (e) {}
   }
 
+  function loadForecastOverrides() {
+    try {
+      var raw = localStorage.getItem(FORECAST_OVERRIDES_KEY);
+      if (raw) {
+        var p = JSON.parse(raw);
+        if (p && typeof p === 'object') return p;
+      }
+    } catch (e) {}
+    return {};
+  }
+
+  function saveForecastOverrides() {
+    try { localStorage.setItem(FORECAST_OVERRIDES_KEY, JSON.stringify(forecastOverrides)); } catch (e) {}
+  }
+
   function normalizeTransferPattern(desc) {
     return FC ? FC.normalizeTransferPattern(desc) : String(desc || '').toLowerCase().trim();
   }
@@ -1006,6 +1026,7 @@
     storage[TRANSFER_UNLINK_KEY] = JSON.stringify(transferUnlinkKeys);
     storage[IMPORT_ACCOUNT_PREFS_KEY] = JSON.stringify(importAccountPrefs);
     storage[TRANSFER_PATTERNS_KEY] = JSON.stringify(transferPatterns);
+    storage[FORECAST_OVERRIDES_KEY] = JSON.stringify(forecastOverrides);
     var meta = loadMetaObj();
     if (meta && meta.forecastCushion != null) storage[META_KEY] = JSON.stringify(meta);
     storage[UI_KEY] = JSON.stringify({
@@ -1160,6 +1181,7 @@
     transferUnlinkKeys = loadTransferUnlinkKeys();
     importAccountPrefs = loadImportAccountPrefs();
     transferPatterns = loadTransferPatterns();
+    forecastOverrides = loadForecastOverrides();
     ensureDefaultAccounts();
     entries = loadEntries();
     if ($countCardPayments) $countCardPayments.checked = importSettings.countCardPayments;
@@ -5887,6 +5909,7 @@
       entries: entries,
       recurringItems: recurringItems,
       transferPairs: transferPairs,
+      overrides: forecastOverrides,
       chartDays: chartDays || forecastChartDays,
       maxLookaheadDays: 365
     };
@@ -6003,10 +6026,12 @@
       chaseId: DEFAULT_ACCOUNT_CHASE,
       transferPairs: transferPairs,
       recurringItems: recurringItems,
+      overrides: forecastOverrides,
       chartDays: forecastChartDays,
       maxLookaheadDays: 365,
       cushion: getForecastCushion()
     });
+    if (sim.schedules) lastForecastSchedules = sim.schedules;
     if (sim.ok && $('forecastLowestSub')) {
       $('forecastLowestSub').textContent = 'Lowest ' + fmtMoneyDisplay(sim.lowest.balance) + ' on ' + formatForecastShortDate(sim.lowest.ts);
     }
@@ -6122,11 +6147,62 @@
     }
   }
 
+  function openForecastItemEditor(itemKey, label, amount, ts, kind, categoryId) {
+    if (!itemKey || itemKey === 'daily-spend') return;
+    editingForecastItemKey = itemKey;
+    editingForecastItemMeta = { label: label, kind: kind, categoryId: categoryId };
+    var title = $('forecastItemEditTitle');
+    if (title) title.textContent = label || 'Upcoming item';
+    var amtIn = $('forecastItemAmountInput');
+    if (amtIn) amtIn.value = String(Math.round(amount * 100) / 100);
+    var dateIn = $('forecastItemDateInput');
+    if (dateIn) {
+      var d = new Date(ts);
+      dateIn.value = d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate());
+    }
+    var m = $('forecastItemEditModal');
+    if (m) m.classList.add('show');
+  }
+
+  function saveForecastItemOverride() {
+    if (!editingForecastItemKey) return;
+    var amt = parseFloat($('forecastItemAmountInput') && $('forecastItemAmountInput').value);
+    var dateVal = $('forecastItemDateInput') && $('forecastItemDateInput').value;
+    if (isNaN(amt) || amt <= 0) { toast('Enter a valid amount'); return; }
+    if (!dateVal) { toast('Pick a date'); return; }
+    var parts = dateVal.split('-');
+    var nextTs = new Date(parseInt(parts[0], 10), parseInt(parts[1], 10) - 1, parseInt(parts[2], 10)).getTime();
+    var meta = editingForecastItemMeta || {};
+    forecastOverrides[editingForecastItemKey] = {
+      amount: Math.round(amt * 100) / 100,
+      nextTs: nextTs,
+      label: meta.label,
+      kind: meta.kind,
+      categoryId: meta.categoryId
+    };
+    saveForecastOverrides();
+    editingForecastItemKey = null;
+    var m = $('forecastItemEditModal');
+    if (m) m.classList.remove('show');
+    renderHomeForecastCard();
+    if (forecastScreenOpen) renderForecastScreen();
+    toast('Forecast updated');
+  }
+
   function renderForecastUpcoming(sim, cushion) {
     var list = $('forecastUpcomingList');
     if (!list || !sim) return;
     var html = '';
-    var items = sim.upcoming.slice(0, 12);
+    var items = sim.upcoming.slice().sort(function (a, b) {
+      if (b.amount !== a.amount) return b.amount - a.amount;
+      return a.ts - b.ts;
+    });
+    var majorAmt = 250;
+    var majorKeys = {};
+    items.forEach(function (u) {
+      if (u.amount >= majorAmt && u.itemKey) majorKeys[u.itemKey] = true;
+    });
+    items = items.sort(function (a, b) { return a.ts - b.ts; }).slice(0, 14);
     if (!items.length) {
       list.innerHTML = '<div class="empty" style="padding:16px">No scheduled items in this window.</div>';
       return;
@@ -6165,7 +6241,12 @@
       } else {
         amtTxt = '-' + fmtMoneyDisplay(u.amount);
       }
-      html += '<div class="forecast-up-row">';
+      var rowClass = 'forecast-up-row';
+      if ((u.amount >= majorAmt || majorKeys[u.itemKey]) && u.itemKey && u.itemKey !== 'daily-spend') {
+        rowClass += ' forecast-up-row--major';
+      }
+      var tap = u.itemKey && u.itemKey !== 'daily-spend' ? ' data-forecast-item="' + escHtml(u.itemKey) + '"' : '';
+      html += '<button type="button" class="' + rowClass + '"' + tap + '>';
       html += '<div class="forecast-up-icon" style="background:' + iconBg + ';color:' + iconColor + '">' + iconSvg + '</div>';
       html += '<div><p class="forecast-up-title">' + escHtml(u.label) + '</p><p class="forecast-up-sub">' + escHtml(sub) + '</p></div>';
       html += '<div class="forecast-up-amt-col"><div class="' + amtClass + '">' + amtTxt + '</div>';
@@ -6174,9 +6255,33 @@
         html += '<div class="forecast-cushion-chip"><svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M6 2.2v4M6 8.2h.01" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/><path d="M2.2 9.2h7.6L10.2 6 6 2.2 1.8 6l.4 3.2z" stroke="currentColor" stroke-width="1"/></svg>';
         html += 'Below ' + fmtForecastMoneyShort(cushion) + ' \u00B7 ' + fmtForecastMoneyShort(u.balanceAfter) + '</div>';
       }
-      html += '</div></div>';
+      html += '</div></button>';
     });
     list.innerHTML = html;
+    Array.prototype.forEach.call(list.querySelectorAll('[data-forecast-item]'), function (btn) {
+      btn.addEventListener('click', function () {
+        var key = btn.getAttribute('data-forecast-item');
+        var match = null;
+        items.forEach(function (u) { if (u.itemKey === key) match = u; });
+        if (match) openForecastItemEditor(key, match.label, match.amount, match.ts, match.kind, match.categoryId);
+      });
+    });
+  }
+
+  function renderForecastScheduleInfo() {
+    var el = $('forecastScheduleList');
+    if (!el) return;
+    if (!lastForecastSchedules.length) {
+      el.innerHTML = '<p class="hint">No recurring patterns detected yet.</p>';
+      return;
+    }
+    var html = '<div class="forecast-schedule-list">';
+    lastForecastSchedules.forEach(function (s) {
+      html += '<div class="forecast-schedule-row"><div class="forecast-schedule-name">' + escHtml(s.label) + '</div>';
+      html += '<div class="forecast-schedule-detail">' + escHtml(s.inferenceDetail || '') + '</div></div>';
+    });
+    html += '</div>';
+    el.innerHTML = html;
   }
 
   function openBalanceSheet(accountId) {
@@ -6432,7 +6537,9 @@
       var r = FC.runForecast(payload);
       if (r.ok && r.dailySpend > 0) note.textContent = 'Includes ~' + fmtMoneyDisplay(r.dailySpend) + '/day typical checking spending.';
       else note.textContent = '';
+      if (r.schedules) lastForecastSchedules = r.schedules;
     }
+    renderForecastScheduleInfo();
     var m = $('forecastInfoModal');
     if (m) m.classList.add('show');
   });
@@ -6472,6 +6579,12 @@
   if ($('balanceAsOfInput')) $('balanceAsOfInput').addEventListener('change', function () {
     if ($('balanceAsOfPreview')) $('balanceAsOfPreview').textContent = formatBalanceAsOfLabel($('balanceAsOfInput').value);
   });
+  if ($('forecastItemEditCancelBtn')) $('forecastItemEditCancelBtn').addEventListener('click', function () {
+    editingForecastItemKey = null;
+    var m = $('forecastItemEditModal');
+    if (m) m.classList.remove('show');
+  });
+  if ($('forecastItemEditSaveBtn')) $('forecastItemEditSaveBtn').addEventListener('click', saveForecastItemOverride);
   if ($('otherTransferSheet')) $('otherTransferSheet').addEventListener('click', function (ev) {
     if (ev.target === $('otherTransferSheet')) closeOtherTransferSheet();
   });
@@ -6844,6 +6957,7 @@
   transferUnlinkKeys = loadTransferUnlinkKeys();
   importAccountPrefs = loadImportAccountPrefs();
   transferPatterns = loadTransferPatterns();
+  forecastOverrides = loadForecastOverrides();
   ensureDefaultAccounts();
   if ($countCardPayments) $countCardPayments.checked = importSettings.countCardPayments;
   entries = loadEntries();

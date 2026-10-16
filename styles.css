@@ -1979,8 +1979,21 @@ button.legend-row.legend-btn.active { background: color-mix(in srgb, var(--accen
 .forecast-up-row {
   display: grid; grid-template-columns: 36px 1fr auto; gap: 10px; align-items: start;
   padding: 12px var(--sp-4); border-bottom: 1px solid var(--sep);
+  width: 100%; text-align: left; border-left: none; border-right: none; border-top: none;
+  background: transparent; color: inherit; font: inherit; cursor: pointer;
 }
 .forecast-up-row:last-child { border-bottom: none; }
+.forecast-up-row--major {
+  background: rgba(91, 140, 255, 0.06);
+  padding-top: 14px; padding-bottom: 14px;
+}
+.forecast-up-row--major .forecast-up-title { font-size: 17px; }
+.forecast-up-row--major .forecast-up-amt { font-size: 18px; }
+.forecast-schedule-list { margin-top: 8px; }
+.forecast-schedule-row { padding: 10px 0; border-bottom: 1px solid var(--sep); }
+.forecast-schedule-row:last-child { border-bottom: none; }
+.forecast-schedule-name { font-size: 15px; font-weight: 600; }
+.forecast-schedule-detail { font-size: 13px; color: var(--text-dim); margin-top: 4px; line-height: 1.35; }
 .forecast-up-icon {
   width: 32px; height: 32px; border-radius: 8px; display: flex; align-items: center; justify-content: center;
 }
