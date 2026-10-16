@@ -436,7 +436,7 @@
       var amounts = list.map(function (e) { return e.amount; });
       var medAmt = median(amounts);
       var similar = list.filter(function (e) {
-        return Math.abs(e.amount - medAmt) <= Math.max(5, medAmt * 0.08);
+        return Math.abs(e.amount - medAmt) <= Math.max(5, medAmt * 0.10);
       });
       if (similar.length < 2) return;
       var sample = similar[0];
@@ -444,6 +444,10 @@
       if (kind === 'inflow' && !isIn) return;
       if (kind === 'outflow' && isIn) return;
       if (kind === 'transfer-other' && !isOtherAccountTransfer(sample)) return;
+      if (kind === 'outflow' && medAmt < 25) return;
+      if (kind === 'transfer-other' && medAmt < 25) return;
+      var amtSpread = Math.max.apply(null, amounts) - Math.min.apply(null, amounts);
+      if ((kind === 'outflow' || kind === 'transfer-other') && amtSpread > Math.max(5, medAmt * 0.10)) return;
 
       var fit = fitSchedule(similar.map(function (e) { return e.ts; }), isIn);
       if (!fit) return;
@@ -806,6 +810,7 @@
     var futurePoints = [{ ts: nowMs, balance: bal, today: true }];
     var upcoming = [];
     var lowest = { balance: bal, ts: nowMs };
+    var lowestInWindow = { balance: bal, ts: nowMs };
     var lastsUntil = null;
     var lookaheadEnd = addDays(nowMs, input.maxLookaheadDays || 365);
     var chartEnd = addDays(nowMs, horizon);
@@ -840,10 +845,15 @@
         });
       });
       if (bal < lowest.balance) lowest = { balance: bal, ts: simDay };
+      if (simDay <= chartEnd && bal < lowestInWindow.balance) lowestInWindow = { balance: bal, ts: simDay };
       if (lastsUntil == null && bal < 0) lastsUntil = simDay;
       if (simDay <= chartEnd) futurePoints.push({ ts: simDay, balance: bal });
       simDay = addDays(simDay, 1);
     }
+    histPoints.forEach(function (p) {
+      if (p.ts > chartEnd) return;
+      if (p.balance < lowestInWindow.balance) lowestInWindow = { balance: p.balance, ts: p.ts };
+    });
 
     var neverRunsOut = lastsUntil == null;
     var daysAway = lastsUntil != null ? Math.round((lastsUntil - nowMs) / MS_DAY) : null;
@@ -854,6 +864,7 @@
       points: histPoints.concat(futurePoints),
       upcoming: upcoming.filter(function (u) { return u.ts <= chartEnd && !u.daily; }),
       lowest: lowest,
+      lowestInWindow: lowestInWindow,
       lastsUntil: neverRunsOut ? null : lastsUntil,
       neverRunsOut: neverRunsOut,
       daysAway: daysAway,

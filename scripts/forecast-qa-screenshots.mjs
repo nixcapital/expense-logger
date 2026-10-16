@@ -37,7 +37,7 @@ function seed() {
   const accounts = [
     {
       id: 'acct-checking', name: 'Checking', type: 'bank', color: '#20C997',
-      currentBalance: 2378.42, balanceAsOf: '2026-10-16',
+      currentBalance: 2382.42, balanceAsOf: '2026-10-16',
       balanceHistory: { amount: 1904.1, asOf: '2026-10-02' }
     },
     { id: 'acct-chase', name: 'Chase card', type: 'credit_card', color: '#748FFC' }
@@ -53,13 +53,12 @@ function seed() {
   const entries = [];
   const push = (e) => entries.push(e);
 
-  // Biweekly paychecks (Fridays) — Jul through Oct 2026
   const payFridays = [
+    ts(2026, 5, 6), ts(2026, 5, 20),
     ts(2026, 6, 3), ts(2026, 6, 17), ts(2026, 6, 31),
     ts(2026, 7, 14), ts(2026, 7, 28),
     ts(2026, 8, 11), ts(2026, 8, 25),
-    ts(2026, 9, 9), ts(2026, 9, 23),
-    ts(2026, 10, 6)
+    ts(2026, 9, 9)
   ];
   payFridays.forEach((t, i) => {
     push({
@@ -68,25 +67,18 @@ function seed() {
     });
   });
 
-  // Rent on the 1st (Sep 2025 Sat → Mon the 3rd for history; recent on the 1st)
-  [
-    [2026, 6, 1], [2026, 7, 1], [2026, 8, 1], [2026, 9, 1]
-  ].forEach(([y, m, d], i) => {
+  [[2026, 6, 1], [2026, 7, 1], [2026, 8, 1], [2026, 9, 1]].forEach(([y, m, d], i) => {
     push({ id: 'rent-' + i, amount: 1650, categoryId: 'bills', note: 'Maple Court Apts', ts: ts(y, m, d), accountId: 'acct-checking' });
   });
 
-  // Duke ~22nd
-  [
-    [2026, 6, 22], [2026, 7, 22], [2026, 8, 22], [2026, 9, 22]
-  ].forEach(([y, m, d], i) => {
+  [[2026, 5, 22], [2026, 6, 22], [2026, 7, 22], [2026, 8, 22]].forEach(([y, m, d], i) => {
     push({ id: 'duke-' + i, amount: 142.4, categoryId: 'bills', note: 'Duke Energy', ts: ts(y, m, d), accountId: 'acct-checking' });
   });
 
-  // Chase autopay pairs (8th)
   [
-    ['chase-b1', 'chase-c1', ts(2026, 7, 8), ts(2026, 7, 7), 1488.2],
-    ['chase-b2', 'chase-c2', ts(2026, 8, 8), ts(2026, 8, 7), 1522.5],
-    ['chase-b3', 'chase-c3', ts(2026, 9, 8), ts(2026, 9, 7), 1566.75]
+    ['chase-b1', 'chase-c1', ts(2026, 6, 8), ts(2026, 6, 7), 1488.2],
+    ['chase-b2', 'chase-c2', ts(2026, 7, 8), ts(2026, 7, 7), 1725.5],
+    ['chase-b3', 'chase-c3', ts(2026, 8, 8), ts(2026, 8, 7), 2284.75]
   ].forEach(([bid, cid, bts, cts, amt]) => {
     push({ id: bid, amount: amt, categoryId: 'bills', note: 'CREDIT CRD AUTOPAY', ts: bts, accountId: 'acct-checking', isTransfer: true, bankText: 'CREDIT CRD AUTOPAY' });
     push({ id: cid, amount: amt, categoryId: 'other', note: 'Payment Thank You', ts: cts, accountId: 'acct-chase', isTransfer: true });
@@ -98,8 +90,7 @@ function seed() {
     { id: 'tp3', entryIds: ['chase-b3', 'chase-c3'], auto: true, unlinked: false, createdAt: Date.now() }
   ];
 
-  // Monthly savings transfer (other account)
-  [ts(2026, 7, 30), ts(2026, 8, 30), ts(2026, 9, 30)].forEach((t, i) => {
+  [ts(2026, 6, 30), ts(2026, 7, 30), ts(2026, 8, 30)].forEach((t, i) => {
     push({
       id: 'sav-' + i, amount: 200, categoryId: 'other', note: 'Transfer to savings', ts: t,
       accountId: 'acct-checking', isTransfer: true, transferKind: 'other',
@@ -107,29 +98,30 @@ function seed() {
     });
   });
 
-  // Scattered daily-ish debits (last ~10 weeks)
   const debits = [
     ['coffee-1', 6.45, 'Starbucks', ts(2026, 9, 15)],
-    ['coffee-2', 4.2, 'Dunkin', ts(2026, 9, 12)],
+    ['coffee-2', 4.2, 'Dunkin', ts(2026, 9, 14)],
+    ['coffee-3', 5.9, 'Starbucks', ts(2026, 9, 13)],
     ['groc-1', 54.3, 'Trader Joes', ts(2026, 9, 10)],
-    ['groc-2', 61.2, 'Kroger', ts(2026, 9, 3)],
-    ['lunch-1', 12.8, 'Chipotle', ts(2026, 8, 28)],
-    ['gas-1', 38.5, 'Shell', ts(2026, 8, 20)],
-    ['coffee-3', 5.9, 'Starbucks', ts(2026, 8, 14)],
-    ['groc-3', 48.1, 'Kroger', ts(2026, 8, 6)],
-    ['lunch-2', 9.5, 'Panera', ts(2026, 7, 29)],
-    ['coffee-4', 6.1, 'Starbucks', ts(2026, 7, 22)],
-    ['groc-4', 72.4, 'Trader Joes', ts(2026, 7, 15)],
-    ['lunch-3', 11.2, 'Chipotle', ts(2026, 7, 8)]
+    ['groc-2', 61.2, 'Kroger', ts(2026, 9, 7)],
+    ['lunch-1', 12.8, 'Chipotle', ts(2026, 9, 5)],
+    ['gas-1', 38.5, 'Shell', ts(2026, 9, 2)],
+    ['coffee-4', 6.1, 'Starbucks', ts(2026, 8, 30)],
+    ['groc-3', 48.1, 'Kroger', ts(2026, 8, 27)],
+    ['lunch-2', 9.5, 'Panera', ts(2026, 8, 24)],
+    ['coffee-5', 5.5, 'Starbucks', ts(2026, 8, 21)],
+    ['groc-4', 72.4, 'Trader Joes', ts(2026, 8, 18)],
+    ['lunch-3', 11.2, 'Chipotle', ts(2026, 8, 15)],
+    ['coffee-6', 4.8, 'Dunkin', ts(2026, 8, 12)],
+    ['groc-5', 44.6, 'Kroger', ts(2026, 8, 9)],
+    ['coffee-7', 6.2, 'Starbucks', ts(2026, 8, 6)],
+    ['lunch-4', 13.4, 'Chipotle', ts(2026, 8, 3)],
+    ['groc-6', 58.9, 'Trader Joes', ts(2026, 7, 31)]
   ];
   debits.forEach(([id, amt, note, t]) => {
     const cat = /starbucks|dunkin|chipotle|panera/i.test(note) ? 'dining' : /kroger|trader/i.test(note) ? 'groceries' : 'other';
     push({ id, amount: amt, categoryId: cat, note, ts: t, accountId: 'acct-checking' });
   });
-
-  // Future-dated rows in log (should not break detection)
-  push({ id: 'rent-future', amount: 1650, categoryId: 'bills', note: 'Maple Court Apts', ts: ts(2026, 10, 1), accountId: 'acct-checking' });
-  push({ id: 'pay-future', amount: 2140, categoryId: 'income', note: 'Acme Corp payroll', ts: ts(2026, 10, 20), accountId: 'acct-checking', isDeposit: true });
 
   const transferPatterns = [{ id: 'pat1', pattern: 'online transfer to sav', createdAt: Date.now() }];
   return { accounts, entries, transferPairs, transferPatterns, categories };
@@ -182,8 +174,6 @@ async function run() {
   await page.reload({ waitUntil: 'networkidle' });
   await page.waitForTimeout(350);
 
-  await shot(page, 'home-forecast-card-light.png');
-
   await page.click('#homeForecastCard');
   await page.waitForSelector('#tab-forecast:not([hidden])');
   await page.waitForTimeout(400);
@@ -210,13 +200,6 @@ async function run() {
     await page.click('#forecastItemEditCancelBtn');
     await page.waitForTimeout(MODAL_MS);
   }
-
-  await page.click('#forecastUpdateBtn');
-  await page.waitForSelector('#balanceSheet.show');
-  await page.waitForTimeout(MODAL_MS);
-  await shot(page, 'set-balance-sheet.png');
-  await page.click('#balanceSheetClose');
-  await page.waitForTimeout(MODAL_MS);
 
   await page.click('#forecastBackBtn');
   await page.waitForTimeout(250);

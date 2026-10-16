@@ -1512,6 +1512,36 @@ button.legend-row.legend-btn.active { background: color-mix(in srgb, var(--accen
   grid-column: 3;
   flex-shrink: 0;
 }
+.toggle-switch {
+  position: relative;
+  flex-shrink: 0;
+  width: 51px;
+  height: 31px;
+  border: none;
+  border-radius: 16px;
+  background: var(--sep);
+  padding: 0;
+  cursor: pointer;
+  transition: background 0.2s ease;
+}
+.toggle-switch::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 27px;
+  height: 27px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
+  transition: transform 0.2s ease;
+}
+.toggle-switch.is-on {
+  background: var(--accent);
+}
+.toggle-switch.is-on::after {
+  transform: translateX(20px);
+}
 
 .inset-group { margin-bottom: var(--sp-6); }
 .group-label {
@@ -1666,7 +1696,8 @@ button.legend-row.legend-btn.active { background: color-mix(in srgb, var(--accen
   padding: 8px 12px; font-size: 14px; font-family: inherit; color: var(--text);
 }
 .import-row-actions .import-xfer-seg { width: 100%; justify-content: stretch; }
-.import-row-actions .import-xfer-seg .seg-btn { flex: 1; text-align: center; font-size: 11px; padding: 6px 6px; }
+.import-row-actions .import-xfer-seg .seg-btn { flex: 1; text-align: center; font-size: 11px; padding: 6px 4px; }
+.import-row-actions .import-xfer-seg--4 .seg-btn { font-size: 10px; padding: 6px 3px; }
 .import-other-tag {
   align-self: flex-start; font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 999px;
   background: rgba(91, 140, 255, 0.15); color: var(--accent);

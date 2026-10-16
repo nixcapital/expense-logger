@@ -32,6 +32,16 @@ function entry(id, amount, note, dayTs, extra) {
   }, extra || {});
 }
 
+console.log('forecast-test: small purchases not recurring');
+var coffees = [];
+for (var ci = 0; ci < 8; ci++) {
+  coffees.push(entry('c' + ci, 5.5 + (ci % 3), 'Starbucks', ts(2026, 8, 5) + ci * 7 * MS_DAY, { categoryId: 'dining' }));
+}
+var coffeeSched = FC.detectRecurringSchedules(coffees, {
+  checkingId: CHECKING, sinceMs: 0, nowMs: ts(2026, 9, 16), kind: 'outflow', transferPairs: []
+});
+assert.strictEqual(coffeeSched.length, 0, 'small debits stay in daily spend only');
+
 console.log('forecast-test: two-post monthly rent (low confidence)');
 var rentTwo = [
   entry('rt1', 1650, 'Maple Court Apts', ts(2026, 8, 1), {}),
@@ -43,6 +53,22 @@ var rentTwoSched = FC.detectRecurringSchedules(rentTwo, {
 });
 assert.ok(rentTwoSched.length >= 1, 'two rent posts detected');
 assert.strictEqual(rentTwoSched[0].confidence, 'low');
+
+console.log('forecast-test: chart-window lowest');
+var simWin = FC.simulateBalanceTimeline({
+  nowMs: nowOct,
+  startingBalance: 2000,
+  entries: rentTwo,
+  checkingId: CHECKING,
+  transferPairs: [],
+  recurringItems: [],
+  chartDays: 60,
+  maxLookaheadDays: 365,
+  cushion: 600,
+  dailySpend: 0
+});
+assert.ok(simWin.lowestInWindow);
+assert.ok(simWin.lowestInWindow.ts <= FC.addDays(nowOct, 60));
 
 console.log('forecast-test: monthly dom paycheck');
 const paychecks = [

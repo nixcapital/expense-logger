@@ -5062,7 +5062,7 @@
             status: 'import', reason: 'Deposit / paycheck', note: note, amount: credit, ts: ts,
             categoryId: depCat,
             isTransfer: false, isDeposit: true, include: true, layout: 'bank',
-            initialIsTransfer: false, userSetCategory: false, userSetTransfer: false,
+            initialIsTransfer: false, initialIsDeposit: true, userSetCategory: false, userSetTransfer: false,
             typeVal: typeVal, bankText: descRaw
           });
           continue;
@@ -5218,28 +5218,40 @@
   }
 
   function importRowXferMode(row) {
+    if (row.isDeposit && !row.isTransfer) return 'income';
     if (!row.isTransfer) return 'expense';
     if (row.transferKind === 'other') return 'other';
     return 'paired';
   }
 
   function setImportRowXferMode(row, mode) {
-    if (mode === 'expense') {
+    if (mode === 'income') {
       row.isTransfer = false;
       row.transferKind = null;
+      row.isDeposit = true;
+      row.status = 'import';
+      var inc = incomeCategoryIdForDeposit(row.note) || INCOME_CATEGORY_ID;
+      row.categoryId = inc;
+    } else if (mode === 'expense') {
+      row.isTransfer = false;
+      row.transferKind = null;
+      row.isDeposit = false;
       row.status = 'import';
     } else if (mode === 'other') {
       row.isTransfer = true;
       row.transferKind = 'other';
+      row.isDeposit = false;
       row.status = 'transfer';
     } else {
       row.isTransfer = true;
+      row.isDeposit = false;
       row.transferKind = importRowTransferKind(row.bankText || row.note, row.layout, true);
       row.status = 'transfer';
     }
     row.include = true;
     row.userSetTransfer = row.isTransfer !== row.initialIsTransfer
-      || (row.transferKind || null) !== (row.initialTransferKind || null);
+      || (row.transferKind || null) !== (row.initialTransferKind || null)
+      || !!row.isDeposit !== !!row.initialIsDeposit;
   }
 
   function renderImportReview() {
@@ -5273,12 +5285,16 @@
       listHtml += '<div class="import-row-note">' + (r.note || '(no description)') + '</div>';
       listHtml += '<div class="import-row-actions">';
       listHtml += '<select class="import-cat-select" data-idx="' + i + '">' + catOpts + '</select>';
-      var xferMode = importRowXferMode(r);
       if (r.autoOtherAccount) listHtml += '<span class="import-other-tag">Auto</span>';
-      listHtml += '<div class="seg-control import-xfer-seg" role="group" aria-label="Row type" data-idx="' + i + '">';
-      listHtml += '<button type="button" class="seg-btn' + (xferMode === 'expense' ? ' is-active' : '') + '" data-mode="expense">Expense</button>';
-      listHtml += '<button type="button" class="seg-btn' + (xferMode === 'paired' ? ' is-active' : '') + '" data-mode="paired">Transfer</button>';
-      listHtml += '<button type="button" class="seg-btn' + (xferMode === 'other' ? ' is-active' : '') + '" data-mode="other">Other acct</button>';
+      var rowMode = importRowXferMode(r);
+      if (!r.initialIsDeposit && (r.isDeposit || r.categoryId === INCOME_CATEGORY_ID || incomeCategoryIdForDeposit(r.note))) {
+        r.initialIsDeposit = !!r.isDeposit;
+      }
+      listHtml += '<div class="seg-control import-xfer-seg import-xfer-seg--4" role="group" aria-label="Row type" data-idx="' + i + '">';
+      listHtml += '<button type="button" class="seg-btn' + (rowMode === 'expense' ? ' is-active' : '') + '" data-mode="expense">Expense</button>';
+      listHtml += '<button type="button" class="seg-btn' + (rowMode === 'income' ? ' is-active' : '') + '" data-mode="income">Income</button>';
+      listHtml += '<button type="button" class="seg-btn' + (rowMode === 'paired' ? ' is-active' : '') + '" data-mode="paired">Transfer</button>';
+      listHtml += '<button type="button" class="seg-btn' + (rowMode === 'other' ? ' is-active' : '') + '" data-mode="other">Other</button>';
       listHtml += '</div>';
       listHtml += '</div></div>';
     });
@@ -6108,7 +6124,8 @@
     });
     if (sim.schedules) lastForecastSchedules = sim.schedules;
     if (sim.ok && $('forecastLowestSub')) {
-      $('forecastLowestSub').textContent = 'Lowest ' + fmtMoneyDisplay(sim.lowest.balance) + ' on ' + formatForecastShortDate(sim.lowest.ts);
+      var lowPt = sim.lowestInWindow || sim.lowest;
+      $('forecastLowestSub').textContent = 'Lowest ' + fmtMoneyDisplay(lowPt.balance) + ' on ' + formatForecastShortDate(lowPt.ts);
     }
     drawForecastChart(sim, getForecastCushion());
     renderForecastUpcoming(sim, getForecastCushion());
@@ -6149,14 +6166,17 @@
       if (p.balance < dataMin) dataMin = p.balance;
       if (p.balance > dataMax) dataMax = p.balance;
     });
-    dataMin = Math.min(dataMin, cushion);
-    dataMax = Math.max(dataMax, cushion);
+    var span = Math.max(80, dataMax - dataMin);
+    var cushionNear = cushion >= dataMin - span * 0.25 && cushion <= dataMax + span * 0.2;
+    if (cushionNear) {
+      dataMin = Math.min(dataMin, cushion);
+      dataMax = Math.max(dataMax, cushion);
+    }
     var step = forecastChartAxisStep(dataMax - dataMin);
     var minBal = Math.floor((dataMin - step * 0.35) / step) * step;
     var maxBal = Math.ceil((dataMax + step * 0.35) / step) * step;
-    if (cushion < minBal) minBal = Math.floor(cushion / step) * step;
-    if (cushion > maxBal) maxBal = Math.ceil(cushion / step) * step;
     if (maxBal - minBal < step * 2) maxBal = minBal + step * 2;
+    if (minBal < 0 && dataMin >= 0) minBal = 0;
     var t0 = points[0].ts;
     var t1 = points[points.length - 1].ts;
     function xAt(ts) { return padL + ((ts - t0) / (t1 - t0 || 1)) * w; }
@@ -6166,17 +6186,19 @@
     var histColor = cssVar('--text-secondary', '#6B7280');
     var warnColor = cssVar('--warn', '#F5A524');
     ctx.clearRect(0, 0, cssW, cssH);
-    var cy = yAt(cushion);
-    ctx.fillStyle = 'rgba(245, 165, 36, 0.14)';
-    ctx.fillRect(padL, cy, w, padT + h - cy);
-    ctx.strokeStyle = warnColor;
-    ctx.setLineDash([4, 4]);
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.moveTo(padL, cy);
-    ctx.lineTo(padL + w, cy);
-    ctx.stroke();
-    ctx.setLineDash([]);
+    var cy = cushionNear ? yAt(cushion) : null;
+    if (cushionNear && cy >= padT && cy <= padT + h) {
+      ctx.fillStyle = 'rgba(245, 165, 36, 0.14)';
+      ctx.fillRect(padL, cy, w, padT + h - cy);
+      ctx.strokeStyle = warnColor;
+      ctx.setLineDash([4, 4]);
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(padL, cy);
+      ctx.lineTo(padL + w, cy);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
     function strokeBalanceSegment(seg, color, width) {
       if (!seg.length) return;
       ctx.strokeStyle = color;
@@ -6223,17 +6245,22 @@
     });
     var yTicks = [];
     for (var tick = minBal; tick <= maxBal; tick += step) yTicks.push(tick);
-    if (yTicks.indexOf(cushion) === -1) yTicks.push(cushion);
+    if (cushionNear && yTicks.indexOf(cushion) === -1) yTicks.push(cushion);
     yTicks.sort(function (a, b) { return a - b; });
     ctx.font = '11px system-ui, sans-serif';
     ctx.textAlign = 'right';
     yTicks.forEach(function (bal) {
-      var isCushion = bal === cushion;
+      var isCushion = cushionNear && bal === cushion;
       ctx.fillStyle = isCushion ? warnColor : gridColor;
       ctx.font = isCushion ? '600 11px system-ui, sans-serif' : '11px system-ui, sans-serif';
-      var label = isCushion ? fmtForecastMoneyShort(cushion) : fmtForecastMoneyShort(bal);
-      ctx.fillText(label, padL + w + padR - 4, yAt(bal) + 4);
+      ctx.fillText(fmtForecastMoneyShort(bal), padL + w + padR - 4, yAt(bal) + 4);
     });
+    if (!cushionNear) {
+      ctx.textAlign = 'left';
+      ctx.fillStyle = warnColor;
+      ctx.font = '600 11px system-ui, sans-serif';
+      ctx.fillText('Cushion ' + fmtForecastMoneyShort(cushion), padL, padT + 10);
+    }
     ctx.textAlign = 'center';
     ctx.fillStyle = gridColor;
     var labels = [
@@ -6521,13 +6548,16 @@
     html += '</div>';
     var patOn = otherTransferPatternEnabled(entry);
     html += '<div class="other-transfer-toggle-card"><div><p>Treat future matches as transfers</p><span>Remembers &ldquo;' + escHtml(normalizeTransferPattern(bankText).slice(0, 28)) + '&rdquo;</span></div>';
-    html += '<label class="switch-row" style="padding:0"><input type="checkbox" class="ios-switch" id="otherTransferPatternToggle"' + (patOn ? ' checked' : '') + '></label></div>';
+    html += '<button type="button" class="toggle-switch' + (patOn ? ' is-on' : '') + '" id="otherTransferPatternToggle" role="switch" aria-checked="' + (patOn ? 'true' : 'false') + '" aria-label="Treat future matches as transfers"></button></div>';
     html += '<p class="other-transfer-foot"><span aria-hidden="true"><svg width="14" height="14" viewBox="0 0 14 14" fill="none"><circle cx="7" cy="7" r="5.5" stroke="currentColor"/><path d="M7 6.2v3.6M7 4.4h.01" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg></span><span>Moves your Checking balance and the forecast, but never counts as income or spending.</span></p>';
     body.innerHTML = html;
     var toggle = document.getElementById('otherTransferPatternToggle');
     if (toggle) {
-      toggle.addEventListener('change', function () {
-        setOtherTransferPattern(entry, toggle.checked);
+      toggle.addEventListener('click', function () {
+        var on = !toggle.classList.contains('is-on');
+        toggle.classList.toggle('is-on', on);
+        toggle.setAttribute('aria-checked', on ? 'true' : 'false');
+        setOtherTransferPattern(entry, on);
       });
     }
     var sheet = $('otherTransferSheet');
