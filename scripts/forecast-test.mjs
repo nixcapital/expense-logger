@@ -271,6 +271,24 @@ console.log('forecast-test: y-axis plan across chart windows');
   }
 });
 
+console.log('forecast-test: projected balance ignores future-dated entries');
+var nowProj = FC.startOfDay(FC.dateMs(2026, 9, 16));
+var futureXfer = entry('fut-xfer', 612.9, 'CHASE CREDIT CRD AUTOPAY', FC.dateMs(2026, 10, 10), {
+  accountId: CHECKING,
+  isTransfer: true,
+  isDeposit: false
+});
+var projEntries = billEntries.concat([futureXfer]);
+var projected = FC.projectedStartingBalance(
+  1234.56,
+  nowProj,
+  projEntries,
+  CHECKING,
+  [],
+  nowProj
+);
+assert.strictEqual(projected, 1234.56, 'future ledger rows must not reduce today balance');
+
 console.log('forecast-test: invalid / iOS-style date inputs');
 var badForecast = FC.runForecast({
   nowMs: Date.now(),
