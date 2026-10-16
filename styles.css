@@ -223,7 +223,63 @@ h2 .month-label {
 
 #total-display { font-size: 32px; font-weight: 800; letter-spacing: -1px; margin: 0 0 16px; font-variant-numeric: tabular-nums; }
 
-canvas#chart { width: 100%; height: auto; display: block; border-radius: 8px; }
+.chart-canvas { width: 100%; height: auto; display: block; border-radius: 8px; }
+.chart-subtitle { margin: -4px 0 12px; font-size: 13px; color: var(--text-dim); line-height: 1.4; }
+.chart-empty { padding: 16px 8px; }
+
+.trend-pill {
+  display: inline-block; font-weight: 700; font-variant-numeric: tabular-nums;
+  padding: 2px 8px; border-radius: 20px; font-size: 12px;
+}
+.trend-pill.up { background: color-mix(in srgb, var(--danger) 18%, transparent); color: var(--danger); }
+.trend-pill.down { background: color-mix(in srgb, var(--success) 18%, transparent); color: var(--success); }
+.trend-pill.flat { background: var(--card-2); color: var(--text-dim); }
+.trend-words { margin-left: 4px; }
+
+/* Donut chart */
+.donut-wrap {
+  position: relative; width: min(100%, 260px); margin: 0 auto 8px;
+  aspect-ratio: 1;
+}
+.chart-svg.donut-chart { width: 100%; height: 100%; display: block; }
+.donut-seg { cursor: pointer; transition: opacity 0.15s ease; }
+.donut-center {
+  position: absolute; inset: 0;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  pointer-events: none; text-align: center; padding: 0 28%;
+}
+.donut-center-label {
+  font-size: 12px; font-weight: 600; color: var(--text-dim);
+  line-height: 1.2; margin-bottom: 2px;
+}
+.donut-center-value {
+  font-size: 22px; font-weight: 800; letter-spacing: -0.5px;
+  font-variant-numeric: tabular-nums;
+}
+.donut-center-sub { font-size: 11px; color: var(--text-dim); margin-top: 2px; }
+
+/* Insights */
+.insights-list { display: flex; flex-direction: column; gap: 10px; }
+.insight-item {
+  display: flex; gap: 12px; align-items: flex-start;
+  padding: 12px; border-radius: 12px;
+  background: var(--card-2); border: 1px solid var(--border);
+}
+.insight-icon { font-size: 22px; line-height: 1; flex-shrink: 0; width: 28px; text-align: center; }
+.insight-title { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.4px; color: var(--text-dim); margin-bottom: 2px; }
+.insight-text { font-size: 14px; line-height: 1.35; color: var(--text); }
+.insight-empty { text-align: center; padding: 20px 12px; color: var(--text-dim); font-size: 14px; }
+.insight-empty .insight-icon { display: block; font-size: 32px; margin-bottom: 8px; }
+
+.chart-legend-row {
+  display: flex; flex-wrap: wrap; gap: 12px; margin-top: 10px;
+  font-size: 11px; color: var(--text-dim);
+}
+.mini-leg { display: inline-flex; align-items: center; gap: 6px; }
+.mini-leg .swatch { width: 14px; height: 8px; border-radius: 2px; display: inline-block; }
+.mini-leg .swatch.bar { background: var(--accent); opacity: 0.85; }
+.mini-leg .swatch.line { background: var(--text); height: 2px; }
+.mini-leg .swatch.green { background: var(--success); height: 0; border-top: 2px dashed var(--success); }
 
 /* Legend */
 .cat-legend { margin-top: 12px; font-size: 13px; }
@@ -232,9 +288,21 @@ canvas#chart { width: 100%; height: auto; display: block; border-radius: 8px; }
   padding: 8px 0; border-bottom: 1px solid var(--border);
 }
 .legend-row:last-child { border-bottom: none; }
-.legend-row .name { color: var(--text-dim); display: flex; align-items: center; gap: 8px; }
+.legend-row .name { color: var(--text-dim); display: flex; align-items: center; gap: 8px; text-align: left; }
 .legend-row .dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; flex-shrink: 0; }
 .legend-row .amt { font-variant-numeric: tabular-nums; font-weight: 600; }
+.legend-row .pct { opacity: 0.65; }
+button.legend-row.legend-btn {
+  width: 100%; background: none; border: none; font-family: inherit; font-size: 13px;
+  cursor: pointer; border-radius: 10px; margin: 0 -4px; padding: 10px 4px;
+  min-height: 44px; color: inherit;
+  transition: background 0.15s;
+}
+button.legend-row.legend-btn.active {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+button.legend-row.legend-btn:active { background: var(--card-2); }
+button.legend-row.legend-btn .name { color: var(--text); }
 
 /* Budget bars */
 .budget-row { margin-bottom: 14px; }

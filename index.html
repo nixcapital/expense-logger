@@ -12,7 +12,7 @@
 <link rel="manifest" href="manifest.json">
 <link rel="icon" href="icon-192.png">
 <link rel="apple-touch-icon" href="icon-192.png">
-<link rel="stylesheet" href="styles.css">
+<link rel="stylesheet" href="styles.css?v=1.1.0">
 <title>Expense Logger</title>
 </head>
 <body>
@@ -103,11 +103,36 @@
     </div>
   </div>
 
-  <div class="card">
+  <div class="card insights-card">
+    <h2>Insights</h2>
+    <div id="insightsList" class="insights-list" role="list"></div>
+  </div>
+
+  <div class="card chart-card">
     <h2>Spending <span class="month-label" id="summaryMonthLabel"></span></h2>
-    <p id="total-display"><span id="totalVal">$0.00</span></p>
-    <canvas id="chart" width="600" height="200"></canvas>
-    <div class="cat-legend" id="legend"></div>
+    <p id="total-display" aria-live="polite"><span id="totalVal">$0.00</span></p>
+    <div class="donut-wrap" id="donutWrap">
+      <svg id="donutChart" class="chart-svg donut-chart" viewBox="0 0 220 220" role="img" aria-label="Spending by category"></svg>
+      <div class="donut-center" id="donutCenter">
+        <span class="donut-center-label" id="donutCenterLabel">Total</span>
+        <span class="donut-center-value" id="donutCenterValue">$0.00</span>
+        <span class="donut-center-sub" id="donutCenterSub"></span>
+      </div>
+    </div>
+    <div class="cat-legend interactive-legend" id="legend"></div>
+  </div>
+
+  <div class="card">
+    <h2>Monthly trend</h2>
+    <p class="chart-subtitle" id="trendCompare"></p>
+    <canvas id="trendChart" class="chart-canvas" width="600" height="200" aria-label="Monthly spending trend"></canvas>
+  </div>
+
+  <div class="card">
+    <h2>Daily pace <span class="month-label" id="dailyMonthLabel"></span></h2>
+    <p class="chart-subtitle" id="dailySubtitle"></p>
+    <canvas id="dailyChart" class="chart-canvas" width="600" height="220" aria-label="Daily spending and budget pace"></canvas>
+    <div class="chart-legend-row" id="dailyLegend"></div>
   </div>
 
   <div class="card">
@@ -329,6 +354,6 @@
   </div>
 </div>
 
-<script src="app.js"></script>
+<script src="app.js?v=1.1.0"></script>
 </body>
 </html>
