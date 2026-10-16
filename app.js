@@ -52,8 +52,9 @@
   var IMPORT_ACCOUNT_PREFS_KEY = 'expenseLogger.importAccountPrefs.v1';
   var TRANSFER_PATTERNS_KEY = 'expenseLogger.transferPatterns.v1';
   var FORECAST_OVERRIDES_KEY = 'expenseLogger.forecastOverrides.v1';
+  var FORECAST_ONEOFFS_KEY = 'expenseLogger.forecastCountedOneOffs.v1';
 
-  var APP_VERSION = '1.6.4';
+  var APP_VERSION = '1.6.5';
   var BACKUP_FORMAT = 2;
   var BACKUP_FORMAT_LEGACY = 1;
   var DEFAULT_ACCOUNT_CHECKING = 'acct-checking';
@@ -204,12 +205,15 @@
   var importAccountPickId = null;
   var viewingTransferPairId = null;
   var transferPatterns = [];
-  var forecastChartDays = 60;
+  var forecastChartDays = 30;
   var lastForecastSim = null;
+  var lastForecastBreakdown = null;
+  var lastForecastHeadline = null;
   var forecastScreenOpen = false;
   var balanceSheetAccountId = null;
   var viewingOtherTransferEntryId = null;
   var forecastOverrides = {};
+  var forecastCountedOneOffs = {};
   var lastForecastSchedules = [];
   var editingForecastItemKey = null;
   var editingForecastItemMeta = null;
@@ -763,6 +767,23 @@
     try { localStorage.setItem(FORECAST_OVERRIDES_KEY, JSON.stringify(forecastOverrides)); } catch (e) {}
   }
 
+  function loadForecastCountedOneOffs() {
+    try {
+      var raw = localStorage.getItem(FORECAST_ONEOFFS_KEY);
+      if (!raw) return {};
+      var parsed = JSON.parse(raw);
+      return parsed && typeof parsed === 'object' ? parsed : {};
+    } catch (e) { return {}; }
+  }
+
+  function saveForecastCountedOneOffs() {
+    try { localStorage.setItem(FORECAST_ONEOFFS_KEY, JSON.stringify(forecastCountedOneOffs)); } catch (e) {}
+  }
+
+  function forecastCountedOneOffsList() {
+    return Object.keys(forecastCountedOneOffs).map(function (k) { return forecastCountedOneOffs[k]; });
+  }
+
   function normalizeTransferPattern(desc) {
     return FC ? FC.normalizeTransferPattern(desc) : String(desc || '').toLowerCase().trim();
   }
@@ -1189,6 +1210,7 @@
     storage[IMPORT_ACCOUNT_PREFS_KEY] = JSON.stringify(importAccountPrefs);
     storage[TRANSFER_PATTERNS_KEY] = JSON.stringify(transferPatterns);
     storage[FORECAST_OVERRIDES_KEY] = JSON.stringify(forecastOverrides);
+    storage[FORECAST_ONEOFFS_KEY] = JSON.stringify(forecastCountedOneOffs);
     var meta = loadMetaObj();
     if (meta && meta.forecastCushion != null) storage[META_KEY] = JSON.stringify(meta);
     storage[UI_KEY] = JSON.stringify({
@@ -1344,6 +1366,7 @@
     importAccountPrefs = loadImportAccountPrefs();
     transferPatterns = loadTransferPatterns();
     forecastOverrides = loadForecastOverrides();
+    forecastCountedOneOffs = loadForecastCountedOneOffs();
     ensureDefaultAccounts();
     ensureIncomeCategory();
     entries = loadEntries();
@@ -6164,6 +6187,7 @@
       recurringItems: recurringItems,
       transferPairs: transferPairs,
       overrides: forecastOverrides,
+      countedOneOffs: forecastCountedOneOffsList(),
       chartDays: chartDays || forecastChartDays,
       maxLookaheadDays: 365
     };
@@ -6177,6 +6201,20 @@
     return new Date(ts).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
   }
 
+  function formatForecastWeekdayDate(ts) {
+    return new Date(ts).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+  }
+
+  function fmtForecastWhole(n, opts) {
+    opts = opts || {};
+    var v = Math.round(n);
+    if (v === 0 && opts.zeroText) return opts.zeroText;
+    var abs = Math.abs(v).toLocaleString(undefined, { maximumFractionDigits: 0 });
+    if (opts.alwaysPlus && v > 0) return '+\u0024' + abs;
+    if (v < 0) return '\u2212$' + abs;
+    return '$' + abs;
+  }
+
   function fmtForecastMoneyShort(n) {
     var v = Math.round(n);
     var sign = v < 0 ? '-' : '';
@@ -6185,6 +6223,25 @@
       return sign + '$' + (abs / 1000).toFixed(abs % 1000 === 0 ? 0 : 1).replace(/\.0$/, '') + 'k';
     }
     return sign + '$' + abs;
+  }
+
+  function fmtForecastDailyRate(n) {
+    var v = Math.round(n * 100) / 100;
+    if (!isFinite(v) || v <= 0) return '$0.00';
+    return '$' + v.toFixed(2);
+  }
+
+  function fmtForecastAmountCents(n, opts) {
+    opts = opts || {};
+    var rounded = Math.round(n * 100) / 100;
+    var abs = Math.abs(rounded).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    if (opts.inflow) {
+      if (rounded <= 0) return '\u2212$' + abs;
+      return '+\u0024' + abs;
+    }
+    if (rounded < 0) return '\u2212$' + abs;
+    if (opts.alwaysPlus && rounded > 0) return '+\u0024' + abs;
+    return '$' + abs;
   }
 
   function renderHomeForecastCard() {
@@ -6248,6 +6305,365 @@
     try { window.scrollTo(0, 0); } catch (e) {}
   }
 
+  function forecastWindowRangeLabel(nowMs, days) {
+    var today = FC.startOfDay(nowMs);
+    var start = FC.addDays(today, 1);
+    var end = FC.addDays(today, days);
+    return 'Next ' + days + ' days \u00B7 ' + formatForecastShortDate(start) + ' \u2013 ' + formatForecastShortDate(end);
+  }
+
+  function forecastSignedMoney(n, opts) {
+    opts = opts || {};
+    var rounded = Math.round(n * 100) / 100;
+    if (opts.alwaysSign) {
+      if (rounded > 0) return '+' + fmtMoneyDisplay(rounded);
+      if (rounded < 0) return '-' + fmtMoneyDisplay(Math.abs(rounded));
+    }
+    if (rounded < 0) return '-' + fmtMoneyDisplay(Math.abs(rounded));
+    return fmtMoneyDisplay(rounded);
+  }
+
+  function billMerchantShortName(label) {
+    var n = String(label || '').toLowerCase();
+    if (/mortgage|home\s*mort|wf\s*home/.test(n)) return 'mortgage';
+    if (/verizon|wireless|phone|t-?mobile|att/.test(n)) return 'phone';
+    if (/tuition|univ|college/.test(n)) return 'tuition';
+    if (/student|nelnet/.test(n)) return 'student loan';
+    if (/toyota|car\s*loan|auto/.test(n)) return 'car loan';
+    if (/insurance|state\s*farm/.test(n)) return 'insurance';
+    if (/duke|energy|electric/.test(n)) return 'utilities';
+    var words = String(label || '').trim().split(/\s+/);
+    return (words[0] || 'bill').toLowerCase();
+  }
+
+  function billSchedulesForWindow(schedules, breakdown) {
+    if (breakdown && breakdown.details && breakdown.details.billItems) {
+      return breakdown.details.billItems;
+    }
+    return [];
+  }
+
+  function renderForecastFlowBarsHTML(breakdown) {
+    if (!breakdown) return '';
+    var scale = Math.max(breakdown.income, breakdown.totalOut, 1);
+    function widthPct(v) { return Math.max(0, Math.min(100, (v / scale) * 100)); }
+    var html = '';
+    html += '<div class="forecast-bar-row"><span class="forecast-bar-label">IN</span>';
+    if (breakdown.income <= 0) {
+      html += '<div class="forecast-bar-track is-in-empty"></div><span class="forecast-bar-amt">' + fmtForecastWhole(0, { alwaysPlus: true }) + '</span></div>';
+    } else {
+      html += '<div class="forecast-bar-track"><span class="forecast-bar-seg forecast-bar-seg--income" style="width:' + widthPct(breakdown.income) + '%"></span></div>';
+      html += '<span class="forecast-bar-amt">' + fmtForecastWhole(breakdown.income, { alwaysPlus: true }) + '</span></div>';
+    }
+    html += '<div class="forecast-bar-row"><span class="forecast-bar-label">OUT</span><div class="forecast-bar-track">';
+    if (breakdown.bills > 0) html += '<span class="forecast-bar-seg forecast-bar-seg--bills" style="width:' + widthPct(breakdown.bills) + '%"></span>';
+    if (breakdown.cardPayments > 0) html += '<span class="forecast-bar-seg forecast-bar-seg--card" style="width:' + widthPct(breakdown.cardPayments) + '%"></span>';
+    if (breakdown.everyday > 0) html += '<span class="forecast-bar-seg forecast-bar-seg--daily" style="width:' + widthPct(breakdown.everyday) + '%"></span>';
+    html += '</div><span class="forecast-bar-amt">' + fmtForecastWhole(-breakdown.totalOut) + '</span></div>';
+    return html;
+  }
+
+  function forecastBreakdownRowIcon(kind) {
+    if (kind === 'income') return { bg: '#34C77B22', color: '#34C77B', svg: '<svg width="18" height="18" viewBox="0 0 18 18" fill="none"><path d="M3 6h12v8H3z" stroke="currentColor"/><path d="M6 10h6" stroke="currentColor"/></svg>' };
+    if (kind === 'bills') return { bg: '#cc5de822', color: '#cc5de8', svg: '<svg width="18" height="18" viewBox="0 0 18 18" fill="none"><path d="M5 3h8v12H5z" stroke="currentColor"/><path d="M7 7h4M7 10h4" stroke="currentColor"/></svg>' };
+    if (kind === 'card') return { bg: '#748FFC22', color: '#748FFC', svg: '<svg width="18" height="18" viewBox="0 0 18 18" fill="none"><rect x="2" y="4" width="14" height="10" rx="1.5" stroke="currentColor"/><path d="M2 7h14" stroke="currentColor"/></svg>' };
+    return { bg: '#ff922b22', color: '#ff922b', svg: '<svg width="18" height="18" viewBox="0 0 18 18" fill="none"><path d="M4 4h10l-1 9H5L4 4z" stroke="currentColor"/><path d="M7 4V3h4v1" stroke="currentColor"/></svg>' };
+  }
+
+  function renderForecastBreakdownCard(breakdown, result, schedules) {
+    var list = $('forecastBreakdownList');
+    if (!list || !breakdown) return;
+    var det = breakdown.details || {};
+    var billItems = det.billItems || [];
+    var billNames = billItems.map(function (b) { return billMerchantShortName(b.label); });
+    var billSub = billItems.length
+      ? (billItems.length + ' bill' + (billItems.length > 1 ? 's' : '') + ' \u00B7 ' + billNames.join(', '))
+      : 'No bills in this view';
+    var cardCount = det.cardCount || 0;
+    var cardSub;
+    if (cardCount > 0) {
+      var otherLabel = (det.cardItems || []).some(function (c) { return !/chase/i.test(c.label); }) ? 'Other bank' : (det.cardItems[0] && det.cardItems[0].label);
+      cardSub = cardCount + ' payment' + (cardCount > 1 ? 's' : '') + ' \u00B7 ' + otherLabel;
+    } else if (breakdown.nextCardAfterWindow) {
+      cardSub = 'None in this view \u00B7 next ' + formatForecastWeekdayDate(breakdown.nextCardAfterWindow.ts);
+    } else {
+      cardSub = 'None in this view';
+    }
+    var incomeCount = det.incomeCount || 0;
+    var incomeSub = incomeCount > 0
+      ? (incomeCount + ' paycheck' + (incomeCount > 1 ? 's' : '') + ' \u00B7 ' + fmtForecastWhole(det.incomeEach) + ' each')
+      : 'No deposits found';
+    var daily = breakdown.dailyRate || 0;
+    var spendSub = daily > 0 ? '~' + fmtForecastDailyRate(daily) + '/day \u00B7 groceries, gas, dining' : 'No everyday pace detected';
+    var rows = [
+      { kind: 'income', title: 'Income', sub: incomeSub, amt: breakdown.income, inflow: true, zeroNeutral: true },
+      { kind: 'bills', title: 'Bills', sub: billSub, amt: -breakdown.bills },
+      { kind: 'card', title: 'Card payments', sub: cardSub, amt: -breakdown.cardPayments, allowZero: true },
+      { kind: 'daily', title: 'Everyday spending', sub: spendSub, amt: -breakdown.everyday }
+    ];
+    var html = '';
+    rows.forEach(function (row) {
+      var ic = forecastBreakdownRowIcon(row.kind);
+      var amtClass = 'forecast-bd-amt';
+      var amtTxt;
+      if (row.inflow && breakdown.income <= 0) {
+        amtClass += ' is-zero';
+        amtTxt = fmtForecastWhole(0, { alwaysPlus: true });
+      } else if (row.allowZero && row.amt === 0) {
+        amtClass += ' is-zero';
+        amtTxt = fmtForecastWhole(0);
+      } else if (row.inflow) {
+        amtClass += ' is-in';
+        amtTxt = fmtForecastWhole(row.amt, { alwaysPlus: true });
+      } else {
+        amtTxt = fmtForecastWhole(row.amt);
+      }
+      html += '<button type="button" class="forecast-bd-row" data-forecast-detail="' + row.kind + '">';
+      html += '<div class="forecast-bd-icon" style="background:' + ic.bg + ';color:' + ic.color + '">' + ic.svg + '</div>';
+      html += '<div class="forecast-bd-text"><p class="forecast-bd-title">' + escHtml(row.title) + '</p><p class="forecast-bd-sub">' + escHtml(row.sub) + '</p></div>';
+      html += '<div class="' + amtClass + '">' + amtTxt + '</div>';
+      html += '<span class="forecast-bd-chev" aria-hidden="true">\u203A</span></button>';
+    });
+    list.innerHTML = html;
+    var flowToday = $('forecastFlowToday');
+    if (flowToday && breakdown.endBalance != null) {
+      flowToday.innerHTML = 'Today <strong>' + fmtForecastWhole(breakdown.startBalance) + '</strong> \u2192 '
+        + formatForecastShortDate(breakdown.endMs) + ' <strong>' + fmtForecastWhole(breakdown.endBalance) + '</strong>';
+    }
+    var flowNet = $('forecastFlowNet');
+    if (flowNet) {
+      flowNet.textContent = fmtForecastWhole(breakdown.net, { alwaysPlus: true });
+      flowNet.classList.toggle('is-neg', breakdown.net < 0);
+      flowNet.classList.toggle('is-pos', breakdown.net > 0);
+    }
+    var bars = $('forecastFlowBars');
+    if (bars) bars.innerHTML = renderForecastFlowBarsHTML(breakdown);
+    var total = $('forecastBreakdownTotal');
+    if (total) {
+      total.innerHTML = '<span>Net change \u00B7 ' + breakdown.windowDays + ' days</span><span class="' + (breakdown.net < 0 ? 'forecast-flow-net is-neg' : 'forecast-flow-net is-pos') + '">' + fmtForecastWhole(breakdown.net, { alwaysPlus: true }) + '</span>';
+    }
+    var notice = $('forecastNoIncomeNotice');
+    if (notice) notice.hidden = !result.noIncomeDetected || breakdown.income > 0;
+    Array.prototype.forEach.call(list.querySelectorAll('[data-forecast-detail]'), function (btn) {
+      btn.addEventListener('click', function () {
+        openForecastDetailSheet(btn.getAttribute('data-forecast-detail'));
+      });
+    });
+  }
+
+  function renderForecastHeadlineUI(headline, result) {
+    var prefixEl = $('forecastHeadlinePrefix');
+    var lastsEl = $('forecastLastsDate');
+    var daysEl = $('forecastDaysAway');
+    var causeEl = $('forecastCauseLine');
+    var posEl = $('forecastPositiveLine');
+    if (causeEl) causeEl.hidden = true;
+    if (posEl) posEl.hidden = true;
+    if (headline.positiveAllWindow) {
+      if (prefixEl) prefixEl.textContent = 'Money lasts';
+      if (lastsEl) {
+        lastsEl.textContent = 'All ' + headline.windowDays + ' days';
+        lastsEl.classList.add('is-all-days');
+        lastsEl.classList.remove('is-long');
+      }
+      if (daysEl) daysEl.textContent = 'through ' + formatForecastWeekdayDate(headline.windowEndMs);
+      if (posEl && headline.lowestInWindow) {
+        posEl.hidden = false;
+        posEl.innerHTML = '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M2 11l4-4 3 3 5-6" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>'
+          + ' Stays positive \u00B7 lowest <strong>' + fmtForecastWhole(headline.lowestInWindow.balance) + '</strong> on '
+          + formatForecastWeekdayDate(headline.lowestInWindow.ts);
+      }
+    } else if (result.neverRunsOut) {
+      if (prefixEl) prefixEl.textContent = 'Money lasts until';
+      if (lastsEl) {
+        lastsEl.textContent = 'Stays positive for a year+';
+        lastsEl.classList.add('is-long');
+        lastsEl.classList.remove('is-all-days');
+      }
+      if (daysEl) daysEl.textContent = '';
+    } else {
+      if (prefixEl) prefixEl.textContent = 'Money lasts until';
+      if (lastsEl) {
+        lastsEl.classList.remove('is-long', 'is-all-days');
+        lastsEl.textContent = formatForecastWeekdayDate(result.lastsUntil);
+      }
+      if (daysEl) daysEl.textContent = result.daysAway + ' days away';
+      if (causeEl && headline.cause) {
+        causeEl.hidden = false;
+        var c = headline.cause;
+        causeEl.innerHTML = '<span aria-hidden="true"><svg width="16" height="16" viewBox="0 0 16 16" fill="none"><rect x="2" y="4" width="12" height="8" rx="1.2" stroke="currentColor"/><path d="M2 6.5h12" stroke="currentColor"/></svg></span>'
+          + ' Then <strong>' + escHtml(c.label) + ' ' + fmtForecastWhole(-c.amount) + '</strong> <span class="forecast-cause-when">on '
+          + escHtml(formatForecastWeekdayDate(c.ts)) + '</span>';
+      }
+    }
+  }
+
+  function forecastChartSubtitle(sim, cushion) {
+    if (!sim || !sim.ok) return '';
+    var belowZero = null;
+    (sim.upcoming || []).some(function (u) {
+      if (u.balanceAfter < 0) { belowZero = u; return true; }
+      return false;
+    });
+    if (belowZero) {
+      return 'Drops below $0 on ' + formatForecastShortDate(belowZero.ts);
+    }
+    var lowPt = sim.lowestInWindow || sim.lowest;
+    if (lowPt) {
+      return 'Lowest ' + fmtMoneyDisplay(lowPt.balance) + ' on ' + formatForecastShortDate(lowPt.ts);
+    }
+    return '';
+  }
+
+  function forecastMovedFromHTML(nominalTs, actualTs) {
+    if (!nominalTs || nominalTs === actualTs) return '';
+    return '<span class="forecast-up-moved-chip">\uD83D\uDCC5 Moved from ' + escHtml(formatForecastWeekdayDate(nominalTs)) + '</span>';
+  }
+
+  function closeForecastDetailSheet() {
+    var sheet = $('forecastDetailSheet');
+    if (sheet) sheet.classList.remove('show');
+  }
+
+  function scheduleCadenceLabel(s) {
+    if (!s) return '';
+    if (s.scheduleType === 'monthly_dom') return 'Monthly \u00B7 ' + (s.dayOfMonth || 1) + ordinalSuffix(s.dayOfMonth || 1);
+    if (s.scheduleType === 'biweekly') return 'Every 2 weeks';
+    if (s.scheduleType === 'semimonthly') return 'Twice a month';
+    return s.inferenceDetail || 'Recurring';
+  }
+
+  function ordinalSuffix(n) {
+    if (n >= 11 && n <= 13) return 'th';
+    var r = n % 10;
+    if (r === 1) return 'st';
+    if (r === 2) return 'nd';
+    if (r === 3) return 'rd';
+    return 'th';
+  }
+
+  function openForecastDetailSheet(kind) {
+    if (!FC || !lastForecastSim) return;
+    var body = $('forecastDetailBody');
+    var sheet = $('forecastDetailSheet');
+    if (!body || !sheet) return;
+    var schedules = lastForecastSim.schedules || [];
+    var html = '';
+    if (kind === 'bills') {
+      var nowMs = FC.startOfDay(Date.now());
+      var checkingId = getCheckingAccount().id;
+      var detB = lastForecastBreakdown && lastForecastBreakdown.details;
+      var billCount = detB ? detB.billCount : 0;
+      var billSchedules = (schedules || []).filter(function (s) {
+        return s && s.kind === 'outflow' && !s.fromOneOff;
+      });
+      if (detB && detB.billItems && detB.billItems.length) {
+        var keys = {};
+        detB.billItems.forEach(function (b) { keys[b.itemKey] = true; });
+        billSchedules = billSchedules.filter(function (s) { return keys[s.itemKey]; });
+      }
+      var possible = FC.detectPossibleOneOffs(entries, schedules, checkingId, nowMs, { minAmount: 200 });
+      var total = lastForecastBreakdown ? lastForecastBreakdown.bills : 0;
+      html += '<div class="forecast-detail-hero">';
+      html += '<div class="forecast-bd-icon" style="background:#cc5de822;color:#cc5de8">' + forecastBreakdownRowIcon('bills').svg + '</div>';
+      html += '<div class="forecast-detail-hero-text"><h3>Bills</h3><p>Next ' + forecastChartDays + ' days \u00B7 ' + billCount + ' bills</p></div>';
+      html += '<div class="forecast-detail-hero-amt">' + fmtForecastWhole(-total) + '</div></div>';
+      html += '<div class="forecast-detail-section-label"><span>Recurring \u00B7 Counted</span><span>Typical amount</span></div>';
+      billSchedules.forEach(function (s) {
+        var next = FC.nextProjectedOccurrence(s, nowMs, entries, checkingId, FC.addDays(nowMs, 450));
+        html += '<div class="forecast-detail-row"><div><p class="forecast-detail-row-name">' + escHtml(s.label) + '</p><p class="forecast-detail-row-sub">\u21BB ' + escHtml(scheduleCadenceLabel(s)) + '</p></div>';
+        html += '<div><div class="forecast-detail-row-amt">' + fmtForecastWhole(s.amount) + '</div>';
+        html += '<div class="forecast-detail-row-date">Next ' + (next ? formatForecastWeekdayDate(next.ts) : '\u2014') + '</div></div></div>';
+      });
+      if (possible.length) {
+        html += '<div class="forecast-detail-section-label"><span>Possible one-offs</span><span>Not counted</span></div>';
+        possible.forEach(function (p) {
+          var on = !!forecastCountedOneOffs[p.oneOffKey];
+          html += '<div class="forecast-detail-row"><div><p class="forecast-detail-row-name">' + fmtMoneyDisplay(p.amount) + ' \u00B7 ' + escHtml(p.label) + '</p>';
+          html += '<p class="forecast-detail-row-sub">Seen once \u00B7 ' + formatForecastShortDate(p.ts) + '</p></div>';
+          html += '<div class="forecast-oneoff-toggle"><span>Count this?</span>';
+          html += '<button type="button" class="toggle-switch' + (on ? ' is-on' : '') + '" data-oneoff-key="' + escHtml(p.oneOffKey) + '" role="switch" aria-checked="' + (on ? 'true' : 'false') + '"></button></div></div>';
+        });
+      }
+      html += '<p class="forecast-detail-note"><span aria-hidden="true">\u24D8</span><span>One-offs are charges seen only once. Turn on &ldquo;Count this?&rdquo; to repeat one in the forecast.</span></p>';
+      html += '<p class="forecast-detail-note"><span aria-hidden="true">\u21BB</span><span>Recurring bills are found from your Checking history. Amounts use your typical recent charge.</span></p>';
+    } else if (kind === 'income') {
+      var inc = schedules.filter(function (s) { return s && s.kind === 'inflow'; });
+      html += '<div class="forecast-detail-hero"><div class="forecast-bd-icon" style="background:#34C77B22;color:#34C77B">' + forecastBreakdownRowIcon('income').svg + '</div>';
+      html += '<div><h3>Income</h3><p>Deposits counted in this view</p></div>';
+      html += '<div class="forecast-detail-hero-amt">' + forecastSignedMoney(lastForecastBreakdown ? lastForecastBreakdown.income : 0, { alwaysSign: true }) + '</div></div>';
+      if (!inc.length) html += '<p class="hint">No recurring deposits detected. Import checking history with paychecks.</p>';
+      inc.forEach(function (s) {
+        var next = FC.expandSchedule(s, FC.startOfDay(Date.now()), FC.addDays(Date.now(), 120))[0];
+        html += '<div class="forecast-detail-row"><div><p class="forecast-detail-row-name">' + escHtml(s.label) + '</p><p class="forecast-detail-row-sub">' + escHtml(scheduleCadenceLabel(s)) + '</p></div>';
+        html += '<div><div class="forecast-detail-row-amt">' + forecastSignedMoney(s.amount, { alwaysSign: true }) + '</div>';
+        html += '<div class="forecast-detail-row-date">Next ' + (next ? formatForecastShortDate(next.ts) : '\u2014') + '</div></div></div>';
+      });
+    } else if (kind === 'card') {
+      var cards = schedules.filter(function (s) { return s && s.kind === 'card-payment'; });
+      html += '<div class="forecast-detail-hero"><div class="forecast-bd-icon" style="background:#748FFC22;color:#748FFC">' + forecastBreakdownRowIcon('card').svg + '</div>';
+      html += '<div><h3>Card payments</h3><p>Autopay from Checking</p></div>';
+      html += '<div class="forecast-detail-hero-amt">' + forecastSignedMoney(lastForecastBreakdown ? -lastForecastBreakdown.cardPayments : 0) + '</div></div>';
+      var nowCard = FC.startOfDay(Date.now());
+      cards.forEach(function (s) {
+        var next = FC.nextProjectedOccurrence(s, nowCard, entries, getCheckingAccount().id, FC.addDays(nowCard, 450));
+        html += '<div class="forecast-detail-row"><div><p class="forecast-detail-row-name">' + escHtml(s.label) + '</p><p class="forecast-detail-row-sub">' + escHtml(scheduleCadenceLabel(s)) + '</p></div>';
+        html += '<div><div class="forecast-detail-row-amt">' + fmtForecastWhole(s.amount) + '</div>';
+        html += '<div class="forecast-detail-row-date">Next ' + (next ? formatForecastWeekdayDate(next.ts) : '\u2014') + '</div></div></div>';
+      });
+    } else {
+      var rate = lastForecastSim.dailySpend || 0;
+      html += '<div class="forecast-detail-hero"><div class="forecast-bd-icon" style="background:#ff922b22;color:#ff922b">' + forecastBreakdownRowIcon('daily').svg + '</div>';
+      html += '<div><h3>Everyday spending</h3><p>Typical daily pace from recent Checking</p></div>';
+      html += '<div class="forecast-detail-hero-amt">' + forecastSignedMoney(lastForecastBreakdown ? -lastForecastBreakdown.everyday : 0) + '</div></div>';
+      html += '<div class="forecast-detail-row"><div><p class="forecast-detail-row-name">Daily rate</p><p class="forecast-detail-row-sub">Groceries, dining, gas, and other small debits</p></div>';
+      html += '<div class="forecast-detail-row-amt">~' + fmtForecastDailyRate(rate) + '/day</div></div>';
+      html += '<p class="forecast-detail-note"><span aria-hidden="true">\u24D8</span><span>Spread across each day in the forecast window (not shown as separate dated rows).</span></p>';
+    }
+    body.innerHTML = html;
+    Array.prototype.forEach.call(body.querySelectorAll('[data-oneoff-key]'), function (tog) {
+      tog.addEventListener('click', function () {
+        var key = tog.getAttribute('data-oneoff-key');
+        var item = possibleOneOffByKey(key);
+        if (!item) return;
+        if (forecastCountedOneOffs[key]) delete forecastCountedOneOffs[key];
+        else {
+          forecastCountedOneOffs[key] = {
+            oneOffKey: key,
+            label: item.label,
+            amount: item.amount,
+            dayOfMonth: item.dayOfMonth,
+            lastTs: item.ts
+          };
+        }
+        saveForecastCountedOneOffs();
+        renderHomeForecastCard();
+        renderForecastScreen();
+        openForecastDetailSheet('bills');
+      });
+    });
+    sheet.classList.add('show');
+  }
+
+  function possibleOneOffByKey(key) {
+    if (!FC || !lastForecastSchedules) return null;
+    var list = FC.detectPossibleOneOffs(entries, lastForecastSchedules, getCheckingAccount().id, Date.now(), { minAmount: 200 });
+    for (var i = 0; i < list.length; i++) {
+      if (list[i].oneOffKey === key) return list[i];
+    }
+    return null;
+  }
+
+  function bindForecastNavScroll() {
+    var fs = $('tab-forecast');
+    var nav = $('forecastNav');
+    if (!fs || !nav || fs.__forecastScrollBound) return;
+    fs.__forecastScrollBound = true;
+    fs.addEventListener('scroll', function () {
+      nav.classList.toggle('is-scrolled', fs.scrollTop > 8);
+    }, { passive: true });
+  }
+
   function renderForecastScreen() {
     try {
     var checking = getCheckingAccount();
@@ -6285,30 +6701,17 @@
     var result = FC.runForecast(payload);
     if (!result.ok) return;
 
+    bindForecastNavScroll();
     var chip = $('forecastAccountChip');
     if (chip) chip.innerHTML = accountMiniIconHTML(checking) + '<span>' + escHtml(accountShortName(checking)) + '</span>';
 
-    var lastsEl = $('forecastLastsDate');
-    var daysEl = $('forecastDaysAway');
-    if (result.neverRunsOut) {
-      if (lastsEl) {
-        lastsEl.textContent = 'Stays positive for a year+';
-        lastsEl.classList.add('is-long');
-      }
-      if (daysEl) daysEl.textContent = '';
-    } else {
-      if (lastsEl) lastsEl.classList.remove('is-long');
-      if (lastsEl) lastsEl.textContent = formatForecastDate(result.lastsUntil);
-      if (daysEl) daysEl.textContent = result.daysAway + ' days away';
-    }
     if ($('forecastBalanceVal')) $('forecastBalanceVal').textContent = fmtMoneyDisplay(result.startingBalance);
     if ($('forecastBalanceLabel')) {
       $('forecastBalanceLabel').textContent = checking.name + ' balance \u00B7 as of today';
     }
     if ($('forecastUpcomingWindow')) $('forecastUpcomingWindow').textContent = 'Next ' + forecastChartDays + ' days';
     if ($('forecastUpcomingLabel')) $('forecastUpcomingLabel').textContent = 'Upcoming \u00B7 ' + accountShortName(checking);
-    var noIncEl = $('forecastNoIncome');
-    if (noIncEl) noIncEl.hidden = !result.noIncomeDetected;
+    if ($('forecastBalanceRange')) $('forecastBalanceRange').textContent = forecastWindowRangeLabel(payload.nowMs, forecastChartDays);
 
     var sim = FC.simulateBalanceTimeline({
       nowMs: payload.nowMs,
@@ -6319,20 +6722,51 @@
       transferPairs: transferPairs,
       recurringItems: recurringItems,
       overrides: forecastOverrides,
+      countedOneOffs: forecastCountedOneOffsList(),
       chartDays: forecastChartDays,
       maxLookaheadDays: 365,
       cushion: getForecastCushion()
     });
     if (sim.schedules) lastForecastSchedules = sim.schedules;
     lastForecastSim = sim;
-    if (sim.ok && $('forecastLowestSub')) {
-      var lowPt = sim.lowestInWindow || sim.lowest;
-      if (lowPt) {
-        $('forecastLowestSub').textContent = 'Lowest ' + fmtMoneyDisplay(lowPt.balance) + ' on ' + formatForecastShortDate(lowPt.ts);
-      }
+    var cushion = getForecastCushion();
+    var headline = FC.buildForecastHeadline({
+      nowMs: payload.nowMs,
+      windowDays: forecastChartDays,
+      cushion: cushion,
+      sim: sim
+    });
+    lastForecastHeadline = headline;
+    renderForecastHeadlineUI(headline, result);
+    var breakdown = FC.computeWindowBreakdown({
+      nowMs: payload.nowMs,
+      windowDays: forecastChartDays,
+      startingBalance: result.startingBalance,
+      points: sim.points,
+      entries: entries,
+      checkingId: checking.id,
+      chaseId: DEFAULT_ACCOUNT_CHASE,
+      transferPairs: transferPairs,
+      recurringItems: recurringItems,
+      overrides: forecastOverrides,
+      countedOneOffs: forecastCountedOneOffsList(),
+      maxLookaheadDays: 365
+    });
+    lastForecastBreakdown = breakdown.ok ? breakdown : null;
+    if (breakdown.ok) renderForecastBreakdownCard(breakdown, result, sim.schedules);
+    if ($('forecastLowestSub')) $('forecastLowestSub').textContent = forecastChartSubtitle(sim, cushion);
+    var showMore = $('forecastShowMoreBtn');
+    if (showMore) {
+      if (forecastChartDays < 60) {
+        showMore.hidden = false;
+        showMore.textContent = '\uD83D\uDCC5 Show 60 days';
+      } else if (forecastChartDays < 90) {
+        showMore.hidden = false;
+        showMore.textContent = '\uD83D\uDCC5 Show 90 days';
+      } else showMore.hidden = true;
     }
-    drawForecastChart(sim, getForecastCushion());
-    renderForecastUpcoming(sim, getForecastCushion());
+    drawForecastChart(sim, cushion);
+    renderForecastUpcoming(sim, cushion);
     } catch (err) {
       logBootSectionError('forecast screen', err);
       var emptySt = $('forecastEmptyState');
@@ -6559,23 +6993,15 @@
     if (daily > 0) {
       var dailyTotal = Math.round(daily * chartDays * 100) / 100;
       html += '<div class="forecast-up-row forecast-up-row--summary">';
-      html += '<div class="forecast-up-icon" style="background:var(--raised);color:var(--text-dim)">';
-      html += '<svg width="18" height="18" viewBox="0 0 18 18" fill="none"><path d="M3 9h12M9 4v10" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg></div>';
+      html += '<div class="forecast-up-icon" style="background:#ff922b22;color:#ff922b">';
+      html += '<svg width="18" height="18" viewBox="0 0 18 18" fill="none"><path d="M4 4h10l-1 9H5L4 4z" stroke="currentColor"/><path d="M7 4V3h4v1" stroke="currentColor"/></svg></div>';
       html += '<div><p class="forecast-up-title">Everyday spending</p>';
-      html += '<p class="forecast-up-sub">~' + fmtMoneyDisplay(daily) + '/day \u00B7 -' + fmtMoneyDisplay(dailyTotal) + ' over this view</p></div>';
-      html += '<div class="forecast-up-amt-col"><div class="forecast-up-amt">-' + fmtMoneyDisplay(dailyTotal) + '</div></div></div>';
+      html += '<p class="forecast-up-sub">~' + fmtForecastDailyRate(daily) + '/day \u00B7 groceries, gas, dining</p></div>';
+      html += '<div class="forecast-up-amt-col"><div class="forecast-up-amt">' + fmtForecastAmountCents(-dailyTotal) + '</div>';
+      html += '<div class="forecast-up-run">over ' + chartDays + ' days</div></div></div>';
     }
-    var items = sim.upcoming.slice().sort(function (a, b) {
-      if (b.amount !== a.amount) return b.amount - a.amount;
-      return a.ts - b.ts;
-    });
-    var majorAmt = 250;
-    var majorKeys = {};
-    items.forEach(function (u) {
-      if (u.amount >= majorAmt && u.itemKey) majorKeys[u.itemKey] = true;
-    });
-    items = items.sort(function (a, b) { return a.ts - b.ts; }).slice(0, 14);
-    if (!items.length) {
+    var items = sim.upcoming.slice().sort(function (a, b) { return a.ts - b.ts; });
+    if (!items.length && daily <= 0) {
       list.innerHTML = '<div class="empty" style="padding:16px">No scheduled items in this window.</div>';
       return;
     }
@@ -6584,7 +7010,7 @@
       var iconBg = '#cc5de822';
       var iconColor = '#cc5de8';
       var iconSvg = iconBadge(cat || { icon: 'receipt', color: '#cc5de8' }, 'sm');
-      var sub = formatForecastShortDate(u.ts);
+      var sub = formatForecastWeekdayDate(u.ts);
       if (u.kind === 'inflow') {
         iconBg = '#34C77B22'; iconColor = '#34C77B';
         iconSvg = '<svg width="18" height="18" viewBox="0 0 18 18" fill="none"><path d="M4 9h10M10 5l4 4-4 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>';
@@ -6592,54 +7018,60 @@
       } else if (u.kind === 'card-payment') {
         iconBg = '#748FFC22'; iconColor = '#748FFC';
         iconSvg = '<svg width="18" height="18" viewBox="0 0 18 18" fill="none"><rect x="2" y="4" width="14" height="10" rx="1.5" stroke="currentColor"/><path d="M2 7h14" stroke="currentColor"/></svg>';
-        sub += ' \u00B7 Card bill';
+        sub += ' \u00B7 Card payment';
       } else if (u.kind === 'transfer-other') {
         iconBg = 'var(--raised)'; iconColor = 'var(--text-secondary)';
         iconSvg = '<svg width="18" height="18" viewBox="0 0 18 18" fill="none"><path d="M3 7h8M9 5l3 2-3 2M15 11H7M9 13l-3-2 3-2" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>';
         sub += ' \u00B7 Transfer';
-      } else if (cat) {
-        sub += ' \u00B7 ' + cat.name;
-        if (/duke|energy/i.test(u.label)) sub += ' \u00B7 Autopay';
-        if (/rent|apts/i.test(u.label)) sub += ' \u00B7 Rent';
+      } else {
+        sub += ' \u00B7 Bills';
       }
       var amtClass = 'forecast-up-amt';
       var amtTxt = '';
       if (u.kind === 'inflow') {
         amtClass += ' is-in';
-        amtTxt = '+' + fmtMoneyDisplay(u.amount);
+        amtTxt = fmtForecastAmountCents(u.amount, { inflow: true });
       } else if (u.kind === 'transfer-other') {
         amtClass += ' is-xfer';
-        amtTxt = fmtMoneyDisplay(u.amount);
+        amtTxt = fmtForecastAmountCents(u.amount);
       } else {
-        amtTxt = '-' + fmtMoneyDisplay(u.amount);
+        amtTxt = fmtForecastAmountCents(-u.amount);
       }
       var rowClass = 'forecast-up-row';
-      if ((u.amount >= majorAmt || majorKeys[u.itemKey]) && u.itemKey && u.itemKey !== 'daily-spend') {
-        rowClass += ' forecast-up-row--major';
-      }
+      if (u.amount >= 500) rowClass += ' forecast-up-row--major';
       var tap = '';
       if (u.itemKey && u.itemKey !== 'daily-spend') {
         tap = ' data-forecast-item="' + escHtml(u.itemKey) + '" data-forecast-ts="' + u.ts + '"';
       }
       html += '<button type="button" class="' + rowClass + '"' + tap + '>';
       html += '<div class="forecast-up-icon" style="background:' + iconBg + ';color:' + iconColor + '">' + iconSvg + '</div>';
-      html += '<div><p class="forecast-up-title">' + escHtml(u.label) + '</p><p class="forecast-up-sub">' + escHtml(sub) + '</p></div>';
+      html += '<div><p class="forecast-up-title">' + escHtml(u.label) + '</p><p class="forecast-up-sub">' + sub + '</p>';
+      if (u.nominalTs && u.nominalTs !== u.ts) html += forecastMovedFromHTML(u.nominalTs, u.ts);
+      html += '</div>';
       html += '<div class="forecast-up-amt-col"><div class="' + amtClass + '">' + amtTxt + '</div>';
-      html += '<div class="forecast-up-run">\u2192 ' + fmtForecastMoneyShort(u.balanceAfter) + '</div>';
-      if (u.balanceAfter < cushion) {
+      html += '<div class="forecast-up-run">\u2192 ' + fmtForecastWhole(u.balanceAfter) + '</div>';
+      if (u.balanceAfter < 0) {
+        html += '<div class="forecast-cushion-chip is-critical"><svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M6 2.2v4M6 8.2h.01" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/><path d="M2.2 9.2h7.6L10.2 6 6 2.2 1.8 6l.4 3.2z" stroke="currentColor" stroke-width="1"/></svg>';
+        html += 'Below $0 \u00B7 ' + fmtForecastWhole(u.balanceAfter) + '</div>';
+      } else if (u.balanceAfter < cushion) {
         html += '<div class="forecast-cushion-chip"><svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M6 2.2v4M6 8.2h.01" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/><path d="M2.2 9.2h7.6L10.2 6 6 2.2 1.8 6l.4 3.2z" stroke="currentColor" stroke-width="1"/></svg>';
-        html += 'Below ' + fmtForecastMoneyShort(cushion) + ' \u00B7 ' + fmtForecastMoneyShort(u.balanceAfter) + '</div>';
+        html += 'Below ' + fmtForecastWhole(cushion) + ' \u00B7 ' + fmtForecastWhole(u.balanceAfter) + '</div>';
       }
       html += '</div></button>';
     });
     var peek = sim.peekPastWindow;
     if (peek) {
+      html += '<div class="forecast-up-divider"><span>Just past this view</span><span>Day ' + (chartDays + 1) + '</span></div>';
       html += '<div class="forecast-up-row forecast-up-row--past">';
-      html += '<div class="forecast-up-icon" style="background:var(--raised);color:var(--text-secondary)">';
-      html += '<svg width="18" height="18" viewBox="0 0 18 18" fill="none"><path d="M4 9h10M11 5l3 4-3 4" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg></div>';
+      html += '<div class="forecast-up-icon" style="background:#748FFC22;color:#748FFC">';
+      html += '<svg width="18" height="18" viewBox="0 0 18 18" fill="none"><rect x="2" y="4" width="14" height="10" rx="1.5" stroke="currentColor"/><path d="M2 7h14" stroke="currentColor"/></svg></div>';
       html += '<div><p class="forecast-up-title">' + escHtml(peek.label) + '</p>';
-      html += '<p class="forecast-up-sub is-muted">' + escHtml(formatForecastShortDate(peek.ts)) + ' \u00B7 just past this view</p></div>';
-      html += '<div class="forecast-up-amt-col"><div class="forecast-up-amt">-' + fmtMoneyDisplay(peek.amount) + '</div></div></div>';
+      html += '<p class="forecast-up-sub">' + formatForecastWeekdayDate(peek.ts) + ' \u00B7 Card payment</p>';
+      if (peek.nominalTs && peek.nominalTs !== peek.ts) html += forecastMovedFromHTML(peek.nominalTs, peek.ts);
+      html += '</div>';
+      html += '<div class="forecast-up-amt-col"><div class="forecast-up-amt">' + fmtForecastAmountCents(-peek.amount) + '</div>';
+      var peekBal = peek.balanceAfter != null ? peek.balanceAfter : null;
+      html += '<div class="forecast-cushion-chip is-critical">Below $0 \u00B7 ' + (peekBal != null ? fmtForecastWhole(peekBal) : '\u2014') + '</div></div></div>';
     }
     list.innerHTML = html;
     Array.prototype.forEach.call(list.querySelectorAll('[data-forecast-item]'), function (btn) {
@@ -6942,6 +7374,27 @@
   if ($homeForecastCard) $homeForecastCard.addEventListener('click', openForecastScreen);
   var $forecastBackBtn = $('forecastBackBtn');
   if ($forecastBackBtn) $forecastBackBtn.addEventListener('click', closeForecastScreen);
+  var $forecastImportLink = $('forecastImportLink');
+  if ($forecastImportLink) $forecastImportLink.addEventListener('click', function () {
+    var inp = $('importFileInput');
+    if (inp) inp.click();
+  });
+  var $forecastShowMoreBtn = $('forecastShowMoreBtn');
+  if ($forecastShowMoreBtn) $forecastShowMoreBtn.addEventListener('click', function () {
+    forecastChartDays = forecastChartDays < 60 ? 60 : 90;
+    Array.prototype.forEach.call(document.querySelectorAll('.forecast-range-btn'), function (b) {
+      var d = parseInt(b.dataset.forecastDays, 10);
+      b.setAttribute('aria-pressed', d === forecastChartDays ? 'true' : 'false');
+    });
+    if (forecastScreenOpen) renderForecastScreen();
+  });
+  var $forecastDetailDoneBtn = $('forecastDetailDoneBtn');
+  if ($forecastDetailDoneBtn) $forecastDetailDoneBtn.addEventListener('click', closeForecastDetailSheet);
+  var $forecastDetailCloseBtn = $('forecastDetailCloseBtn');
+  if ($forecastDetailCloseBtn) $forecastDetailCloseBtn.addEventListener('click', closeForecastDetailSheet);
+  if ($('forecastDetailSheet')) $('forecastDetailSheet').addEventListener('click', function (ev) {
+    if (ev.target === $('forecastDetailSheet')) closeForecastDetailSheet();
+  });
   var $forecastUpdateBtn = $('forecastUpdateBtn');
   if ($forecastUpdateBtn) $forecastUpdateBtn.addEventListener('click', function () {
     var c = getCheckingAccount();
@@ -7431,6 +7884,7 @@
       importAccountPrefs = loadImportAccountPrefs();
       transferPatterns = loadTransferPatterns();
       forecastOverrides = loadForecastOverrides();
+      forecastCountedOneOffs = loadForecastCountedOneOffs();
       ensureDefaultAccounts();
       ensureIncomeCategory();
       if ($countCardPayments) $countCardPayments.checked = importSettings.countCardPayments;
@@ -7600,6 +8054,13 @@
       var p = buildForecastPayload(opts && opts.chartDays);
       if (!p) return { ok: false };
       return FC.runForecast(p);
+    },
+    openForecastScreen: openForecastScreen,
+    renderForecastScreen: renderForecastScreen,
+    getForecastCountedOneOffs: function () { return forecastCountedOneOffs; },
+    setForecastCountedOneOffs: function (map) {
+      forecastCountedOneOffs = map || {};
+      saveForecastCountedOneOffs();
     },
     getTransferPatterns: function () { return transferPatterns; },
     setTransferPatterns: function (p) { transferPatterns = p; saveTransferPatterns(); }

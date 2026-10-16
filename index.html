@@ -13,8 +13,8 @@
 <link rel="manifest" href="manifest.json">
 <link rel="icon" href="icon-192.png">
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
-<link rel="stylesheet" href="styles.css?v=1.6.4">
-<link rel="stylesheet" href="icon-animations.css?v=1.6.4">
+<link rel="stylesheet" href="styles.css?v=1.6.5">
+<link rel="stylesheet" href="icon-animations.css?v=1.6.5">
 <title>Expense Logger</title>
 </head>
 <body>
@@ -189,12 +189,14 @@
 
 <!-- FORECAST (overlay; Home tab stays active) -->
 <section id="tab-forecast" class="screen forecast-screen" hidden>
-  <div class="forecast-nav">
-    <button type="button" class="link-btn forecast-back-btn" id="forecastBackBtn">&lt; Home</button>
-    <h1 class="forecast-nav-title">Forecast</h1>
-    <button type="button" class="forecast-info-btn" id="forecastInfoBtn" aria-label="Forecast info">
-      <svg width="22" height="22" viewBox="0 0 22 22" fill="none" aria-hidden="true"><circle cx="11" cy="11" r="9" stroke="currentColor" stroke-width="1.5"/><path d="M11 10v6M11 7h.01" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"/></svg>
-    </button>
+  <div class="forecast-nav" id="forecastNav">
+    <div class="forecast-nav-row">
+      <button type="button" class="link-btn forecast-back-btn" id="forecastBackBtn">&lt; Home</button>
+      <h1 class="forecast-nav-title">Forecast</h1>
+      <button type="button" class="forecast-info-btn" id="forecastInfoBtn" aria-label="Forecast info">
+        <svg width="22" height="22" viewBox="0 0 22 22" fill="none" aria-hidden="true"><circle cx="11" cy="11" r="9" stroke="currentColor" stroke-width="1.5"/><path d="M11 10v6M11 7h.01" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"/></svg>
+      </button>
+    </div>
   </div>
 
   <div class="forecast-empty card" id="forecastEmptyState" hidden>
@@ -210,12 +212,15 @@
         <span class="forecast-account-chip" id="forecastAccountChip"></span>
       </div>
       <div class="forecast-headline-row">
-        <div>
-          <p class="forecast-headline-prefix">Money lasts until</p>
-          <p class="forecast-headline-date" id="forecastLastsDate">—</p>
-          <p class="forecast-no-income" id="forecastNoIncome" hidden>No income found. Import deposits for an accurate forecast.</p>
+        <div class="forecast-headline-main">
+          <p class="forecast-headline-prefix" id="forecastHeadlinePrefix">Money lasts until</p>
+          <div class="forecast-headline-date-row">
+            <p class="forecast-headline-date" id="forecastLastsDate">—</p>
+            <p class="forecast-days-away" id="forecastDaysAway"></p>
+          </div>
+          <p class="forecast-cause-line" id="forecastCauseLine" hidden></p>
+          <p class="forecast-positive-line" id="forecastPositiveLine" hidden></p>
         </div>
-        <p class="forecast-days-away" id="forecastDaysAway"></p>
       </div>
       <div class="forecast-balance-row">
         <div>
@@ -229,16 +234,37 @@
       </div>
     </div>
 
+    <div class="card forecast-balance-card" id="forecastBalanceCard">
+      <div class="forecast-balance-card-header">
+        <div>
+          <h2 class="forecast-balance-card-title">What&rsquo;s moving your balance</h2>
+          <p class="forecast-balance-card-range" id="forecastBalanceRange">Next 30 days</p>
+        </div>
+        <div class="forecast-range-toggle" role="group" aria-label="Forecast range">
+          <button type="button" class="forecast-range-btn" data-forecast-days="30" aria-pressed="true">30d</button>
+          <button type="button" class="forecast-range-btn" data-forecast-days="60" aria-pressed="false">60d</button>
+          <button type="button" class="forecast-range-btn" data-forecast-days="90" aria-pressed="false">90d</button>
+        </div>
+      </div>
+      <div class="forecast-flow-summary">
+        <p class="forecast-flow-today" id="forecastFlowToday">Today —</p>
+        <p class="forecast-flow-net" id="forecastFlowNet">—</p>
+      </div>
+      <div class="forecast-flow-bars" id="forecastFlowBars" aria-hidden="true"></div>
+      <div class="forecast-breakdown-list" id="forecastBreakdownList"></div>
+      <div class="forecast-breakdown-total" id="forecastBreakdownTotal"></div>
+      <div class="forecast-no-income-notice" id="forecastNoIncomeNotice" hidden>
+        <span class="forecast-no-income-icon" aria-hidden="true"><svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M8 3.2v5.2M8 11.2h.01" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/><path d="M2.8 11.6h10.4L12.8 8 8 3.6 3.2 8l-.4 3.6z" stroke="currentColor" stroke-width="1"/></svg></span>
+        <span><strong>No income found</strong> · Import deposits for an accurate forecast</span>
+        <button type="button" class="link-btn forecast-import-link" id="forecastImportLink">Import</button>
+      </div>
+    </div>
+
     <div class="card forecast-chart-card" id="forecastChartCard">
       <div class="forecast-chart-header">
         <div>
           <h2 class="forecast-chart-title">Projected balance</h2>
           <p class="forecast-chart-sub" id="forecastLowestSub"></p>
-        </div>
-        <div class="forecast-range-toggle" role="group" aria-label="Chart range">
-          <button type="button" class="forecast-range-btn" data-forecast-days="30" aria-pressed="false">30d</button>
-          <button type="button" class="forecast-range-btn" data-forecast-days="60" aria-pressed="true">60d</button>
-          <button type="button" class="forecast-range-btn" data-forecast-days="90" aria-pressed="false">90d</button>
         </div>
       </div>
       <div class="forecast-chart-wrap" id="forecastChartWrap">
@@ -256,6 +282,11 @@
         <span class="forecast-upcoming-window" id="forecastUpcomingWindow">Next 60 days</span>
       </div>
       <div class="forecast-upcoming-list card" id="forecastUpcomingList"></div>
+      <button type="button" class="forecast-show-more-btn" id="forecastShowMoreBtn" hidden>Show 60 days</button>
+      <p class="forecast-upcoming-foot" id="forecastUpcomingFoot">
+        <span class="forecast-note-icon" aria-hidden="true"><svg width="14" height="14" viewBox="0 0 14 14" fill="none"><circle cx="7" cy="7" r="5.5" stroke="currentColor"/><path d="M7 6.2v3.6M7 4.4h.01" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg></span>
+        <span>Running balance includes everyday spending at the daily rate. Bills and card payments due on a weekend or holiday move to the next business day.</span>
+      </p>
     </div>
   </div>
 </section>
@@ -725,6 +756,16 @@
   </div>
 </div>
 
+<!-- Modal: forecast category detail -->
+<div class="modal-overlay sheet modal-front" id="forecastDetailSheet">
+  <div class="modal sheet-modal forecast-detail-modal">
+    <div class="sheet-grabber" aria-hidden="true"></div>
+    <button type="button" class="forecast-detail-close" id="forecastDetailCloseBtn" aria-label="Close">&times;</button>
+    <div id="forecastDetailBody" class="forecast-detail-body"></div>
+    <button type="button" class="save-btn" id="forecastDetailDoneBtn">Done</button>
+  </div>
+</div>
+
 <!-- Modal: edit forecast upcoming item -->
 <div class="modal-overlay sheet modal-front" id="forecastItemEditModal">
   <div class="modal sheet-modal">
@@ -816,8 +857,8 @@
 </div>
 
 <script src="icon-system.js?v=1.6.4"></script>
-<script src="forecast.js?v=1.6.4"></script>
-<script src="app.js?v=1.6.4"></script>
+<script src="forecast.js?v=1.6.5"></script>
+<script src="app.js?v=1.6.5"></script>
 <script>
 (function () {
   'use strict';

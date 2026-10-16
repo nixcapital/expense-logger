@@ -5,6 +5,7 @@
 import { createRequire } from 'module';
 import assert from 'assert';
 import { buildForecastFixture164, FIXTURE_NOW } from './forecast-fixture-164.mjs';
+import { buildForecastFixture165Income } from './forecast-fixture-165-income.mjs';
 
 const require = createRequire(import.meta.url);
 const FC = require('../forecast.js');
@@ -373,7 +374,9 @@ assert.ok(schedAmt(/NELNET/i).amount === 220);
 assert.ok(schedAmt(/STATE FARM/i).scheduleType === 'semiannual');
 assert.ok(schedAmt(/VERIZON/i).amount === 166);
 assert.ok(!schedAmt(/PLANET FITNESS/i), 'stale gym not projected');
-assert.ok(schedAmt(/DISCOVER/i), 'discover e-payment projected');
+const discover = schedAmt(/DISCOVER/i);
+assert.ok(discover, 'discover e-payment projected');
+assert.strictEqual(discover.kind, 'card-payment', 'discover is card payment not bill');
 
 const chase = schedAmt(/Chase card/i);
 assert.ok(chase && chase.amount >= 3500);
@@ -415,5 +418,141 @@ const paySim = FC.simulateBalanceTimeline({
   cushion: 600
 });
 assert.ok(paySim.lowestInWindow.balance >= 0, 'with paychecks 60d window stays positive');
+
+console.log('forecast-test: window breakdown totals');
+const brFx = FC.computeWindowBreakdown({
+  nowMs: fx.nowMs,
+  windowDays: 30,
+  startingBalance: fxRun.startingBalance,
+  points: fxSim.points,
+  entries: fx.entries,
+  checkingId: fx.checkingId,
+  chaseId: fx.chaseId,
+  transferPairs: fx.transferPairs,
+  maxLookaheadDays: 365
+});
+assert.ok(brFx.ok, 'breakdown ok');
+assert.strictEqual(brFx.totalOut, brFx.bills + brFx.cardPayments + brFx.everyday);
+assert.strictEqual(brFx.net, Math.round((brFx.income - brFx.totalOut) * 100) / 100);
+
+console.log('forecast-test: cause line after lasts-until');
+const headlineFx = FC.buildForecastHeadline({
+  nowMs: fx.nowMs,
+  windowDays: 30,
+  cushion: 600,
+  sim: fxSim
+});
+if (fxSim.lastsUntil && !fxSim.neverRunsOut) {
+  assert.ok(headlineFx.cause, 'cause event when runout in window');
+  assert.ok(headlineFx.cause.ts > fxSim.lastsUntil);
+}
+
+console.log('forecast-test: moved-from on weekend-shifted card payment');
+assert.ok(chase);
+const chaseOcc = FC.expandSchedule(chase, fx.nowMs, FC.addDays(fx.nowMs, 45), fx.entries, fx.checkingId);
+const shiftedOcc = chaseOcc.find(function (ev) { return ev.nominalTs && ev.nominalTs !== ev.ts; });
+assert.ok(shiftedOcc, 'at least one shifted occurrence exposes nominalTs');
+
+console.log('forecast-test: counted one-off repeats in schedule');
+const oneOff = FC.detectPossibleOneOffs(fx.entries, fxRun.schedules, fx.checkingId, fx.nowMs, { minAmount: 200 });
+assert.ok(oneOff.length >= 1, 'home depot one-off candidate');
+const withOneOff = FC.buildScheduledEvents({
+  nowMs: fx.nowMs,
+  checkingId: fx.checkingId,
+  entries: fx.entries,
+  transferPairs: fx.transferPairs,
+  maxLookaheadDays: 60,
+  countedOneOffs: [{
+    oneOffKey: oneOff[0].oneOffKey,
+    label: oneOff[0].label,
+    amount: oneOff[0].amount,
+    dayOfMonth: oneOff[0].dayOfMonth,
+    lastTs: oneOff[0].ts
+  }]
+});
+assert.ok(withOneOff.events.some(function (e) {
+  return e.itemKey && e.itemKey.indexOf('oneoff|') === 0;
+}), 'counted one-off generates forecast events');
+
+console.log('forecast-test: bills row matches window (count, names, total)');
+const brWin = FC.computeWindowBreakdown({
+  nowMs: fx.nowMs,
+  windowDays: 30,
+  startingBalance: fxRun.startingBalance,
+  points: fxSim.points,
+  entries: fx.entries,
+  checkingId: fx.checkingId,
+  chaseId: fx.chaseId,
+  transferPairs: fx.transferPairs,
+  maxLookaheadDays: 365
+});
+const billSum = (brWin.details.billItems || []).reduce(function (s, b) { return s + b.amount; }, 0);
+assert.strictEqual(Math.round(billSum * 100) / 100, brWin.bills);
+assert.strictEqual(brWin.details.billCount, brWin.details.billItems.length);
+assert.ok(!brWin.details.billItems.some(function (b) { return /DISCOVER/i.test(b.label); }), 'discover not in bills bucket');
+
+console.log('forecast-test: toyota next date in November after Oct 16');
+const toyota = schedAmt(/TOYOTA/i);
+const toyNext = FC.nextProjectedOccurrence(toyota, FIXTURE_NOW, fx.entries, fx.checkingId, FC.addDays(FIXTURE_NOW, 120));
+assert.ok(toyNext, 'toyota next occurrence');
+assert.strictEqual(new Date(toyNext.ts).getMonth(), 10, 'next toyota in November');
+
+console.log('forecast-test: semiannual insurance next date after Oct payment');
+const insSched = schedAmt(/STATE FARM/i);
+const insNext = FC.nextProjectedOccurrence(insSched, FIXTURE_NOW, fx.entries, fx.checkingId, FC.addDays(FIXTURE_NOW, 450));
+assert.ok(insNext, 'insurance next occurrence within horizon');
+assert.strictEqual(new Date(insNext.ts).getMonth(), 3, 'next insurance in April after Oct charge');
+
+console.log('forecast-test: income paycheck count matches 30d window');
+const fxPayBr = buildForecastFixture164({ withIncome: true, balance: 12000 });
+const payBr = FC.computeWindowBreakdown({
+  nowMs: fxPayBr.nowMs,
+  windowDays: 30,
+  startingBalance: 12000,
+  entries: fxPayBr.entries,
+  checkingId: fxPayBr.checkingId,
+  transferPairs: fxPayBr.transferPairs,
+  maxLookaheadDays: 365
+});
+assert.strictEqual(payBr.income, payBr.details.incomeCount * payBr.details.incomeEach);
+assert.strictEqual(payBr.details.incomeCount, 2, 'two projected paychecks in 30d window from Oct 16');
+
+console.log('forecast-test: positive all-window headline with peek past chart');
+const fxInc = buildForecastFixture164({ withIncome: true, balance: 25000 });
+const simInc = FC.simulateBalanceTimeline({
+  nowMs: fxInc.nowMs,
+  startingBalance: 25000,
+  entries: fxInc.entries,
+  checkingId: fxInc.checkingId,
+  chaseId: CHASE,
+  transferPairs: fxInc.transferPairs,
+  chartDays: 90,
+  maxLookaheadDays: 365,
+  cushion: 600
+});
+const headInc = FC.buildForecastHeadline({
+  nowMs: fxInc.nowMs,
+  windowDays: 90,
+  cushion: 600,
+  sim: simInc
+});
+assert.ok(simInc.peekPastWindow, 'large bill peek exists past 90d window');
+assert.ok(headInc.positiveAllWindow, 'stays positive through 90d even with peek row');
+
+console.log('forecast-test: screenshot income fixture projects payroll in 90d window');
+const fx165 = buildForecastFixture165Income();
+const br165 = FC.computeWindowBreakdown({
+  nowMs: fx165.nowMs,
+  windowDays: 90,
+  startingBalance: fx165.balance,
+  entries: fx165.entries,
+  checkingId: fx165.checkingId,
+  chaseId: CHASE,
+  transferPairs: fx165.transferPairs,
+  maxLookaheadDays: 365
+});
+assert.ok(br165.income > 0, '165 income fixture has in-window payroll');
+assert.ok(br165.details.incomeCount >= 1, 'at least one paycheck in 90d');
+assert.strictEqual(br165.income, br165.details.incomeCount * br165.details.incomeEach);
 
 console.log('PASS');
