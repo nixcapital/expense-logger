@@ -808,7 +808,11 @@
       hdr.className = 'activity-day-header';
       hdr.innerHTML = '<span>' + dayGroupTitle(k) + '</span><span class="day-total">' + fmtMoneyDisplay(dayTotal) + '</span>';
       group.appendChild(hdr);
-      dayEntries.forEach(function (e) { group.appendChild(createActivityRow(e)); });
+      dayEntries.sort(function (a, b) { return a.ts - b.ts; });
+      var rowsWrap = document.createElement('div');
+      rowsWrap.className = 'activity-day-rows';
+      dayEntries.forEach(function (e) { rowsWrap.appendChild(createActivityRow(e)); });
+      group.appendChild(rowsWrap);
       frag.appendChild(group);
     });
     $entriesEl.innerHTML = '';
@@ -1882,6 +1886,14 @@
     }, prefersReducedMotion() ? 50 : 350);
   }
 
+  function updateActivityStickyTop() {
+    var wrap = document.querySelector('#tab-history:not([hidden]) .screen-header-wrap')
+      || document.querySelector('.screen-header-wrap');
+    if (!wrap) return;
+    var h = wrap.getBoundingClientRect().height;
+    document.documentElement.style.setProperty('--activity-day-sticky-top', Math.max(44, Math.round(h)) + 'px');
+  }
+
   function initScreenTitleObservers() {
     Array.prototype.forEach.call(document.querySelectorAll('.screen-header-wrap'), function (wrap) {
       var sentinel = wrap.querySelector('.title-sentinel');
@@ -1889,9 +1901,12 @@
       new IntersectionObserver(function (entries) {
         entries.forEach(function (en) {
           wrap.classList.toggle('compact', !en.isIntersecting);
+          updateActivityStickyTop();
         });
       }, { root: null, threshold: 0, rootMargin: '-1px 0px 0px 0px' }).observe(sentinel);
     });
+    updateActivityStickyTop();
+    window.addEventListener('resize', updateActivityStickyTop);
   }
 
   function wireFilterChips() {
@@ -2990,12 +3005,12 @@
     var rows = pendingImport.rows;
     var counts = summarizeImportRows(rows);
     var html = '<div class="import-stats">';
-    html += '<div class="import-stat"><strong>' + counts.import + '</strong><span>to import</span></div>';
-    html += '<div class="import-stat"><strong>' + counts.duplicate + '</strong><span>duplicates</span></div>';
-    html += '<div class="import-stat"><strong>' + counts.transfer + '</strong><span>transfers</span></div>';
-    html += '<div class="import-stat"><strong>' + counts.credit + '</strong><span>credits skipped</span></div>';
-    html += '<div class="import-stat"><strong>' + counts.pending + '</strong><span>pending</span></div>';
-    html += '<div class="import-stat"><strong>' + counts.unreadable + '</strong><span>unreadable</span></div>';
+    html += '<div class="import-stat"><strong>' + counts.import + '</strong><span> to import</span></div>';
+    html += '<div class="import-stat"><strong>' + counts.duplicate + '</strong><span> duplicates</span></div>';
+    html += '<div class="import-stat"><strong>' + counts.transfer + '</strong><span> transfers</span></div>';
+    html += '<div class="import-stat"><strong>' + counts.credit + '</strong><span> credits skipped</span></div>';
+    html += '<div class="import-stat"><strong>' + counts.pending + '</strong><span> pending</span></div>';
+    html += '<div class="import-stat"><strong>' + counts.unreadable + '</strong><span> unreadable</span></div>';
     html += '</div>';
     html += '<p class="hint">Transfers are payments between your accounts (e.g. card autopay). Toggle per row or change category — we remember your choices.</p>';
     $importSummary.innerHTML = html;
@@ -3474,6 +3489,12 @@
   }
   function closeAddSheet() {
     if ($addSheet) $addSheet.classList.remove('show');
+    var noteWrap = $('addNoteField');
+    if (noteWrap) noteWrap.hidden = true;
+    if ($note) {
+      $note.classList.add('visually-hidden-input');
+      $note.setAttribute('tabindex', '-1');
+    }
   }
   function updateAddDatePreview() {
     if (!$addDatePreview || !$addDate) return;
@@ -3513,7 +3534,7 @@
     $('tab-history').hidden = tab !== 'history';
     $('tab-settings').hidden = tab !== 'settings';
     if (tab === 'summary') { renderTotals(); renderMonthlySummary(); renderRecent(); }
-    if (tab === 'history') renderEntries();
+    if (tab === 'history') { renderEntries(); updateActivityStickyTop(); }
     if (tab === 'report') renderReport();
     if (tab === 'settings') {
       renderCategoryList(); renderBudgetSettings(); renderRecurringList();
@@ -3529,7 +3550,17 @@
     closeAddSheet();
     switchTab(tabBeforeAdd || 'summary');
   });
-  if ($addNoteRow) $addNoteRow.addEventListener('click', function () { if ($note) $note.focus(); });
+  function openAddNoteField() {
+    if (!$note) return;
+    var wrap = $('addNoteField');
+    if (wrap) wrap.hidden = false;
+    $note.classList.remove('visually-hidden-input');
+    $note.removeAttribute('tabindex');
+    requestAnimationFrame(function () {
+      try { $note.focus({ preventScroll: true }); } catch (e) { $note.focus(); }
+    });
+  }
+  if ($addNoteRow) $addNoteRow.addEventListener('click', openAddNoteField);
   if ($addDateRow) $addDateRow.addEventListener('click', function () {
     if ($addDate && $addDate.showPicker) try { $addDate.showPicker(); } catch (e) { $addDate.focus(); }
     else if ($addDate) $addDate.focus();

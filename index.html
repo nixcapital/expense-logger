@@ -313,7 +313,9 @@
         <span class="row-value" id="addNotePreview">Add note</span>
         <span class="chevron">›</span>
       </button>
-      <input type="text" id="note" class="visually-hidden-input" placeholder="e.g. lunch with Sam" autocomplete="off" maxlength="80" tabindex="-1">
+      <div class="add-note-field" id="addNoteField" hidden>
+        <input type="text" id="note" class="visually-hidden-input" placeholder="e.g. lunch with Sam" autocomplete="off" maxlength="80" tabindex="-1" aria-label="Note">
+      </div>
       <button type="button" class="grouped-row" id="addDateRow">
         <span class="row-icon">📅</span>
         <span class="row-label">Date</span>
@@ -391,9 +393,9 @@
   <div class="modal sheet-modal modal-wide">
     <div class="sheet-grabber" aria-hidden="true"></div>
     <div class="sheet-header">
-      <button class="btn-secondary sheet-cancel" id="receiptModalClose" type="button">Cancel</button>
+      <button type="button" class="link-btn sheet-header-action" id="receiptModalClose">Cancel</button>
       <h3>Edit expense</h3>
-      <button class="link-btn" id="editSaveBtn" type="button">Save</button>
+      <button type="button" class="link-btn sheet-header-action sheet-header-trailing" id="editSaveBtn">Save</button>
     </div>
     <div class="field">
       <label for="editAmount">Amount</label>
