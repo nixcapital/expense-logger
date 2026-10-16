@@ -13,8 +13,8 @@
 <link rel="manifest" href="manifest.json">
 <link rel="icon" href="icon-192.png">
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
-<link rel="stylesheet" href="styles.css?v=1.3.2">
-<link rel="stylesheet" href="icon-animations.css?v=1.3.2">
+<link rel="stylesheet" href="styles.css?v=1.3.3">
+<link rel="stylesheet" href="icon-animations.css?v=1.3.3">
 <title>Expense Logger</title>
 </head>
 <body>
@@ -101,9 +101,11 @@
     <div class="donut-wrap" id="donutWrap">
       <svg id="donutChart" class="chart-svg donut-chart" viewBox="0 0 220 220" role="img" aria-label="Spending by category"></svg>
       <div class="donut-center" id="donutCenter">
-        <span class="donut-center-label" id="donutCenterLabel">Total</span>
-        <span class="donut-center-value" id="donutCenterValue">$0.00</span>
-        <span class="donut-center-sub" id="donutCenterSub"></span>
+        <div class="donut-center-stack" id="donutCenterStack">
+          <span class="donut-center-label" id="donutCenterLabel">Total</span>
+          <span class="donut-center-value" id="donutCenterValue">$0.00</span>
+          <span class="donut-center-sub" id="donutCenterSub"></span>
+        </div>
       </div>
     </div>
     <div class="cat-legend interactive-legend" id="legend"></div>
@@ -508,7 +510,7 @@
   </div>
 </div>
 
-<script src="icon-system.js?v=1.3.2"></script>
-<script src="app.js?v=1.3.2"></script>
+<script src="icon-system.js?v=1.3.3"></script>
+<script src="app.js?v=1.3.3"></script>
 </body>
 </html>

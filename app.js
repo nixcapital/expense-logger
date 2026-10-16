@@ -16,7 +16,7 @@
   var IMPORT_SETTINGS_KEY = 'expenseLogger.importSettings.v1';
   var META_KEY            = 'expenseLogger.meta.v1';
 
-  var APP_VERSION = '1.3.2';
+  var APP_VERSION = '1.3.3';
   var BACKUP_FORMAT = 1;
   var MS_DAY = 86400000;
   var BACKUP_NUDGE_AFTER_DAYS = 30;
@@ -1448,13 +1448,91 @@
     totalAnimId = requestAnimationFrame(frame);
   }
 
+  var DONUT_VIEW = 220;
+  var DONUT_R_OUTER = 92;
+  var DONUT_R_INNER = 58;
+  var donutMeasureCanvas = null;
+  var donutMeasureCtx = null;
+
+  function measureDonutTextWidth(text, fontSizePx, fontWeight) {
+    if (!donutMeasureCanvas) {
+      donutMeasureCanvas = document.createElement('canvas');
+      donutMeasureCtx = donutMeasureCanvas.getContext('2d');
+    }
+    if (!donutMeasureCtx) return String(text || '').length * fontSizePx * 0.56;
+    donutMeasureCtx.font = (fontWeight || 400) + ' ' + fontSizePx
+      + 'px -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif';
+    return donutMeasureCtx.measureText(String(text || '')).width;
+  }
+
+  function layoutDonutCenter() {
+    var wrap = $('donutWrap');
+    if (!wrap || !$donutCenterValue || !$donutCenterLabel || !$donutCenterSub) return;
+    var wrapW = wrap.getBoundingClientRect().width;
+    if (wrapW < 8) return;
+
+    var innerD = wrapW * ((DONUT_R_INNER * 2) / DONUT_VIEW);
+    var box = innerD * 0.76;
+    wrap.style.setProperty('--donut-inner-box', Math.round(box) + 'px');
+
+    var valueText = ($donutCenterValue.textContent || '').trim();
+    var minVal = 11;
+    var maxVal = 22;
+    var valueSize = maxVal;
+    var fitWidth = box * 0.96;
+
+    while (valueSize > minVal && measureDonutTextWidth(valueText, valueSize, 700) > fitWidth) {
+      valueSize -= 0.5;
+    }
+
+    var labelSize = Math.min(13, Math.max(10, Math.round(valueSize * 0.59)));
+    var subSize = Math.min(12, Math.max(9, Math.round(valueSize * 0.55)));
+    wrap.style.setProperty('--donut-center-value-size', valueSize.toFixed(2) + 'px');
+    wrap.style.setProperty('--donut-center-label-size', labelSize + 'px');
+    wrap.style.setProperty('--donut-center-sub-size', subSize + 'px');
+
+    var labelWrap = $donutCenterLabel.querySelector('.donut-center-label-wrap');
+    var nameSpan = $donutCenterLabel.querySelector('.donut-center-cat-name');
+    if (nameSpan) nameSpan.style.maxWidth = '';
+
+    if (nameSpan && labelWrap) {
+      var catName = (nameSpan.textContent || '').trim();
+      var minLabel = 9;
+      var ls = labelSize;
+      while (ls > minLabel && measureDonutTextWidth(catName, ls, 600) > fitWidth) {
+        ls -= 0.5;
+      }
+      labelSize = ls;
+      wrap.style.setProperty('--donut-center-label-size', ls.toFixed(2) + 'px');
+      var labelShrink = 0;
+      while (labelShrink < 10 && labelWrap.scrollWidth > box + 1 && ls > minLabel) {
+        ls = Math.max(minLabel, ls - 0.5);
+        wrap.style.setProperty('--donut-center-label-size', ls.toFixed(2) + 'px');
+        labelShrink += 1;
+      }
+    }
+
+    var stack = $('donutCenterStack');
+    var maxH = box * 1.02;
+    var vert = 0;
+    while (stack && stack.scrollHeight > maxH && valueSize > minVal && vert < 14) {
+      valueSize = Math.max(minVal, valueSize - 0.75);
+      labelSize = Math.min(13, Math.max(9, Math.round(valueSize * 0.59)));
+      subSize = Math.min(12, Math.max(9, Math.round(valueSize * 0.55)));
+      wrap.style.setProperty('--donut-center-value-size', valueSize.toFixed(2) + 'px');
+      wrap.style.setProperty('--donut-center-label-size', labelSize + 'px');
+      wrap.style.setProperty('--donut-center-sub-size', subSize + 'px');
+      vert += 1;
+    }
+  }
+
   function updateDonutCenter(catId, total, byCat) {
     if (!$donutCenterLabel || !$donutCenterValue || !$donutCenterSub) return;
     if (catId && byCat[catId] > 0) {
       var c = getCat(catId);
       var amt = byCat[catId];
       var pct = total > 0 ? Math.round((amt / total) * 100) : 0;
-      $donutCenterLabel.innerHTML = '<span class="donut-center-label-wrap">' + iconBadge(c, 'xs') + '<span>' + escHtml(c.name) + '</span></span>';
+      $donutCenterLabel.innerHTML = '<span class="donut-center-label-wrap donut-center-label-wrap--stacked">' + iconBadge(c, 'xs') + '<span class="donut-center-cat-name">' + escHtml(c.name) + '</span></span>';
       $donutCenterValue.textContent = fmtMoneyDisplay(amt);
       $donutCenterSub.textContent = pct + '% of spending';
     } else if (total === 0) {
@@ -1466,6 +1544,7 @@
       $donutCenterValue.textContent = fmtMoneyDisplay(total);
       $donutCenterSub.textContent = 'Tap a slice or category';
     }
+    layoutDonutCenter();
   }
 
   function polarToCartesian(cx, cy, r, angleDeg) {
@@ -1491,7 +1570,10 @@
 
   function drawDonutFrame(byCat, total, progress, highlightId) {
     if (!$donutChart) return;
-    var cx = 110, cy = 110, rOuter = 92, rInner = 58;
+    var cx = DONUT_VIEW / 2;
+    var cy = DONUT_VIEW / 2;
+    var rOuter = DONUT_R_OUTER;
+    var rInner = DONUT_R_INNER;
     var rows = categories
       .map(function (c) { return { c: c, amt: byCat[c.id] || 0 }; })
       .filter(function (r) { return r.amt > 0; })
@@ -1499,7 +1581,7 @@
 
     if (total === 0 || rows.length === 0) {
       if ($donutChart) {
-        $donutChart.innerHTML = '<circle cx="110" cy="110" r="92" fill="none" stroke="' + cssVar('--raised', '#1F222B') + '" stroke-width="34"/>';
+        $donutChart.innerHTML = '<circle cx="' + cx + '" cy="' + cy + '" r="' + rOuter + '" fill="none" stroke="' + cssVar('--raised', '#1F222B') + '" stroke-width="' + (rOuter - rInner) + '"/>';
       }
       return;
     }
@@ -2057,6 +2139,7 @@
         drawDonutFrame(data.byCat, data.total, 1, selectedLegendCatId);
         drawTrendFrame(trendMonths, 1, y, m);
         drawDailyFrame(dailyTotals, y, m, 1);
+        layoutDonutCenter();
       });
     }
   }
@@ -2424,7 +2507,10 @@
       }, { root: null, threshold: 0, rootMargin: '-1px 0px 0px 0px' }).observe(sentinel);
     });
     updateActivityStickyTop();
-    window.addEventListener('resize', updateActivityStickyTop);
+    window.addEventListener('resize', function () {
+      updateActivityStickyTop();
+      layoutDonutCenter();
+    });
   }
 
   function wireFilterChips() {
@@ -4130,7 +4216,10 @@
     $('tab-report').hidden = tab !== 'report';
     $('tab-history').hidden = tab !== 'history';
     $('tab-settings').hidden = tab !== 'settings';
-    if (tab === 'summary') { renderTotals(); renderMonthlySummary(); renderRecent(); renderBackupReminder(); }
+    if (tab === 'summary') {
+      renderTotals(); renderMonthlySummary(); renderRecent(); renderBackupReminder();
+      requestAnimationFrame(layoutDonutCenter);
+    }
     if (tab === 'history') { renderEntries(); updateActivityStickyTop(); }
     if (tab === 'report') renderReport();
     if (tab === 'settings') {
