@@ -343,6 +343,7 @@
     }
     addClusters(function (a) { return amountToleranceFrac(a, 0.10); });
     addClusters(function (a) { return amountToleranceFrac(a, 0.15); });
+    addClusters(function (a) { return amountToleranceFrac(a, 0.30); });
     var deduped = dedupeOverlappingClusters(raw);
     deduped.sort(function (a, b) {
       if (b.latestTs !== a.latestTs) return b.latestTs - a.latestTs;
@@ -1127,17 +1128,29 @@
     return out.sort(function (a, b) { return a.ts - b.ts; });
   }
 
+  function merchantKeysFromSchedules(scheduleList) {
+    var set = {};
+    (scheduleList || []).forEach(function (s) {
+      if (s && s.merchantKey) set[s.merchantKey] = true;
+    });
+    return set;
+  }
+
   function estimateDailySpend(entries, checkingId, transferPairs, nowMs, schedules) {
     var windowDays = 75;
     var since = addDays(nowMs, -windowDays);
     var paired = pairedEntryIds(transferPairs);
     var scheduleList = schedules || [];
+    var scheduledMerchants = merchantKeysFromSchedules(scheduleList);
     var eligible = [];
     (entries || []).forEach(function (e) {
       if (e.accountId !== checkingId) return;
       if (e.ts < since || e.ts > nowMs) return;
       if (isDepositEntry(e) || isOtherAccountTransfer(e)) return;
       if (e.isTransfer) return;
+      var mk = descriptionKey(e.note || '');
+      var p2p = isP2PNote(e.note);
+      if (!p2p && mk && scheduledMerchants[mk]) return;
       var matched = false;
       for (var si = 0; si < scheduleList.length; si++) {
         if (entryMatchesScheduleRow(e, scheduleList[si])) { matched = true; break; }

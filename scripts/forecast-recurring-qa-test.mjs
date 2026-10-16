@@ -199,6 +199,49 @@ console.log('recurring-qa: cluster amount uses recent median');
   assert.strictEqual(gym.amount, 120, 'projects raised recent amount');
 })();
 
+console.log('recurring-qa: daily spend excludes merchant with any schedule');
+(function () {
+  const rows = [];
+  let id = 0;
+  for (let i = 0; i < 6; i++) {
+    rows.push(entry('ln' + id++, 850, 'FAKE AUTO LOAN CO', ts(2026, 3 + i, 12)));
+  }
+  rows.push(entry('lnx1', 320, 'FAKE AUTO LOAN CO', ts(2026, 5, 20)));
+  rows.push(entry('lnx2', 315, 'FAKE AUTO LOAN CO', ts(2026, 8, 18)));
+  for (let d = 0; d < 15; d++) {
+    rows.push(entry('c' + d, 12, 'COFFEE SHOP', ts(2026, 7, 1) + d * 3 * 86400000, { categoryId: 'dining' }));
+  }
+  const now = ts(2026, 9, 16);
+  const sched = detectOut(rows, now);
+  assert.ok(sched.some((s) => s.amount === 850), 'monthly loan schedule');
+  const loanOnly = rows.filter((r) => /AUTO LOAN/i.test(r.note));
+  const loanDaily = FC.estimateDailySpend(loanOnly, CHECKING, [], now, sched);
+  assert.strictEqual(loanDaily, 0, 'all rows at scheduled merchant excluded');
+  const daily = FC.estimateDailySpend(rows, CHECKING, [], now, sched);
+  const coffeeOnly = rows.filter((r) => /COFFEE/i.test(r.note));
+  const coffeeDaily = FC.estimateDailySpend(coffeeOnly, CHECKING, [], now, sched);
+  assert.ok(Math.abs(daily - coffeeDaily) < 0.02, 'daily spend ignores loan merchant extras');
+})();
+
+console.log('recurring-qa: drifting large card cluster median last three');
+(function () {
+  const rows = [];
+  const largeAmts = [356, 363, 434, 354, 292];
+  const months = [4, 5, 6, 7, 8];
+  largeAmts.forEach((amt, i) => {
+    rows.push(entry('L' + i, amt, 'FAKE DRIFT CARD PAYMENT', ts(2026, months[i], 18)));
+    rows.push(entry('S' + i, 30, 'FAKE DRIFT CARD PAYMENT', ts(2026, months[i], 3)));
+  });
+  const now = ts(2026, 9, 16);
+  const sched = detectOut(rows, now);
+  const large = sched.filter((s) => s.amount >= 200).sort((a, b) => b.lastTs - a.lastTs)[0];
+  assert.ok(large, 'large payment schedule');
+  assert.strictEqual(large.amount, 354, 'median of last three large payments');
+  const lastD = new Date(large.lastTs);
+  assert.strictEqual(lastD.getMonth(), 8, 'cluster anchored on most recent large payment');
+  assert.ok(sched.some((s) => s.amount <= 35), 'small payment cluster separate');
+})();
+
 console.log('recurring-qa: chase card median of last three');
 (function () {
   const pairs = [];
