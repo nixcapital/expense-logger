@@ -253,6 +253,32 @@ assert.ok(overridden.some(function (e) { return e.itemKey === itemKey && e.ts ==
 assert.ok(!overridden.some(function (e) { return e.itemKey === itemKey && e.ts === FC.startOfDay(oct22); }));
 assert.ok(overridden.some(function (e) { return e.itemKey === itemKey && e.ts === nov22; }));
 
+console.log('forecast-test: stale override does not hit next occurrence');
+var afterOct18 = ts(2026, 9, 18);
+var rentKey = 'maplecourt';
+var oct15 = ts(2026, 9, 15);
+var oct17 = ts(2026, 9, 17);
+var nov15 = ts(2026, 10, 15);
+var novOnly = [
+  { ts: nov15, amount: 1650, itemKey: rentKey, kind: 'outflow', label: 'Maple Court Apts' }
+];
+var staleOverride = {
+  maplecourt: { amount: 1650, nextTs: oct17, applyFromTs: oct15, kind: 'outflow' }
+};
+var afterStale = FC.applyForecastOverrides(novOnly, staleOverride, afterOct18);
+assert.ok(
+  afterStale.some(function (e) {
+    return e.itemKey === rentKey && FC.startOfDay(e.ts) === FC.startOfDay(nov15);
+  }),
+  'November rent stays on schedule'
+);
+assert.ok(
+  !afterStale.some(function (e) { return e.itemKey === rentKey && e.ts === FC.startOfDay(oct17); }),
+  'stale override must not move a later month into the past'
+);
+var pruned = FC.pruneForecastOverrides(staleOverride, afterOct18);
+assert.strictEqual(Object.keys(pruned).length, 0, 'expired override pruned');
+
 console.log('forecast-test: money lasts until last solvent EOD');
 var eodSim = FC.simulateBalanceTimeline({
   nowMs: nowFix,

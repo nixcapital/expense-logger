@@ -13,8 +13,8 @@
 <link rel="manifest" href="manifest.json">
 <link rel="icon" href="icon-192.png">
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
-<link rel="stylesheet" href="styles.css?v=1.7.3">
-<link rel="stylesheet" href="icon-animations.css?v=1.7.3">
+<link rel="stylesheet" href="styles.css?v=1.7.4">
+<link rel="stylesheet" href="icon-animations.css?v=1.7.4">
 <title>Expense Logger</title>
 </head>
 <body>
@@ -795,7 +795,7 @@
       <label for="forecastItemDateInput">Next date</label>
       <input type="date" id="forecastItemDateInput">
     </div>
-    <p class="hint">Applies to this item until you change it again.</p>
+    <p class="hint">Applies to this one scheduled occurrence only.</p>
   </div>
 </div>
 
@@ -818,6 +818,18 @@
     </div>
     <div id="importSummary"></div>
     <div id="importRowList" class="import-row-list"></div>
+  </div>
+</div>
+
+<!-- Modal: discard import review edits -->
+<div class="modal-overlay sheet modal-front" id="importDiscardModal">
+  <div class="modal sheet-modal import-discard-sheet" role="dialog" aria-labelledby="importDiscardTitle" aria-modal="true">
+    <h3 id="importDiscardTitle">Discard changes?</h3>
+    <p class="hint">Your category and transfer edits in this import will be lost.</p>
+    <div class="import-discard-actions">
+      <button type="button" class="save-btn" id="importDiscardKeepBtn">Keep editing</button>
+      <button type="button" class="btn-secondary" id="importDiscardConfirmBtn">Discard</button>
+    </div>
   </div>
 </div>
 
@@ -876,10 +888,10 @@
   <p class="hint wrapped-empty" id="wrappedEmpty" hidden>No spending data for this month.</p>
 </div>
 
-<script src="icon-system.js?v=1.7.3"></script>
-<script src="forecast.js?v=1.7.3"></script>
-<script src="wrapped.js?v=1.7.3"></script>
-<script src="app.js?v=1.7.3"></script>
+<script src="icon-system.js?v=1.7.4"></script>
+<script src="forecast.js?v=1.7.4"></script>
+<script src="wrapped.js?v=1.7.4"></script>
+<script src="app.js?v=1.7.4"></script>
 <script>
 (function () {
   'use strict';

@@ -118,6 +118,29 @@ async function run() {
   results.push(['card reimport dupes', n2.spending === 5 && /duplicate|already imported|skipped|tagged/i.test(dupSummary), JSON.stringify(n2) + ' ' + t2]);
 
   await page.evaluate(() => {
+    const es = JSON.parse(localStorage.getItem('expenseLogger.entries.v1'));
+    const river = es.find((e) => (e.note || '').indexOf('RIVER CAFE') !== -1);
+    if (river) river.amount = 40;
+    localStorage.setItem('expenseLogger.entries.v1', JSON.stringify(es));
+  });
+  await importFile(page, 'sample-card.csv');
+  await page.waitForSelector('#importModal.show');
+  const editedDupSummary = await page.locator('#importSummary').innerText();
+  await confirmImport(page);
+  const nEdited = await page.evaluate(() => {
+    const all = JSON.parse(localStorage.getItem('expenseLogger.entries.v1'));
+    return {
+      spending: all.filter((e) => !e.isTransfer).length,
+      river: all.filter((e) => (e.note || '').indexOf('RIVER CAFE') !== -1).length
+    };
+  });
+  results.push([
+    'edited import row reimport dedupes on bank values',
+    nEdited.spending === 5 && nEdited.river === 1 && /duplicate/i.test(editedDupSummary),
+    JSON.stringify(nEdited) + ' ' + editedDupSummary.replace(/\s+/g, ' ').slice(0, 70)
+  ]);
+
+  await page.evaluate(() => {
     localStorage.setItem('expenseLogger.entries.v1', '[]');
     localStorage.setItem('expenseLogger.importRules.v1', '[]');
   });
@@ -347,6 +370,30 @@ async function run() {
     xferAfter.payrollCat === 'dining' && xferAfter.payrollNote === 'PAYROLL DEP PPD edited',
     xferAfter
   ]);
+
+  await page.evaluate(() => {
+    localStorage.setItem('expenseLogger.entries.v1', '[]');
+    localStorage.setItem('expenseLogger.importRules.v1', '[]');
+  });
+  await page.reload({ waitUntil: 'networkidle' });
+  await page.click('button[data-tab="settings"]');
+  await importFile(page, 'sample-card.csv');
+  await page.waitForSelector('#importModal.show');
+  await page.locator('.import-row').first().locator('.import-cat-select').selectOption('groceries');
+  await page.locator('#importModal').click({ position: { x: 20, y: 20 } });
+  await page.waitForSelector('#importDiscardModal.show');
+  const discardTitle = await page.locator('#importDiscardTitle').innerText();
+  results.push(['import review discard prompt', /discard changes/i.test(discardTitle)]);
+  await page.click('#importDiscardKeepBtn');
+  await page.waitForTimeout(300);
+  const reviewStillOpen = await page.locator('#importModal.show').count();
+  results.push(['import review backdrop keep editing', reviewStillOpen === 1]);
+  await page.locator('#importModal').click({ position: { x: 20, y: 20 } });
+  await page.waitForSelector('#importDiscardModal.show');
+  await page.click('#importDiscardConfirmBtn');
+  await page.waitForTimeout(300);
+  const reviewClosed = await page.locator('#importModal.show').count();
+  results.push(['import review backdrop discard closes', reviewClosed === 0]);
 
   console.log('Page errors:', errors);
   let failed = false;
