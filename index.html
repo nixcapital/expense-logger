@@ -13,8 +13,8 @@
 <link rel="manifest" href="manifest.json">
 <link rel="icon" href="icon-192.png">
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
-<link rel="stylesheet" href="styles.css?v=1.3.0">
-<link rel="stylesheet" href="icon-animations.css?v=1.3.0">
+<link rel="stylesheet" href="styles.css?v=1.3.1">
+<link rel="stylesheet" href="icon-animations.css?v=1.3.1">
 <title>Expense Logger</title>
 </head>
 <body>
@@ -71,6 +71,16 @@
         <span class="hero-budget-pct" id="heroBudgetPct"></span>
       </div>
       <p class="hero-budget-meta" id="heroBudgetMeta"></p>
+    </div>
+  </div>
+
+  <div class="card flat-card backup-nudge-card" id="homeBackupNudge" hidden>
+    <div class="backup-nudge">
+      <button type="button" class="backup-nudge-main" id="homeBackupNudgeBtn">
+        <span data-backup-nudge-text>Last backup 34 days ago</span>
+        <span class="chevron" aria-hidden="true">›</span>
+      </button>
+      <button type="button" class="backup-nudge-dismiss" id="homeBackupNudgeDismiss" aria-label="Dismiss">✕</button>
     </div>
   </div>
 
@@ -221,6 +231,15 @@
   <div class="inset-group">
     <h3 class="group-label">Data</h3>
     <div class="inset-card">
+      <div class="backup-nudge settings-nudge" id="backupReminderLine" hidden>
+        <span class="backup-nudge-text" data-backup-nudge-text>Last backup 34 days ago</span>
+        <button type="button" class="backup-nudge-dismiss" id="backupNudgeDismiss" aria-label="Dismiss">✕</button>
+      </div>
+      <p class="hint inset-hint data-meta-hint" id="storageStatusLine">Storage: standard</p>
+      <p class="hint inset-hint data-meta-hint" id="lastBackupLine" hidden></p>
+      <button class="settings-row-btn" id="backupDataBtn" type="button">Back up data <span class="chevron">›</span></button>
+      <button class="settings-row-btn" id="restoreBackupBtn" type="button">Restore from backup <span class="chevron">›</span></button>
+      <input type="file" id="backupFileInput" accept=".json,application/json" hidden>
       <button class="settings-row-btn" id="exportBtn" type="button">Export CSV <span class="chevron">›</span></button>
       <button class="settings-row-btn" id="exportJsonBtn" type="button">Export JSON backup <span class="chevron">›</span></button>
       <button class="settings-row-btn" id="importJsonBtn" type="button">Import JSON backup <span class="chevron">›</span></button>
@@ -448,6 +467,19 @@
   </div>
 </div>
 
+<!-- Modal: restore backup -->
+<div class="modal-overlay sheet" id="backupRestoreModal">
+  <div class="modal sheet-modal">
+    <div class="sheet-grabber" aria-hidden="true"></div>
+    <div class="sheet-header">
+      <button class="btn-secondary sheet-cancel" id="backupRestoreCancelBtn" type="button">Cancel</button>
+      <h3>Restore backup</h3>
+      <button class="link-btn" id="backupRestoreConfirmBtn" type="button">Replace data</button>
+    </div>
+    <div id="backupRestoreSummary"></div>
+  </div>
+</div>
+
 <!-- Modal: import review -->
 <div class="modal-overlay sheet" id="importModal">
   <div class="modal sheet-modal modal-wide import-modal">
@@ -476,7 +508,7 @@
   </div>
 </div>
 
-<script src="icon-system.js?v=1.3.0"></script>
-<script src="app.js?v=1.3.0"></script>
+<script src="icon-system.js?v=1.3.1"></script>
+<script src="app.js?v=1.3.1"></script>
 </body>
 </html>
