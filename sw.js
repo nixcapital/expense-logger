@@ -3,24 +3,31 @@
    Offline: fall back to the current release cache only.
    Install precache uses network no-store (not HTTP cache / addAll).
 */
-const CACHE_VERSION = 'expense-logger-v1.2.0';
-const ASSET_V = '1.2.0';
+const CACHE_VERSION = 'expense-logger-v1.3.0';
+const ASSET_V = '1.3.0';
 const SHELL_URLS = [
   './',
   './index.html',
   './styles.css?v=' + ASSET_V,
+  './icon-animations.css?v=' + ASSET_V,
+  './icon-system.js?v=' + ASSET_V,
   './app.js?v=' + ASSET_V,
   './manifest.json',
   './icon-192.png',
-  './icon-512.png'
+  './icon-512.png',
+  './apple-touch-icon.png',
+  './icons/icons.json'
 ];
 
 function isShellRequest(url) {
   if (url.origin !== self.location.origin) return false;
   const p = url.pathname;
   if (p === '/' || p.endsWith('/index.html')) return true;
-  if (p.endsWith('/app.js') || p.endsWith('/styles.css')) return true;
-  return p.endsWith('/manifest.json') || p.endsWith('/icon-192.png') || p.endsWith('/icon-512.png');
+  if (p.endsWith('/app.js') || p.endsWith('/styles.css') || p.endsWith('/icon-animations.css')) return true;
+  if (p.endsWith('/icon-system.js')) return true;
+  if (p.includes('/icons/') && (p.endsWith('.svg') || p.endsWith('icons.json'))) return true;
+  return p.endsWith('/manifest.json') || p.endsWith('/icon-192.png') || p.endsWith('/icon-512.png')
+    || p.endsWith('/apple-touch-icon.png');
 }
 
 function cacheBustUrl(url) {
@@ -38,15 +45,26 @@ function putInCache(request, response) {
   return caches.open(CACHE_VERSION).then((cache) => cache.put(request, response));
 }
 
+function precacheUrl(cache, url) {
+  return fetchNoStore(url).then((res) => {
+    if (!res.ok) throw new Error('precache failed: ' + url);
+    return cache.put(url, res);
+  });
+}
+
 function precacheShell() {
-  return caches.open(CACHE_VERSION).then((cache) =>
-    Promise.all(SHELL_URLS.map((url) =>
-      fetchNoStore(url).then((res) => {
-        if (!res.ok) throw new Error('precache failed: ' + url);
-        return cache.put(url, res);
-      })
-    ))
-  );
+  return fetchNoStore('./icons/icons.json')
+    .then((res) => (res.ok ? res.json() : []))
+    .catch(() => [])
+    .then((iconIds) => {
+      const iconUrls = Array.isArray(iconIds)
+        ? iconIds.map((id) => './icons/' + id + '.svg')
+        : [];
+      const urls = SHELL_URLS.concat(iconUrls);
+      return caches.open(CACHE_VERSION).then((cache) =>
+        Promise.all(urls.map((url) => precacheUrl(cache, url)))
+      );
+    });
 }
 
 self.addEventListener('install', (event) => {

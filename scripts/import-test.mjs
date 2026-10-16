@@ -199,7 +199,8 @@ async function run() {
   await confirmImport(page);
   const rtToast = await toastText(page);
   const countAfter = await page.evaluate(() => JSON.parse(localStorage.getItem('expenseLogger.entries.v1')).length);
-  const rtOk = countAfter === countBefore && (/0 new/.test(rtToast) || /duplicate/i.test(rtToast)) && /to import[\s\S]*\b0\b/.test(rtSummary);
+  const rtOk = countAfter === countBefore && (/0 new/.test(rtToast) || /duplicate/i.test(rtToast))
+    && /0\s*to import/i.test(rtSummary.replace(/\s+/g, ' '));
   results.push(['app export round-trip', rtOk, rtToast, rtSummary.replace(/\s+/g, ' ').slice(0, 50)]);
 
   await importFile(page, 'sample-app-export.csv');

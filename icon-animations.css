@@ -1,0 +1,312 @@
+/* Per-icon micro-animations — quick, subtle, clipped to the badge (SF Symbols–style flourish) */
+
+.cat-badge {
+  overflow: hidden;
+  position: relative;
+}
+
+.cat-badge .icon-art {
+  width: 100%;
+  height: 100%;
+  display: block;
+  color: var(--badge-fg, currentColor);
+}
+
+.cat-badge .icon-art [data-part] {
+  transform-box: fill-box;
+  transform-origin: center;
+}
+
+/* ~300–500ms, ease-out, small motion only */
+.icon-anim-play[data-icon-id] [data-part] {
+  animation-duration: 0.4s;
+  animation-timing-function: ease-out;
+  animation-iteration-count: 1;
+  animation-fill-mode: both;
+}
+
+/* shopping-cart */
+.icon-anim-play[data-icon-id="shopping-cart"] [data-part="wheels"] {
+  animation-name: icon-cart-wheels;
+}
+.icon-anim-play[data-icon-id="shopping-cart"] [data-part="cart-body"] {
+  animation-name: icon-cart-nudge;
+}
+@keyframes icon-cart-wheels {
+  to { transform: translateX(1.5px) rotate(55deg); }
+}
+@keyframes icon-cart-nudge {
+  45% { transform: translateX(1px); }
+  to { transform: none; }
+}
+
+/* utensils */
+.icon-anim-play[data-icon-id="utensils"] [data-part="fork"] {
+  animation-name: icon-fork-clink;
+}
+.icon-anim-play[data-icon-id="utensils"] [data-part="knife"] {
+  animation-name: icon-knife-clink;
+}
+@keyframes icon-fork-clink {
+  45% { transform: rotate(-6deg) translateX(-0.5px); }
+  to { transform: none; }
+}
+@keyframes icon-knife-clink {
+  45% { transform: rotate(5deg) translateX(0.5px); }
+  to { transform: none; }
+}
+
+/* fuel */
+.icon-anim-play[data-icon-id="fuel"] [data-part="nozzle"] {
+  animation-name: icon-nozzle-tilt;
+  transform-origin: 16px 12px;
+}
+.icon-anim-play[data-icon-id="fuel"] [data-part="drop"] {
+  animation-name: icon-fuel-drop;
+  animation-duration: 0.42s;
+}
+@keyframes icon-nozzle-tilt {
+  40% { transform: rotate(8deg); }
+  to { transform: none; }
+}
+@keyframes icon-fuel-drop {
+  0% { opacity: 0; transform: translateY(-1px); }
+  35% { opacity: 0.9; }
+  to { opacity: 0; transform: translateY(2px); }
+}
+
+/* receipt */
+.icon-anim-play[data-icon-id="receipt"] [data-part="paper"] {
+  animation-name: icon-receipt-unroll;
+  transform-origin: top center;
+}
+.icon-anim-play[data-icon-id="receipt"] [data-part="lines"],
+.icon-anim-play[data-icon-id="receipt"] [data-part="bolt"] {
+  animation-name: icon-receipt-lines;
+}
+@keyframes icon-receipt-unroll {
+  from { transform: scaleY(0.92); }
+  to { transform: scaleY(1); }
+}
+@keyframes icon-receipt-lines {
+  from { opacity: 0.35; }
+  to { opacity: 1; }
+}
+
+/* ticket / fun — dots pop inside the badge only */
+.icon-anim-play[data-icon-id="ticket"] [data-part="popper"] {
+  animation-name: icon-popper-nudge;
+}
+.icon-anim-play[data-icon-id="ticket"] [data-part="cf1"] {
+  animation-name: icon-cf-pop-a;
+}
+.icon-anim-play[data-icon-id="ticket"] [data-part="cf2"] {
+  animation-name: icon-cf-pop-b;
+  animation-delay: 0.04s;
+}
+.icon-anim-play[data-icon-id="ticket"] [data-part="cf3"] {
+  animation-name: icon-cf-pop-c;
+  animation-delay: 0.07s;
+}
+.icon-anim-play[data-icon-id="ticket"] [data-part="cf4"] {
+  animation-name: icon-cf-pop-d;
+  animation-delay: 0.05s;
+}
+@keyframes icon-popper-nudge {
+  40% { transform: translateY(-0.5px); }
+  to { transform: none; }
+}
+@keyframes icon-cf-pop-a {
+  50% { transform: translate(-0.5px, -1px) scale(1.25); opacity: 1; }
+  to { transform: none; opacity: 1; }
+}
+@keyframes icon-cf-pop-b {
+  50% { transform: translate(0, -1.5px) scale(1.2); opacity: 1; }
+  to { transform: none; opacity: 1; }
+}
+@keyframes icon-cf-pop-c {
+  50% { transform: translate(0.5px, -1px) scale(1.25); opacity: 1; }
+  to { transform: none; opacity: 1; }
+}
+@keyframes icon-cf-pop-d {
+  50% { transform: translate(0, 0.5px) scale(1.15); opacity: 0.85; }
+  to { transform: none; opacity: 1; }
+}
+
+/* boxes / other (legacy circle-dot id) */
+.icon-anim-play[data-icon-id="boxes"] [data-part="lid"],
+.icon-anim-play[data-icon-id="circle-dot"] [data-part="lid"] {
+  animation-name: icon-lid-pop;
+}
+.icon-anim-play[data-icon-id="boxes"] [data-part="box"],
+.icon-anim-play[data-icon-id="circle-dot"] [data-part="box"] {
+  animation-name: icon-box-settle;
+}
+@keyframes icon-lid-pop {
+  45% { transform: translateY(-1.5px) rotate(-3deg); }
+  to { transform: none; }
+}
+@keyframes icon-box-settle {
+  50% { transform: translateY(0.5px); }
+  to { transform: none; }
+}
+
+/* car */
+.icon-anim-play[data-icon-id="car"] [data-part="wheels"] {
+  animation-name: icon-car-wheels;
+}
+.icon-anim-play[data-icon-id="car"] [data-part="body"] {
+  animation-name: icon-car-roll;
+}
+@keyframes icon-car-wheels {
+  to { transform: translateX(2px) rotate(70deg); }
+}
+@keyframes icon-car-roll {
+  45% { transform: translateX(1.5px); }
+  to { transform: none; }
+}
+
+/* bag */
+.icon-anim-play[data-icon-id="bag"] [data-part="bag"] {
+  animation-name: icon-bag-swing;
+  transform-origin: top center;
+}
+@keyframes icon-bag-swing {
+  35% { transform: rotate(-4deg); }
+  65% { transform: rotate(3deg); }
+  to { transform: none; }
+}
+
+/* coffee */
+.icon-anim-play[data-icon-id="coffee"] [data-part="steam"] {
+  animation-name: icon-steam-rise;
+  animation-duration: 0.45s;
+}
+@keyframes icon-steam-rise {
+  from { opacity: 0.25; transform: translateY(1px); }
+  45% { opacity: 0.85; }
+  to { opacity: 0.35; transform: translateY(-2px); }
+}
+
+/* home */
+.icon-anim-play[data-icon-id="home"] [data-part="window"] {
+  animation-name: icon-window-glow;
+}
+@keyframes icon-window-glow {
+  from { opacity: 0.25; }
+  50% { opacity: 0.95; }
+  to { opacity: 0.5; }
+}
+
+/* health (legacy heart id) */
+.icon-anim-play[data-icon-id="health"] [data-part="heart"],
+.icon-anim-play[data-icon-id="heart"] [data-part="heart"] {
+  animation-name: icon-heart-pulse;
+}
+.icon-anim-play[data-icon-id="health"] [data-part="stethoscope"] {
+  animation-name: icon-stethoscope-nudge;
+}
+@keyframes icon-heart-pulse {
+  40% { transform: scale(1.06); }
+  to { transform: scale(1); }
+}
+@keyframes icon-stethoscope-nudge {
+  45% { transform: translateX(0.5px); }
+  to { transform: none; }
+}
+
+/* plane */
+.icon-anim-play[data-icon-id="plane"] [data-part="plane"] {
+  animation-name: icon-plane-takeoff;
+  animation-duration: 0.42s;
+}
+@keyframes icon-plane-takeoff {
+  55% { transform: translate(2px, -2px) rotate(4deg); }
+  to { transform: none; }
+}
+
+/* gift */
+.icon-anim-play[data-icon-id="gift"] [data-part="lid"] {
+  animation-name: icon-gift-lid;
+}
+@keyframes icon-gift-lid {
+  45% { transform: translateY(-2px); }
+  to { transform: none; }
+}
+
+/* phone */
+.icon-anim-play[data-icon-id="phone"] [data-part="phone"] {
+  animation-name: icon-phone-buzz;
+  animation-duration: 0.38s;
+}
+.icon-anim-play[data-icon-id="phone"] [data-part="alert"] {
+  animation-name: icon-alert-pop;
+}
+@keyframes icon-phone-buzz {
+  20% { transform: translateX(-0.5px) rotate(-1deg); }
+  40% { transform: translateX(0.5px) rotate(1deg); }
+  60% { transform: translateX(-0.5px); }
+  to { transform: none; }
+}
+@keyframes icon-alert-pop {
+  45% { transform: scale(1.08); }
+  to { transform: none; }
+}
+
+/* pets */
+.icon-anim-play[data-icon-id="pets"] [data-part="ear"] {
+  animation-name: icon-pet-ear;
+}
+.icon-anim-play[data-icon-id="pets"] [data-part="head"] {
+  animation-name: icon-pet-head;
+}
+@keyframes icon-pet-ear {
+  45% { transform: rotate(4deg); }
+  to { transform: none; }
+}
+@keyframes icon-pet-head {
+  50% { transform: translateY(0.5px); }
+  to { transform: none; }
+}
+
+/* education */
+.icon-anim-play[data-icon-id="education"] [data-part="tassel"] {
+  animation-name: icon-tassel-sway;
+  transform-origin: top center;
+}
+.icon-anim-play[data-icon-id="education"] [data-part="cap"] {
+  animation-name: icon-cap-settle;
+}
+@keyframes icon-tassel-sway {
+  45% { transform: rotate(5deg); }
+  to { transform: none; }
+}
+@keyframes icon-cap-settle {
+  50% { transform: translateY(-0.5px); }
+  to { transform: none; }
+}
+
+/* letter fallback — gentle pop on glyph, badge clips */
+.icon-anim-play.cat-badge--letter .cat-badge-letter {
+  display: inline-block;
+  animation: icon-letter-pop 0.38s ease-out 1;
+}
+@keyframes icon-letter-pop {
+  45% { transform: scale(1.06); }
+  to { transform: scale(1); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cat-badge.icon-anim-play [data-part],
+  .cat-badge.icon-anim-play.cat-badge--letter .cat-badge-letter {
+    animation: none !important;
+    transform: none !important;
+  }
+  .cat-badge.icon-anim-reduced {
+    animation: icon-reduced-fade 0.2s ease-out 1;
+  }
+  @keyframes icon-reduced-fade {
+    from { opacity: 0.65; }
+    to { opacity: 1; }
+  }
+}
