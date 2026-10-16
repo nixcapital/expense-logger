@@ -1,4 +1,4 @@
-/* Expense Logger 1.4.1 — dark-first, iOS-style */
+/* Expense Logger 1.4.2 — dark-first, iOS-style */
 
 :root {
   --bg: #0B0C10;
@@ -7,6 +7,7 @@
   --sep: rgba(255,255,255,.08);
   --text: #F2F4F8;
   --text-dim: #8A91A3;
+  --text-secondary: #A8B0C2;
   --accent: #5B8CFF;
   --accent-press: #4a7ae6;
   --accent-ink: #0B0C10;
@@ -37,6 +38,7 @@
     --sep: rgba(0,0,0,.08);
     --text: #0E1116;
     --text-dim: #5E6573;
+    --text-secondary: #5E6573;
     --accent: #2F6BFF;
     --accent-press: #2558d4;
     --accent-ink: #FFFFFF;
@@ -619,6 +621,20 @@ input[type="number"] {
   position: relative; width: min(100%, 200px); margin: 0 auto var(--sp-3);
   aspect-ratio: 1;
 }
+@keyframes donut-wrap-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+.donut-wrap.donut-wrap--fade-in {
+  opacity: 0;
+  animation: donut-wrap-fade-in 200ms ease-out forwards;
+}
+@media (prefers-reduced-motion: reduce) {
+  .donut-wrap.donut-wrap--fade-in {
+    animation: none;
+    opacity: 1;
+  }
+}
 .chart-svg.donut-chart { width: 100%; height: 100%; display: block; }
 .donut-seg { cursor: pointer; transition: opacity 0.15s ease; }
 .donut-center {
@@ -654,7 +670,7 @@ input[type="number"] {
 .donut-center-sub {
   font-size: var(--donut-center-sub-size, 12px);
   line-height: 1.2;
-  color: var(--text-dim);
+  color: var(--text-secondary);
   max-width: 100%;
 }
 
@@ -1289,7 +1305,7 @@ button.legend-row.legend-btn.active { background: color-mix(in srgb, var(--accen
   cursor: pointer;
   list-style: none;
   font-size: 13px;
-  color: var(--text-dim);
+  color: var(--text-secondary);
 }
 .report-recur-onetime-summary::-webkit-details-marker { display: none; }
 .report-recur-onetime-label { font-weight: 600; }

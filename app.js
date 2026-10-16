@@ -16,7 +16,7 @@
   var IMPORT_SETTINGS_KEY = 'expenseLogger.importSettings.v1';
   var META_KEY            = 'expenseLogger.meta.v1';
 
-  var APP_VERSION = '1.4.1';
+  var APP_VERSION = '1.4.2';
   var BACKUP_FORMAT = 1;
   var MS_DAY = 86400000;
   var BACKUP_NUDGE_AFTER_DAYS = 30;
@@ -1817,6 +1817,7 @@
   var selectedLegendCatId = null;
   var displayedTotal = 0;
   var lastDonutData = null;
+  var homeDonutIntroDone = false;
 
   function cancelSummaryAnim() {
     if (summaryAnimId) {
@@ -2024,6 +2025,20 @@
       angle = end;
     });
     $donutChart.innerHTML = html;
+  }
+
+  function playHomeDonutIntro() {
+    var wrap = $('donutWrap');
+    if (!wrap || homeDonutIntroDone) return;
+    homeDonutIntroDone = true;
+    if (prefersReducedMotion()) return;
+    wrap.classList.add('donut-wrap--fade-in');
+    function onEnd(ev) {
+      if (ev.animationName !== 'donut-wrap-fade-in') return;
+      wrap.classList.remove('donut-wrap--fade-in');
+      wrap.removeEventListener('animationend', onEnd);
+    }
+    wrap.addEventListener('animationend', onEnd);
   }
 
   if ($donutChart) $donutChart.addEventListener('click', function (e) {
@@ -2553,16 +2568,17 @@
     var dailyTotals = prepareDailyChart(y, m);
     renderInsights(y, m);
     renderBudgets(data.byCat);
-    if ($donutChart || $trendChart || $dailyChart) {
+    if ($donutChart) {
+      drawDonutFrame(data.byCat, data.total, 1, selectedLegendCatId);
+      playHomeDonutIntro();
+    }
+    if ($trendChart || $dailyChart) {
       runChartAnim(750, function (p) {
-        drawDonutFrame(data.byCat, data.total, p, selectedLegendCatId);
         drawTrendFrame(trendMonths, p, y, m);
         drawDailyFrame(dailyTotals, y, m, p);
       }, function () {
-        drawDonutFrame(data.byCat, data.total, 1, selectedLegendCatId);
         drawTrendFrame(trendMonths, 1, y, m);
         drawDailyFrame(dailyTotals, y, m, 1);
-        layoutDonutCenter();
       });
     }
   }
