@@ -6201,6 +6201,20 @@
     return new Date(ts).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
   }
 
+  function formatForecastWeekdayDate(ts) {
+    return new Date(ts).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+  }
+
+  function fmtForecastWhole(n, opts) {
+    opts = opts || {};
+    var v = Math.round(n);
+    if (v === 0 && opts.zeroText) return opts.zeroText;
+    var abs = Math.abs(v).toLocaleString(undefined, { maximumFractionDigits: 0 });
+    if (opts.alwaysPlus && v > 0) return '+\u0024' + abs;
+    if (v < 0) return '\u2212$' + abs;
+    return '$' + abs;
+  }
+
   function fmtForecastMoneyShort(n) {
     var v = Math.round(n);
     var sign = v < 0 ? '-' : '';
@@ -6290,16 +6304,24 @@
     return fmtMoneyDisplay(rounded);
   }
 
-  function shortScheduleLabel(label) {
-    var s = String(label || '').trim();
-    if (s.length <= 18) return s;
-    return s.split(/\s+/).slice(0, 2).join(' ');
+  function billMerchantShortName(label) {
+    var n = String(label || '').toLowerCase();
+    if (/mortgage|home\s*mort|wf\s*home/.test(n)) return 'mortgage';
+    if (/verizon|wireless|phone|t-?mobile|att/.test(n)) return 'phone';
+    if (/tuition|univ|college/.test(n)) return 'tuition';
+    if (/student|nelnet/.test(n)) return 'student loan';
+    if (/toyota|car\s*loan|auto/.test(n)) return 'car loan';
+    if (/insurance|state\s*farm/.test(n)) return 'insurance';
+    if (/duke|energy|electric/.test(n)) return 'utilities';
+    var words = String(label || '').trim().split(/\s+/);
+    return (words[0] || 'bill').toLowerCase();
   }
 
-  function billSchedulesForWindow(schedules) {
-    return (schedules || []).filter(function (s) {
-      return s && s.kind === 'outflow' && !s.fromOneOff;
-    });
+  function billSchedulesForWindow(schedules, breakdown) {
+    if (breakdown && breakdown.details && breakdown.details.billItems) {
+      return breakdown.details.billItems;
+    }
+    return [];
   }
 
   function renderForecastFlowBarsHTML(breakdown) {
@@ -6309,16 +6331,16 @@
     var html = '';
     html += '<div class="forecast-bar-row"><span class="forecast-bar-label">IN</span>';
     if (breakdown.income <= 0) {
-      html += '<div class="forecast-bar-track is-in-empty"></div><span class="forecast-bar-amt">' + forecastSignedMoney(0, { alwaysSign: true }) + '</span></div>';
+      html += '<div class="forecast-bar-track is-in-empty"></div><span class="forecast-bar-amt">' + fmtForecastWhole(0, { alwaysPlus: true }) + '</span></div>';
     } else {
       html += '<div class="forecast-bar-track"><span class="forecast-bar-seg forecast-bar-seg--income" style="width:' + widthPct(breakdown.income) + '%"></span></div>';
-      html += '<span class="forecast-bar-amt">' + forecastSignedMoney(breakdown.income, { alwaysSign: true }) + '</span></div>';
+      html += '<span class="forecast-bar-amt">' + fmtForecastWhole(breakdown.income, { alwaysPlus: true }) + '</span></div>';
     }
     html += '<div class="forecast-bar-row"><span class="forecast-bar-label">OUT</span><div class="forecast-bar-track">';
     if (breakdown.bills > 0) html += '<span class="forecast-bar-seg forecast-bar-seg--bills" style="width:' + widthPct(breakdown.bills) + '%"></span>';
     if (breakdown.cardPayments > 0) html += '<span class="forecast-bar-seg forecast-bar-seg--card" style="width:' + widthPct(breakdown.cardPayments) + '%"></span>';
     if (breakdown.everyday > 0) html += '<span class="forecast-bar-seg forecast-bar-seg--daily" style="width:' + widthPct(breakdown.everyday) + '%"></span>';
-    html += '</div><span class="forecast-bar-amt">-' + fmtMoneyDisplay(breakdown.totalOut) + '</span></div>';
+    html += '</div><span class="forecast-bar-amt">' + fmtForecastWhole(-breakdown.totalOut) + '</span></div>';
     return html;
   }
 
@@ -6332,40 +6354,66 @@
   function renderForecastBreakdownCard(breakdown, result, schedules) {
     var list = $('forecastBreakdownList');
     if (!list || !breakdown) return;
-    var bills = billSchedulesForWindow(schedules);
-    var billNames = bills.map(function (s) { return shortScheduleLabel(s.label); }).slice(0, 4);
-    var cardSched = (schedules || []).filter(function (s) { return s && s.kind === 'card-payment'; });
-    var cardSub = cardSched.length ? (cardSched.length + ' payment' + (cardSched.length > 1 ? 's' : '') + ' \u00B7 ' + shortScheduleLabel(cardSched[0].label)) : 'No card payments';
-    var incomeSched = (schedules || []).filter(function (s) { return s && s.kind === 'inflow'; });
-    var incomeSub = incomeSched.length
-      ? (incomeSched.length + ' paycheck' + (incomeSched.length > 1 ? 's' : '') + (incomeSched[0].amount ? ' \u00B7 ' + fmtMoneyDisplay(incomeSched[0].amount) + ' each' : ''))
+    var det = breakdown.details || {};
+    var billItems = det.billItems || [];
+    var billNames = billItems.map(function (b) { return billMerchantShortName(b.label); });
+    var billSub = billItems.length
+      ? (billItems.length + ' bill' + (billItems.length > 1 ? 's' : '') + ' \u00B7 ' + billNames.join(', '))
+      : 'No bills in this view';
+    var cardCount = det.cardCount || 0;
+    var cardSub;
+    if (cardCount > 0) {
+      var otherLabel = (det.cardItems || []).some(function (c) { return !/chase/i.test(c.label); }) ? 'Other bank' : (det.cardItems[0] && det.cardItems[0].label);
+      cardSub = cardCount + ' payment' + (cardCount > 1 ? 's' : '') + ' \u00B7 ' + otherLabel;
+    } else if (breakdown.nextCardAfterWindow) {
+      cardSub = 'None in this view \u00B7 next ' + formatForecastWeekdayDate(breakdown.nextCardAfterWindow.ts);
+    } else {
+      cardSub = 'None in this view';
+    }
+    var incomeCount = det.incomeCount || 0;
+    var incomeSub = incomeCount > 0
+      ? (incomeCount + ' paycheck' + (incomeCount > 1 ? 's' : '') + ' \u00B7 ' + fmtForecastWhole(det.incomeEach) + ' each')
       : 'No deposits found';
     var daily = breakdown.dailyRate || 0;
-    var spendSub = daily > 0 ? '~' + fmtMoneyDisplay(daily) + '/day \u00B7 groceries, gas, dining' : 'No everyday pace detected';
+    var spendSub = daily > 0 ? '~' + fmtForecastWhole(daily) + '/day \u00B7 groceries, gas, dining' : 'No everyday pace detected';
     var rows = [
-      { kind: 'income', title: 'Income', sub: incomeSub, amt: breakdown.income, inflow: true },
-      { kind: 'bills', title: 'Bills', sub: billNames.length ? (bills.length + ' bills \u00B7 ' + billNames.join(', ')) : 'No bills found', amt: -breakdown.bills },
-      { kind: 'card', title: 'Card payments', sub: cardSub, amt: -breakdown.cardPayments },
+      { kind: 'income', title: 'Income', sub: incomeSub, amt: breakdown.income, inflow: true, zeroNeutral: true },
+      { kind: 'bills', title: 'Bills', sub: billSub, amt: -breakdown.bills },
+      { kind: 'card', title: 'Card payments', sub: cardSub, amt: -breakdown.cardPayments, allowZero: true },
       { kind: 'daily', title: 'Everyday spending', sub: spendSub, amt: -breakdown.everyday }
     ];
     var html = '';
     rows.forEach(function (row) {
       var ic = forecastBreakdownRowIcon(row.kind);
+      var amtClass = 'forecast-bd-amt';
+      var amtTxt;
+      if (row.inflow && breakdown.income <= 0) {
+        amtClass += ' is-zero';
+        amtTxt = fmtForecastWhole(0, { alwaysPlus: true });
+      } else if (row.allowZero && row.amt === 0) {
+        amtClass += ' is-zero';
+        amtTxt = fmtForecastWhole(0);
+      } else if (row.inflow) {
+        amtClass += ' is-in';
+        amtTxt = fmtForecastWhole(row.amt, { alwaysPlus: true });
+      } else {
+        amtTxt = fmtForecastWhole(row.amt);
+      }
       html += '<button type="button" class="forecast-bd-row" data-forecast-detail="' + row.kind + '">';
       html += '<div class="forecast-bd-icon" style="background:' + ic.bg + ';color:' + ic.color + '">' + ic.svg + '</div>';
-      html += '<div><p class="forecast-bd-title">' + escHtml(row.title) + '</p><p class="forecast-bd-sub">' + escHtml(row.sub) + '</p></div>';
-      html += '<div class="forecast-bd-amt' + (row.inflow ? ' is-in' : '') + '">' + forecastSignedMoney(row.amt, { alwaysSign: row.inflow }) + '</div>';
+      html += '<div class="forecast-bd-text"><p class="forecast-bd-title">' + escHtml(row.title) + '</p><p class="forecast-bd-sub">' + escHtml(row.sub) + '</p></div>';
+      html += '<div class="' + amtClass + '">' + amtTxt + '</div>';
       html += '<span class="forecast-bd-chev" aria-hidden="true">\u203A</span></button>';
     });
     list.innerHTML = html;
     var flowToday = $('forecastFlowToday');
     if (flowToday && breakdown.endBalance != null) {
-      flowToday.innerHTML = 'Today <strong>' + fmtForecastMoneyShort(breakdown.startBalance) + '</strong> \u2192 '
-        + formatForecastShortDate(breakdown.endMs) + ' <strong>' + fmtForecastMoneyShort(breakdown.endBalance) + '</strong>';
+      flowToday.innerHTML = 'Today <strong>' + fmtForecastWhole(breakdown.startBalance) + '</strong> \u2192 '
+        + formatForecastShortDate(breakdown.endMs) + ' <strong>' + fmtForecastWhole(breakdown.endBalance) + '</strong>';
     }
     var flowNet = $('forecastFlowNet');
     if (flowNet) {
-      flowNet.textContent = forecastSignedMoney(breakdown.net, { alwaysSign: true });
+      flowNet.textContent = fmtForecastWhole(breakdown.net, { alwaysPlus: true });
       flowNet.classList.toggle('is-neg', breakdown.net < 0);
       flowNet.classList.toggle('is-pos', breakdown.net > 0);
     }
@@ -6373,20 +6421,10 @@
     if (bars) bars.innerHTML = renderForecastFlowBarsHTML(breakdown);
     var total = $('forecastBreakdownTotal');
     if (total) {
-      total.innerHTML = '<span>Net change \u00B7 ' + breakdown.windowDays + ' days</span><span class="' + (breakdown.net < 0 ? 'forecast-flow-net is-neg' : 'forecast-flow-net is-pos') + '">' + forecastSignedMoney(breakdown.net, { alwaysSign: true }) + '</span>';
+      total.innerHTML = '<span>Net change \u00B7 ' + breakdown.windowDays + ' days</span><span class="' + (breakdown.net < 0 ? 'forecast-flow-net is-neg' : 'forecast-flow-net is-pos') + '">' + fmtForecastWhole(breakdown.net, { alwaysPlus: true }) + '</span>';
     }
     var notice = $('forecastNoIncomeNotice');
     if (notice) notice.hidden = !result.noIncomeDetected || breakdown.income > 0;
-    var navMeta = $('forecastNavMeta');
-    var navVal = $('forecastNavMetaVal');
-    var navLbl = $('forecastNavMetaLabel');
-    if (navLbl) navLbl.textContent = 'Net change \u00B7 ' + breakdown.windowDays + ' days';
-    if (navVal) {
-      navVal.textContent = forecastSignedMoney(breakdown.net, { alwaysSign: true });
-      navVal.classList.toggle('is-neg', breakdown.net < 0);
-      navVal.classList.toggle('is-pos', breakdown.net > 0);
-    }
-    if (navMeta) navMeta.hidden = false;
     Array.prototype.forEach.call(list.querySelectorAll('[data-forecast-detail]'), function (btn) {
       btn.addEventListener('click', function () {
         openForecastDetailSheet(btn.getAttribute('data-forecast-detail'));
@@ -6409,12 +6447,12 @@
         lastsEl.classList.add('is-all-days');
         lastsEl.classList.remove('is-long');
       }
-      if (daysEl) daysEl.textContent = 'through ' + formatForecastShortDate(headline.windowEndMs);
+      if (daysEl) daysEl.textContent = 'through ' + formatForecastWeekdayDate(headline.windowEndMs);
       if (posEl && headline.lowestInWindow) {
         posEl.hidden = false;
         posEl.innerHTML = '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M2 11l4-4 3 3 5-6" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>'
-          + ' Stays positive \u00B7 lowest <strong>' + fmtMoneyDisplay(headline.lowestInWindow.balance) + '</strong> on '
-          + formatForecastShortDate(headline.lowestInWindow.ts);
+          + ' Stays positive \u00B7 lowest <strong>' + fmtForecastWhole(headline.lowestInWindow.balance) + '</strong> on '
+          + formatForecastWeekdayDate(headline.lowestInWindow.ts);
       }
     } else if (result.neverRunsOut) {
       if (prefixEl) prefixEl.textContent = 'Money lasts until';
@@ -6428,14 +6466,14 @@
       if (prefixEl) prefixEl.textContent = 'Money lasts until';
       if (lastsEl) {
         lastsEl.classList.remove('is-long', 'is-all-days');
-        lastsEl.textContent = formatForecastShortDate(result.lastsUntil);
+        lastsEl.textContent = formatForecastWeekdayDate(result.lastsUntil);
       }
       if (daysEl) daysEl.textContent = result.daysAway + ' days away';
       if (causeEl && headline.cause) {
         causeEl.hidden = false;
         var c = headline.cause;
         causeEl.innerHTML = '<span aria-hidden="true"><svg width="16" height="16" viewBox="0 0 16 16" fill="none"><rect x="2" y="4" width="12" height="8" rx="1.2" stroke="currentColor"/><path d="M2 6.5h12" stroke="currentColor"/></svg></span>'
-          + ' Then <strong>' + escHtml(c.label) + ' \u2212' + fmtMoneyDisplay(c.amount) + '</strong> on ' + formatForecastShortDate(c.ts);
+          + ' Then <strong>' + escHtml(c.label) + ' ' + fmtForecastWhole(-c.amount) + '</strong> on ' + formatForecastWeekdayDate(c.ts);
       }
     }
   }
@@ -6459,7 +6497,7 @@
 
   function forecastMovedFromHTML(nominalTs, actualTs) {
     if (!nominalTs || nominalTs === actualTs) return '';
-    return '<span class="forecast-up-moved">\uD83D\uDCC5 Moved from ' + escHtml(formatForecastShortDate(nominalTs)) + '</span>';
+    return '<span class="forecast-up-moved-chip">\uD83D\uDCC5 Moved from ' + escHtml(formatForecastWeekdayDate(nominalTs)) + '</span>';
   }
 
   function closeForecastDetailSheet() {
@@ -6492,18 +6530,30 @@
     var schedules = lastForecastSim.schedules || [];
     var html = '';
     if (kind === 'bills') {
-      var bills = billSchedulesForWindow(schedules);
-      var possible = FC.detectPossibleOneOffs(entries, schedules, getCheckingAccount().id, Date.now(), { minAmount: 200 });
-      var total = lastForecastBreakdown ? -lastForecastBreakdown.bills : 0;
-      html += '<div class="forecast-detail-hero"><div class="forecast-bd-icon" style="background:#cc5de822;color:#cc5de8">' + forecastBreakdownRowIcon('bills').svg + '</div>';
-      html += '<div><h3>Bills</h3><p>' + forecastWindowRangeLabel(Date.now(), forecastChartDays) + ' \u00B7 ' + bills.length + ' bills</p></div>';
-      html += '<div class="forecast-detail-hero-amt">' + forecastSignedMoney(total) + '</div></div>';
+      var nowMs = FC.startOfDay(Date.now());
+      var checkingId = getCheckingAccount().id;
+      var detB = lastForecastBreakdown && lastForecastBreakdown.details;
+      var billCount = detB ? detB.billCount : 0;
+      var billSchedules = (schedules || []).filter(function (s) {
+        return s && s.kind === 'outflow' && !s.fromOneOff;
+      });
+      if (detB && detB.billItems && detB.billItems.length) {
+        var keys = {};
+        detB.billItems.forEach(function (b) { keys[b.itemKey] = true; });
+        billSchedules = billSchedules.filter(function (s) { return keys[s.itemKey]; });
+      }
+      var possible = FC.detectPossibleOneOffs(entries, schedules, checkingId, nowMs, { minAmount: 200 });
+      var total = lastForecastBreakdown ? lastForecastBreakdown.bills : 0;
+      html += '<div class="forecast-detail-hero">';
+      html += '<div class="forecast-bd-icon" style="background:#cc5de822;color:#cc5de8">' + forecastBreakdownRowIcon('bills').svg + '</div>';
+      html += '<div class="forecast-detail-hero-text"><h3>Bills</h3><p>Next ' + forecastChartDays + ' days \u00B7 ' + billCount + ' bills</p></div>';
+      html += '<div class="forecast-detail-hero-amt">' + fmtForecastWhole(-total) + '</div></div>';
       html += '<div class="forecast-detail-section-label"><span>Recurring \u00B7 Counted</span><span>Latest amount</span></div>';
-      bills.forEach(function (s) {
-        var next = FC.expandSchedule(s, FC.startOfDay(Date.now()), FC.addDays(Date.now(), 120), entries, getCheckingAccount().id)[0];
+      billSchedules.forEach(function (s) {
+        var next = FC.nextProjectedOccurrence(s, nowMs, entries, checkingId, FC.addDays(nowMs, 450));
         html += '<div class="forecast-detail-row"><div><p class="forecast-detail-row-name">' + escHtml(s.label) + '</p><p class="forecast-detail-row-sub">\u21BB ' + escHtml(scheduleCadenceLabel(s)) + '</p></div>';
-        html += '<div><div class="forecast-detail-row-amt">' + fmtMoneyDisplay(s.amount) + '</div>';
-        html += '<div class="forecast-detail-row-date">Next ' + (next ? formatForecastShortDate(next.ts) : '\u2014') + '</div></div></div>';
+        html += '<div><div class="forecast-detail-row-amt">' + fmtForecastWhole(s.amount) + '</div>';
+        html += '<div class="forecast-detail-row-date">Next ' + (next ? formatForecastWeekdayDate(next.ts) : '\u2014') + '</div></div></div>';
       });
       if (possible.length) {
         html += '<div class="forecast-detail-section-label"><span>Possible one-offs</span><span>Not counted</span></div>';
@@ -6534,11 +6584,12 @@
       html += '<div class="forecast-detail-hero"><div class="forecast-bd-icon" style="background:#748FFC22;color:#748FFC">' + forecastBreakdownRowIcon('card').svg + '</div>';
       html += '<div><h3>Card payments</h3><p>Autopay from Checking</p></div>';
       html += '<div class="forecast-detail-hero-amt">' + forecastSignedMoney(lastForecastBreakdown ? -lastForecastBreakdown.cardPayments : 0) + '</div></div>';
+      var nowCard = FC.startOfDay(Date.now());
       cards.forEach(function (s) {
-        var next = FC.expandSchedule(s, FC.startOfDay(Date.now()), FC.addDays(Date.now(), 120), entries, getCheckingAccount().id)[0];
+        var next = FC.nextProjectedOccurrence(s, nowCard, entries, getCheckingAccount().id, FC.addDays(nowCard, 450));
         html += '<div class="forecast-detail-row"><div><p class="forecast-detail-row-name">' + escHtml(s.label) + '</p><p class="forecast-detail-row-sub">' + escHtml(scheduleCadenceLabel(s)) + '</p></div>';
-        html += '<div><div class="forecast-detail-row-amt">' + fmtMoneyDisplay(s.amount) + '</div>';
-        html += '<div class="forecast-detail-row-date">Next ' + (next ? formatForecastShortDate(next.ts) : '\u2014') + '</div></div></div>';
+        html += '<div><div class="forecast-detail-row-amt">' + fmtForecastWhole(s.amount) + '</div>';
+        html += '<div class="forecast-detail-row-date">Next ' + (next ? formatForecastWeekdayDate(next.ts) : '\u2014') + '</div></div></div>';
       });
     } else {
       var rate = lastForecastSim.dailySpend || 0;
@@ -6939,7 +6990,7 @@
       var iconBg = '#cc5de822';
       var iconColor = '#cc5de8';
       var iconSvg = iconBadge(cat || { icon: 'receipt', color: '#cc5de8' }, 'sm');
-      var sub = formatForecastShortDate(u.ts);
+      var sub = formatForecastWeekdayDate(u.ts);
       if (u.kind === 'inflow') {
         iconBg = '#34C77B22'; iconColor = '#34C77B';
         iconSvg = '<svg width="18" height="18" viewBox="0 0 18 18" fill="none"><path d="M4 9h10M10 5l4 4-4 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>';
@@ -6947,18 +6998,13 @@
       } else if (u.kind === 'card-payment') {
         iconBg = '#748FFC22'; iconColor = '#748FFC';
         iconSvg = '<svg width="18" height="18" viewBox="0 0 18 18" fill="none"><rect x="2" y="4" width="14" height="10" rx="1.5" stroke="currentColor"/><path d="M2 7h14" stroke="currentColor"/></svg>';
-        sub += ' \u00B7 Card payments';
+        sub += ' \u00B7 Card payment';
       } else if (u.kind === 'transfer-other') {
         iconBg = 'var(--raised)'; iconColor = 'var(--text-secondary)';
         iconSvg = '<svg width="18" height="18" viewBox="0 0 18 18" fill="none"><path d="M3 7h8M9 5l3 2-3 2M15 11H7M9 13l-3-2 3-2" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>';
         sub += ' \u00B7 Transfer';
-      } else if (cat) {
-        sub += ' \u00B7 Bills';
       } else {
         sub += ' \u00B7 Bills';
-      }
-      if (u.nominalTs && u.nominalTs !== u.ts) {
-        sub += ' \u00B7 ' + forecastMovedFromHTML(u.nominalTs, u.ts).replace(/<[^>]+>/g, '').replace('📅 ', '');
       }
       var amtClass = 'forecast-up-amt';
       var amtTxt = '';
@@ -6983,13 +7029,13 @@
       if (u.nominalTs && u.nominalTs !== u.ts) html += forecastMovedFromHTML(u.nominalTs, u.ts);
       html += '</div>';
       html += '<div class="forecast-up-amt-col"><div class="' + amtClass + '">' + amtTxt + '</div>';
-      html += '<div class="forecast-up-run">\u2192 ' + fmtForecastMoneyShort(u.balanceAfter) + '</div>';
+      html += '<div class="forecast-up-run">\u2192 ' + fmtForecastWhole(u.balanceAfter) + '</div>';
       if (u.balanceAfter < 0) {
         html += '<div class="forecast-cushion-chip is-critical"><svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M6 2.2v4M6 8.2h.01" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/><path d="M2.2 9.2h7.6L10.2 6 6 2.2 1.8 6l.4 3.2z" stroke="currentColor" stroke-width="1"/></svg>';
-        html += 'Below $0 \u00B7 ' + fmtForecastMoneyShort(u.balanceAfter) + '</div>';
+        html += 'Below $0 \u00B7 ' + fmtForecastWhole(u.balanceAfter) + '</div>';
       } else if (u.balanceAfter < cushion) {
         html += '<div class="forecast-cushion-chip"><svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M6 2.2v4M6 8.2h.01" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/><path d="M2.2 9.2h7.6L10.2 6 6 2.2 1.8 6l.4 3.2z" stroke="currentColor" stroke-width="1"/></svg>';
-        html += 'Below ' + fmtForecastMoneyShort(cushion) + ' \u00B7 ' + fmtForecastMoneyShort(u.balanceAfter) + '</div>';
+        html += 'Below ' + fmtForecastWhole(cushion) + ' \u00B7 ' + fmtForecastWhole(u.balanceAfter) + '</div>';
       }
       html += '</div></button>';
     });
@@ -7000,11 +7046,12 @@
       html += '<div class="forecast-up-icon" style="background:#748FFC22;color:#748FFC">';
       html += '<svg width="18" height="18" viewBox="0 0 18 18" fill="none"><rect x="2" y="4" width="14" height="10" rx="1.5" stroke="currentColor"/><path d="M2 7h14" stroke="currentColor"/></svg></div>';
       html += '<div><p class="forecast-up-title">' + escHtml(peek.label) + '</p>';
-      html += '<p class="forecast-up-sub">' + formatForecastShortDate(peek.ts);
-      if (peek.nominalTs && peek.nominalTs !== peek.ts) html += ' \u00B7 Moved from ' + formatForecastShortDate(peek.nominalTs);
-      html += '</p></div>';
-      html += '<div class="forecast-up-amt-col"><div class="forecast-up-amt">-' + fmtMoneyDisplay(peek.amount) + '</div>';
-      html += '<div class="forecast-cushion-chip is-critical">Below $0</div></div></div>';
+      html += '<p class="forecast-up-sub">' + formatForecastWeekdayDate(peek.ts) + ' \u00B7 Card payment</p>';
+      if (peek.nominalTs && peek.nominalTs !== peek.ts) html += forecastMovedFromHTML(peek.nominalTs, peek.ts);
+      html += '</div>';
+      html += '<div class="forecast-up-amt-col"><div class="forecast-up-amt">' + fmtForecastWhole(-peek.amount) + '</div>';
+      var peekBal = peek.balanceAfter != null ? peek.balanceAfter : null;
+      html += '<div class="forecast-cushion-chip is-critical">Below $0 \u00B7 ' + (peekBal != null ? fmtForecastWhole(peekBal) : '\u2014') + '</div></div></div>';
     }
     list.innerHTML = html;
     Array.prototype.forEach.call(list.querySelectorAll('[data-forecast-item]'), function (btn) {

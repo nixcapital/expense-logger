@@ -200,6 +200,31 @@
     return /\bvenmo\b/.test(n) || /\bzelle\b/.test(n) || /\bcash app\b/.test(n) || /\bpaypal\b/.test(n);
   }
 
+  var CARD_ISSUER_RE = /(chase|amex|americanexpress|discover|capital\s*one|citi|citibank|barclays|wells\s*fargo|bank\s*of\s*america|usbank|synchrony|apple\s*card)/i;
+
+  function isLoanOrMortgageSpendingNote(note) {
+    var n = normText(note || '');
+    var c = compactText(note || '');
+    if (/\bmortgage\b/.test(n) || /\bstudent\s*ln\b/.test(n) || /\btuition\b/.test(n)) return true;
+    if (/studentloan|mortgagepymt|homeloan/.test(c)) return true;
+    return false;
+  }
+
+  function isExternalCardAutopayNote(note) {
+    if (!note) return false;
+    if (isLoanOrMortgageSpendingNote(note)) return false;
+    var n = normText(note || '');
+    var c = compactText(note || '');
+    if (/\bvenmo\b/.test(n)) return false;
+    if (/e-?payment/.test(c) && (/web/.test(c) || /(crd|card|credit|autopay)/.test(c) || CARD_ISSUER_RE.test(n))) return true;
+    if (/autopay/.test(c) && (/(crd|card|credit)/.test(c) || CARD_ISSUER_RE.test(n))) return true;
+    if (/crdautopay|creditautopay|creditcrd|cardpymt|cardpayment|cardpmt|ccpayment|ccpmt|creditcardpymt/.test(c)) return true;
+    if (/(crd|card).*(autopay|pymt|pmt|payment)/.test(c) || /(autopay|pymt|pmt).*(crd|card)/.test(c)) return true;
+    if (CARD_ISSUER_RE.test(n) && /(autopay|epayment|e-?payment|crdpymt|crdpmt|creditcrd)/.test(c)) return true;
+    if (/\bpayment\b/.test(n) && /\b(credit|crd|card)\b/.test(n) && CARD_ISSUER_RE.test(n)) return true;
+    return false;
+  }
+
   function p2pScheduleAllowed(list) {
     var bills = (list || []).filter(function (e) { return e.categoryId === 'bills'; });
     if (bills.length < 3) return false;
@@ -393,18 +418,18 @@
     return 30 * MS_DAY;
   }
 
-  function paymentPostedInCycle(entries, checkingId, schedule, projectedTs) {
+  function paymentPostedInCycle(entries, checkingId, schedule, projectedTs, nowMs) {
     if (!entries || !schedule) return false;
+    var today = nowMs != null ? startOfDay(nowMs) : startOfDay(Date.now());
     var period = schedulePeriodMs(schedule.scheduleType);
     var windowStart = addDays(projectedTs, -Math.round(period / MS_DAY / 2));
     var projDay = startOfDay(projectedTs);
-    var tol = amountToleranceFrac(schedule.amount,
-      schedule.scheduleType === 'semiannual' || schedule.scheduleType === 'annual' ? 0.15 : 0.10);
     var found = false;
     (entries || []).forEach(function (e) {
       if (found) return;
       if (e.accountId !== checkingId) return;
       var ets = startOfDay(e.ts);
+      if (ets > today) return;
       if (ets < windowStart || ets > projDay) return;
       if (!entryMatchesScheduleRow(e, schedule)) return;
       found = true;
@@ -940,11 +965,15 @@
         var fit = picked.fit;
         if (projAmt < 25) return;
         if (nowMs != null && scheduleStale(fit.lastTs, nowMs, fit.scheduleType)) return;
+        var cardPay = isExternalCardAutopayNote(sample.note || '');
+        var schedKind = cardPay ? 'card-payment' : 'outflow';
+        var schedKey = cardPay ? ('card-payment|' + key) : scheduleItemKey(key, projAmt);
+        var schedLabel = cardPay ? ((sample.note || key).slice(0, 48)) : (sample.note || key).slice(0, 48);
         out.push({
-          itemKey: scheduleItemKey(key, projAmt),
-          label: (sample.note || key).slice(0, 48),
+          itemKey: schedKey,
+          label: schedLabel,
           amount: Math.round(projAmt * 100) / 100,
-          kind: 'outflow',
+          kind: schedKind,
           inflow: false,
           categoryId: sample.categoryId,
           scheduleType: fit.scheduleType,
@@ -1076,7 +1105,7 @@
     nominals.forEach(function (nom) {
       var ts = adjustToBusinessDay(nom, schedule.shiftRule || 'next');
       if (ts <= afterMs || ts > untilMs) return;
-      if (entries && checkingId && paymentPostedInCycle(entries, checkingId, schedule, ts)) return;
+      if (entries && checkingId && paymentPostedInCycle(entries, checkingId, schedule, ts, afterMs)) return;
       var ev = {
         ts: ts,
         amount: schedule.amount,
@@ -1510,6 +1539,16 @@
         };
       }
     });
+    if (peekPastWindow) {
+      var peekBal = null;
+      upcoming.forEach(function (u) {
+        if (u.ts === peekPastWindow.ts && u.itemKey === peekPastWindow.itemKey) peekBal = u.balanceAfter;
+      });
+      if (peekBal == null && upcoming.length) {
+        peekBal = roundMoney(upcoming[upcoming.length - 1].balanceAfter - peekPastWindow.amount);
+      }
+      peekPastWindow.balanceAfter = peekBal;
+    }
 
     return {
       ok: true,
@@ -1747,6 +1786,53 @@
     return best;
   }
 
+  function windowEventDetails(events, nowMs, endMs) {
+    var incomeEvents = [];
+    var billByKey = {};
+    var cardByKey = {};
+    (events || []).forEach(function (ev) {
+      if (ev.ts <= nowMs || ev.ts > endMs) return;
+      if (ev.kind === 'inflow') incomeEvents.push(ev);
+      else if (ev.kind === 'card-payment') cardByKey[ev.itemKey || ev.label] = ev;
+      else if (ev.kind === 'outflow') billByKey[ev.itemKey || ev.label] = ev;
+    });
+    var incomeAmounts = incomeEvents.map(function (e) { return e.amount; });
+    var incomeEach = incomeAmounts.length ? mode(incomeAmounts) : 0;
+    var billItems = Object.keys(billByKey).map(function (k) {
+      return { itemKey: k, label: billByKey[k].label, amount: billByKey[k].amount };
+    });
+    billItems.sort(function (a, b) { return a.label.localeCompare(b.label); });
+    var cardItems = Object.keys(cardByKey).map(function (k) {
+      return { itemKey: k, label: cardByKey[k].label, amount: cardByKey[k].amount, ts: cardByKey[k].ts };
+    });
+    cardItems.sort(function (a, b) { return a.ts - b.ts; });
+    return {
+      incomeCount: incomeEvents.length,
+      incomeEach: roundMoney(incomeEach),
+      billCount: billItems.length,
+      billItems: billItems,
+      cardCount: cardItems.length,
+      cardItems: cardItems
+    };
+  }
+
+  function nextProjectedOccurrence(schedule, afterMs, entries, checkingId, horizonMs) {
+    if (!schedule) return null;
+    var until = horizonMs || addDays(afterMs, 400);
+    var occ = expandSchedule(schedule, afterMs, until, entries, checkingId);
+    return occ.length ? occ[0] : null;
+  }
+
+  function nextCardPaymentAfter(events, afterMs) {
+    var next = null;
+    (events || []).forEach(function (ev) {
+      if (ev.kind !== 'card-payment') return;
+      if (ev.ts <= afterMs) return;
+      if (!next || ev.ts < next.ts) next = ev;
+    });
+    return next;
+  }
+
   function computeWindowBreakdown(input) {
     input = input || {};
     var nowMs = startOfDay(input.nowMs || Date.now());
@@ -1779,6 +1865,8 @@
       var fromPts = balanceOnDay(input.points, endMs);
       if (fromPts != null) endBal = fromPts;
     }
+    var details = windowEventDetails(scheduled.events, nowMs, endMs);
+    var nextCard = nextCardPaymentAfter(scheduled.events, endMs);
     return {
       ok: true,
       windowDays: windowDays,
@@ -1791,7 +1879,9 @@
       totalOut: totalOut,
       net: net,
       startBalance: startBal,
-      endBalance: endBal
+      endBalance: endBal,
+      details: details,
+      nextCardAfterWindow: nextCard
     };
   }
 
@@ -1835,16 +1925,15 @@
     var cushion = input.cushion != null ? input.cushion : 600;
     var sim = input.sim || {};
     var endMs = addDays(nowMs, windowDays);
-    var positiveAllWindow = !!(sim.lowestInWindow && sim.lowestInWindow.balance >= 0 && (
-      sim.neverRunsOut ||
-      (sim.lastsUntil != null && sim.lastsUntil >= endMs && !sim.peekPastWindow)
-    ));
-    var cause = positiveAllWindow ? null : findForecastCauseEvent({
+    var solventThroughWindow = sim.neverRunsOut || (sim.lastsUntil != null && sim.lastsUntil >= endMs);
+    var causeProbe = findForecastCauseEvent({
       upcoming: sim.upcoming,
       lastsUntil: sim.lastsUntil,
       cushion: cushion,
       peekPastWindow: sim.peekPastWindow
     });
+    var positiveAllWindow = !!(sim.lowestInWindow && sim.lowestInWindow.balance >= 0 && solventThroughWindow && !causeProbe);
+    var cause = positiveAllWindow ? null : causeProbe;
     return {
       positiveAllWindow: positiveAllWindow,
       lastsUntil: sim.lastsUntil,
@@ -1997,6 +2086,8 @@
     buildScheduledEvents: buildScheduledEvents,
     simulateBalanceTimeline: simulateBalanceTimeline,
     computeWindowBreakdown: computeWindowBreakdown,
+    nextProjectedOccurrence: nextProjectedOccurrence,
+    isExternalCardAutopayNote: isExternalCardAutopayNote,
     findForecastCauseEvent: findForecastCauseEvent,
     buildForecastHeadline: buildForecastHeadline,
     detectPossibleOneOffs: detectPossibleOneOffs,

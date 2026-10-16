@@ -373,7 +373,9 @@ assert.ok(schedAmt(/NELNET/i).amount === 220);
 assert.ok(schedAmt(/STATE FARM/i).scheduleType === 'semiannual');
 assert.ok(schedAmt(/VERIZON/i).amount === 166);
 assert.ok(!schedAmt(/PLANET FITNESS/i), 'stale gym not projected');
-assert.ok(schedAmt(/DISCOVER/i), 'discover e-payment projected');
+const discover = schedAmt(/DISCOVER/i);
+assert.ok(discover, 'discover e-payment projected');
+assert.strictEqual(discover.kind, 'card-payment', 'discover is card payment not bill');
 
 const chase = schedAmt(/Chase card/i);
 assert.ok(chase && chase.amount >= 3500);
@@ -470,5 +472,70 @@ const withOneOff = FC.buildScheduledEvents({
 assert.ok(withOneOff.events.some(function (e) {
   return e.itemKey && e.itemKey.indexOf('oneoff|') === 0;
 }), 'counted one-off generates forecast events');
+
+console.log('forecast-test: bills row matches window (count, names, total)');
+const brWin = FC.computeWindowBreakdown({
+  nowMs: fx.nowMs,
+  windowDays: 30,
+  startingBalance: fxRun.startingBalance,
+  points: fxSim.points,
+  entries: fx.entries,
+  checkingId: fx.checkingId,
+  chaseId: fx.chaseId,
+  transferPairs: fx.transferPairs,
+  maxLookaheadDays: 365
+});
+const billSum = (brWin.details.billItems || []).reduce(function (s, b) { return s + b.amount; }, 0);
+assert.strictEqual(Math.round(billSum * 100) / 100, brWin.bills);
+assert.strictEqual(brWin.details.billCount, brWin.details.billItems.length);
+assert.ok(!brWin.details.billItems.some(function (b) { return /DISCOVER/i.test(b.label); }), 'discover not in bills bucket');
+
+console.log('forecast-test: toyota next date in November after Oct 16');
+const toyota = schedAmt(/TOYOTA/i);
+const toyNext = FC.nextProjectedOccurrence(toyota, FIXTURE_NOW, fx.entries, fx.checkingId, FC.addDays(FIXTURE_NOW, 120));
+assert.ok(toyNext, 'toyota next occurrence');
+assert.strictEqual(new Date(toyNext.ts).getMonth(), 10, 'next toyota in November');
+
+console.log('forecast-test: semiannual insurance next date after Oct payment');
+const insSched = schedAmt(/STATE FARM/i);
+const insNext = FC.nextProjectedOccurrence(insSched, FIXTURE_NOW, fx.entries, fx.checkingId, FC.addDays(FIXTURE_NOW, 450));
+assert.ok(insNext, 'insurance next occurrence within horizon');
+assert.strictEqual(new Date(insNext.ts).getMonth(), 3, 'next insurance in April after Oct charge');
+
+console.log('forecast-test: income paycheck count matches 30d window');
+const fxPayBr = buildForecastFixture164({ withIncome: true, balance: 12000 });
+const payBr = FC.computeWindowBreakdown({
+  nowMs: fxPayBr.nowMs,
+  windowDays: 30,
+  startingBalance: 12000,
+  entries: fxPayBr.entries,
+  checkingId: fxPayBr.checkingId,
+  transferPairs: fxPayBr.transferPairs,
+  maxLookaheadDays: 365
+});
+assert.strictEqual(payBr.income, payBr.details.incomeCount * payBr.details.incomeEach);
+assert.strictEqual(payBr.details.incomeCount, 2, 'two projected paychecks in 30d window from Oct 16');
+
+console.log('forecast-test: positive all-window headline with peek past chart');
+const fxInc = buildForecastFixture164({ withIncome: true, balance: 25000 });
+const simInc = FC.simulateBalanceTimeline({
+  nowMs: fxInc.nowMs,
+  startingBalance: 25000,
+  entries: fxInc.entries,
+  checkingId: fxInc.checkingId,
+  chaseId: CHASE,
+  transferPairs: fxInc.transferPairs,
+  chartDays: 90,
+  maxLookaheadDays: 365,
+  cushion: 600
+});
+const headInc = FC.buildForecastHeadline({
+  nowMs: fxInc.nowMs,
+  windowDays: 90,
+  cushion: 600,
+  sim: simInc
+});
+assert.ok(simInc.peekPastWindow, 'large bill peek exists past 90d window');
+assert.ok(headInc.positiveAllWindow, 'stays positive through 90d even with peek row');
 
 console.log('PASS');

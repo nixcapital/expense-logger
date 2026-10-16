@@ -1,5 +1,5 @@
 /**
- * Forecast 1.6.5 v2 UI screenshots (428×926) with fake fixtures.
+ * Forecast 1.6.5 v2 QA screenshots (428×926) with fake fixtures.
  * Run: node scripts/forecast-165-screenshots.mjs
  */
 import { chromium } from 'playwright';
@@ -7,6 +7,7 @@ import { createServer } from 'http';
 import { readFileSync, existsSync, mkdirSync } from 'fs';
 import { join, extname } from 'path';
 import { buildForecastFixture164 } from './forecast-fixture-164.mjs';
+import { buildForecastFixture165Income } from './forecast-fixture-165-income.mjs';
 
 const PORT = 8897;
 const ROOT = '/workspace';
@@ -16,7 +17,6 @@ const MIME = {
   '.json': 'application/json', '.png': 'image/png', '.svg': 'image/svg+xml'
 };
 const VIEWPORT = { width: 428, height: 926 };
-const FIXED_NOW = new Date(2026, 9, 16, 12, 0, 0).getTime();
 
 function server() {
   return createServer((req, res) => {
@@ -29,8 +29,9 @@ function server() {
   });
 }
 
-function seedStorage(withIncome) {
-  const fx = buildForecastFixture164({ withIncome: !!withIncome, balance: withIncome ? 12000 : 3560 });
+function seedStorage(opts) {
+  opts = opts || {};
+  const fx = opts.income90 ? buildForecastFixture165Income() : buildForecastFixture164({ withIncome: false, balance: 3560 });
   const accounts = [
     {
       id: fx.checkingId, name: 'Checking', type: 'bank', color: '#20C997',
@@ -65,12 +66,7 @@ async function openForecast(page) {
     if (splash) splash.classList.add('is-dismissed');
     const EL = window.ExpenseLoggerTest;
     if (EL && EL.openForecastScreen) EL.openForecastScreen();
-    else {
-      const card = document.getElementById('homeForecastCard');
-      if (card && !card.hidden) card.click();
-    }
   });
-  await page.waitForSelector('#tab-forecast:not([hidden])', { timeout: 20000 });
   await page.waitForFunction(() => {
     const m = document.getElementById('forecastMain');
     return m && m.hidden === false;
@@ -84,7 +80,7 @@ async function capture(page, outDir, name, scrollY) {
       const el = document.getElementById('tab-forecast');
       if (el) el.scrollTop = y;
     }, scrollY);
-    await page.waitForTimeout(250);
+    await page.waitForTimeout(300);
   }
   await page.screenshot({ path: join(outDir, name), fullPage: false });
 }
@@ -106,15 +102,14 @@ async function run() {
     await page.addInitScript((data) => {
       Object.keys(data).forEach((k) => localStorage.setItem(k, data[k]));
       localStorage.setItem('expenseLogger.lock.v1', JSON.stringify({ enabled: false }));
-      const fixed = new Date(2026, 9, 16, 12, 0, 0).getTime();
-      Date.now = function () { return fixed; };
-    }, seedStorage(false));
+      Date.now = function () { return new Date(2026, 9, 16, 12, 0, 0).getTime(); };
+    }, seedStorage({}));
     await page.goto(`http://127.0.0.1:${PORT}/index.html`, { waitUntil: 'networkidle' });
     await openForecast(page);
     for (const outDir of OUT_DIRS) {
       await capture(page, outDir, `1-top-${scheme}.png`, 0);
       if (scheme === 'light') {
-        await capture(page, outDir, 'no-income-notice.png', 0);
+        await capture(page, outDir, 'no-income-notice.png', 520);
         await capture(page, outDir, '3-upcoming.png', 1100);
         await page.click('[data-forecast-detail="bills"]');
         await page.waitForSelector('#forecastDetailSheet.show');
@@ -138,14 +133,13 @@ async function run() {
     Object.keys(data).forEach((k) => localStorage.setItem(k, data[k]));
     localStorage.setItem('expenseLogger.lock.v1', JSON.stringify({ enabled: false }));
     Date.now = function () { return new Date(2026, 9, 16, 12, 0, 0).getTime(); };
-  }, seedStorage(true));
+  }, seedStorage({ income90: true }));
   await incomePage.goto(`http://127.0.0.1:${PORT}/index.html`, { waitUntil: 'networkidle' });
   await openForecast(incomePage);
   await incomePage.click('.forecast-range-btn[data-forecast-days="90"]');
-  await incomePage.waitForTimeout(400);
+  await incomePage.waitForTimeout(500);
   for (const outDir of OUT_DIRS) {
     await capture(incomePage, outDir, '5-with-income.png', 0);
-    await capture(incomePage, outDir, 'no-income-hidden.png', 0);
   }
   await incomeCtx.close();
 
