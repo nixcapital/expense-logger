@@ -891,6 +891,87 @@
     };
   }
 
+  var CHART_Y_LABEL_MIN_GAP_PX = 20;
+
+  function forecastChartAxisStep(span) {
+    if (span <= 400) return 100;
+    if (span <= 900) return 200;
+    if (span <= 1800) return 250;
+    if (span <= 3500) return 500;
+    return 1000;
+  }
+
+  function forecastChartYAt(bal, minBal, maxBal, padT, innerH) {
+    return padT + innerH - ((bal - minBal) / (maxBal - minBal || 1)) * innerH;
+  }
+
+  function planForecastChartYAxisLabels(opts) {
+    opts = opts || {};
+    var minBal = opts.minBal;
+    var maxBal = opts.maxBal;
+    var step = opts.step;
+    var cushion = opts.cushion;
+    var cushionNear = !!opts.cushionNear;
+    var padT = opts.padT != null ? opts.padT : 12;
+    var innerH = opts.innerH != null ? opts.innerH : 162;
+    var baselineNudge = opts.baselineNudge != null ? opts.baselineNudge : 4;
+
+    function yAt(bal) {
+      return forecastChartYAt(bal, minBal, maxBal, padT, innerH) + baselineNudge;
+    }
+
+    var yTicks = [];
+    for (var tick = minBal; tick <= maxBal; tick += step) yTicks.push(tick);
+    if (cushionNear && yTicks.indexOf(cushion) === -1) yTicks.push(cushion);
+    yTicks.sort(function (a, b) { return a - b; });
+
+    var cushionLabelY = cushionNear ? yAt(cushion) : padT + 10;
+    var labels = [];
+    var hidden = [];
+
+    yTicks.forEach(function (bal) {
+      var isCushion = cushionNear && bal === cushion;
+      var y = yAt(bal);
+      if (!isCushion) {
+        if (cushionNear && Math.abs(bal - cushion) < step * 0.5) {
+          hidden.push({ bal: bal, reason: 'near-cushion-value' });
+          return;
+        }
+        if (Math.abs(y - cushionLabelY) < CHART_Y_LABEL_MIN_GAP_PX) {
+          hidden.push({ bal: bal, reason: 'near-cushion-y' });
+          return;
+        }
+      }
+      labels.push({ bal: bal, isCushion: isCushion, y: y });
+    });
+
+    return {
+      labels: labels,
+      hidden: hidden,
+      cushionLabelY: cushionLabelY,
+      cushionNear: cushionNear,
+      showCushionNote: !cushionNear,
+      minGapPx: CHART_Y_LABEL_MIN_GAP_PX
+    };
+  }
+
+  function yAxisLabelsCollide(plan) {
+    if (!plan || !plan.labels) return false;
+    var cushionYs = [];
+    plan.labels.forEach(function (lb) {
+      if (lb.isCushion) cushionYs.push(lb.y);
+    });
+    if (plan.showCushionNote) cushionYs.push(plan.cushionLabelY);
+    for (var i = 0; i < plan.labels.length; i++) {
+      var lb = plan.labels[i];
+      if (lb.isCushion) continue;
+      for (var c = 0; c < cushionYs.length; c++) {
+        if (Math.abs(lb.y - cushionYs[c]) < plan.minGapPx) return true;
+      }
+    }
+    return false;
+  }
+
   function runForecast(input) {
     input = input || {};
     var nowMs = input.nowMs || Date.now();
@@ -962,6 +1043,11 @@
     buildScheduledEvents: buildScheduledEvents,
     simulateBalanceTimeline: simulateBalanceTimeline,
     runForecast: runForecast,
-    bankHolidayKeysForYear: bankHolidayKeysForYear
+    bankHolidayKeysForYear: bankHolidayKeysForYear,
+    forecastChartAxisStep: forecastChartAxisStep,
+    forecastChartYAt: forecastChartYAt,
+    planForecastChartYAxisLabels: planForecastChartYAxisLabels,
+    yAxisLabelsCollide: yAxisLabelsCollide,
+    CHART_Y_LABEL_MIN_GAP_PX: CHART_Y_LABEL_MIN_GAP_PX
   };
 });

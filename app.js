@@ -174,6 +174,7 @@
   var viewingTransferPairId = null;
   var transferPatterns = [];
   var forecastChartDays = 60;
+  var lastForecastSim = null;
   var forecastScreenOpen = false;
   var balanceSheetAccountId = null;
   var viewingOtherTransferEntryId = null;
@@ -6124,20 +6125,13 @@
       cushion: getForecastCushion()
     });
     if (sim.schedules) lastForecastSchedules = sim.schedules;
+    lastForecastSim = sim;
     if (sim.ok && $('forecastLowestSub')) {
       var lowPt = sim.lowestInWindow || sim.lowest;
       $('forecastLowestSub').textContent = 'Lowest ' + fmtMoneyDisplay(lowPt.balance) + ' on ' + formatForecastShortDate(lowPt.ts);
     }
     drawForecastChart(sim, getForecastCushion());
     renderForecastUpcoming(sim, getForecastCushion());
-  }
-
-  function forecastChartAxisStep(span) {
-    if (span <= 400) return 100;
-    if (span <= 900) return 200;
-    if (span <= 1800) return 250;
-    if (span <= 3500) return 500;
-    return 1000;
   }
 
   function drawForecastChart(sim, cushion) {
@@ -6173,7 +6167,7 @@
       dataMin = Math.min(dataMin, cushion);
       dataMax = Math.max(dataMax, cushion);
     }
-    var step = forecastChartAxisStep(dataMax - dataMin);
+    var step = FC.forecastChartAxisStep(dataMax - dataMin);
     var minBal = Math.floor((dataMin - step * 0.35) / step) * step;
     var maxBal = Math.ceil((dataMax + step * 0.35) / step) * step;
     if (maxBal - minBal < step * 2) maxBal = minBal + step * 2;
@@ -6244,26 +6238,37 @@
       ctx.arc(xAt(p.ts), yAt(p.balance), 4, 0, Math.PI * 2);
       ctx.fill();
     });
-    var yTicks = [];
-    for (var tick = minBal; tick <= maxBal; tick += step) yTicks.push(tick);
-    if (cushionNear && yTicks.indexOf(cushion) === -1) yTicks.push(cushion);
-    yTicks.sort(function (a, b) { return a - b; });
+    var axisPlan = FC.planForecastChartYAxisLabels({
+      minBal: minBal,
+      maxBal: maxBal,
+      step: step,
+      cushion: cushion,
+      cushionNear: cushionNear,
+      padT: padT,
+      innerH: h,
+      baselineNudge: 4
+    });
     ctx.font = '11px system-ui, sans-serif';
     ctx.textAlign = 'right';
-    var cushionLabelY = cushionNear ? yAt(cushion) + 4 : padT + 10;
-    yTicks.forEach(function (bal) {
-      var isCushion = cushionNear && bal === cushion;
-      var y = yAt(bal) + 4;
-      if (!isCushion && Math.abs(y - cushionLabelY) < 14) return;
-      ctx.fillStyle = isCushion ? warnColor : gridColor;
-      ctx.font = isCushion ? '600 11px system-ui, sans-serif' : '11px system-ui, sans-serif';
-      ctx.fillText(fmtForecastMoneyShort(bal), padL + w + padR - 4, y);
+    axisPlan.labels.forEach(function (lb) {
+      ctx.fillStyle = lb.isCushion ? warnColor : gridColor;
+      ctx.font = lb.isCushion ? '600 11px system-ui, sans-serif' : '11px system-ui, sans-serif';
+      ctx.fillText(fmtForecastMoneyShort(lb.bal), padL + w + padR - 4, lb.y);
     });
-    if (!cushionNear) {
+    if (axisPlan.showCushionNote) {
       ctx.textAlign = 'left';
       ctx.fillStyle = warnColor;
       ctx.font = '600 11px system-ui, sans-serif';
-      ctx.fillText('Cushion ' + fmtForecastMoneyShort(cushion), padL, cushionLabelY);
+      ctx.fillText('Cushion ' + fmtForecastMoneyShort(cushion), padL, axisPlan.cushionLabelY);
+    }
+    if (typeof window !== 'undefined') {
+      window.__forecastChartAxisDebug = {
+        chartDays: forecastChartDays,
+        colorScheme: window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light',
+        cushionNear: cushionNear,
+        plan: axisPlan,
+        collides: FC.yAxisLabelsCollide(axisPlan)
+      };
     }
     ctx.textAlign = 'center';
     ctx.fillStyle = gridColor;
@@ -6713,6 +6718,16 @@
       if (forecastScreenOpen) renderForecastScreen();
     }
   });
+  if (typeof window !== 'undefined' && window.matchMedia) {
+    var chartSchemeMq = window.matchMedia('(prefers-color-scheme: dark)');
+    var onChartSchemeChange = function () {
+      if (forecastScreenOpen && lastForecastSim) {
+        drawForecastChart(lastForecastSim, getForecastCushion());
+      }
+    };
+    if (chartSchemeMq.addEventListener) chartSchemeMq.addEventListener('change', onChartSchemeChange);
+    else if (chartSchemeMq.addListener) chartSchemeMq.addListener(onChartSchemeChange);
+  }
   Array.prototype.forEach.call(document.querySelectorAll('.forecast-range-btn'), function (btn) {
     btn.addEventListener('click', function () {
       var days = parseInt(btn.dataset.forecastDays, 10);

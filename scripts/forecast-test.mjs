@@ -220,4 +220,55 @@ var chartBal = billSim.points.filter(function (p) { return p.ts === rentRow.ts; 
 assert.ok(chartBal, 'chart point on rent day exists');
 assert.strictEqual(rentRow.balanceAfter, chartBal.balance);
 
+console.log('forecast-test: y-axis hides tick near $600 cushion');
+var axisPlan = FC.planForecastChartYAxisLabels({
+  minBal: 0,
+  maxBal: 2500,
+  step: 500,
+  cushion: 600,
+  cushionNear: true,
+  padT: 12,
+  innerH: 162,
+  baselineNudge: 4
+});
+assert.strictEqual(FC.yAxisLabelsCollide(axisPlan), false);
+assert.ok(axisPlan.hidden.some(function (h) { return h.bal === 500; }), '500 tick hidden near 600 cushion');
+assert.ok(axisPlan.labels.some(function (l) { return l.isCushion && l.bal === 600; }));
+
+console.log('forecast-test: y-axis plan across chart windows');
+[30, 60, 90].forEach(function (days) {
+  var simW = FC.simulateBalanceTimeline({
+    nowMs: nowFix,
+    startingBalance: 2382.42,
+    entries: billEntries,
+    checkingId: CHECKING,
+    transferPairs: [],
+    recurringItems: [],
+    chartDays: days,
+    maxLookaheadDays: 365,
+    cushion: 600,
+    dailySpend: 18
+  });
+  var pts = simW.points.filter(function (p) { return p.ts <= FC.addDays(nowFix, days); });
+  var dMin = pts[0].balance;
+  var dMax = pts[0].balance;
+  pts.forEach(function (p) {
+    if (p.balance < dMin) dMin = p.balance;
+    if (p.balance > dMax) dMax = p.balance;
+  });
+  var spanW = Math.max(80, dMax - dMin);
+  var near = 600 >= dMin - spanW * 0.25 && 600 <= dMax + spanW * 0.2;
+  if (near) {
+    var dMinA = Math.min(dMin, 600);
+    var dMaxA = Math.max(dMax, 600);
+    var stepW = FC.forecastChartAxisStep(dMaxA - dMinA);
+    var minB = Math.floor((dMinA - stepW * 0.35) / stepW) * stepW;
+    var maxB = Math.ceil((dMaxA + stepW * 0.35) / stepW) * stepW;
+    var planW = FC.planForecastChartYAxisLabels({
+      minBal: minB, maxBal: maxB, step: stepW, cushion: 600, cushionNear: true, padT: 12, innerH: 162
+    });
+    assert.strictEqual(FC.yAxisLabelsCollide(planW), false, 'window ' + days + 'd');
+  }
+});
+
 console.log('PASS');

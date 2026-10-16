@@ -1,5 +1,5 @@
 /**
- * QA screenshots for 1.6.0 forecast (428×926 viewport). Fake data only.
+ * QA forecast screenshots (428×926 viewport). Fake data only.
  * Run: node scripts/forecast-qa-screenshots.mjs
  */
 import { chromium } from 'playwright';
@@ -14,7 +14,6 @@ const MIME = {
   '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css',
   '.json': 'application/json', '.png': 'image/png', '.svg': 'image/svg+xml'
 };
-const MODAL_MS = 450;
 const VIEWPORT = { width: 428, height: 926 };
 
 function server() {
@@ -71,8 +70,8 @@ function seed() {
     push({ id: 'rent-' + i, amount: 1650, categoryId: 'bills', note: 'Maple Court Apts', ts: ts(y, m, d), accountId: 'acct-checking' });
   });
 
-  [[2026, 5, 22], [2026, 6, 22], [2026, 7, 22], [2026, 8, 22]].forEach(([y, m, d], i) => {
-    push({ id: 'duke-' + i, amount: 142.4, categoryId: 'bills', note: 'Duke Energy', ts: ts(y, m, d), accountId: 'acct-checking' });
+  [ts(2026, 5, 22), ts(2026, 6, 22), ts(2026, 7, 22), ts(2026, 8, 22)].forEach((t, i) => {
+    push({ id: 'duke-' + i, amount: 142.4, categoryId: 'bills', note: 'Duke Energy', ts: t, accountId: 'acct-checking' });
   });
 
   [
@@ -178,66 +177,22 @@ async function run() {
   await page.click('#homeForecastCard');
   await page.waitForSelector('#tab-forecast:not([hidden])');
   await page.waitForTimeout(400);
+
+  await page.emulateMedia({ colorScheme: 'light' });
+  await page.click('.forecast-range-btn[data-forecast-days="60"]');
+  await page.waitForTimeout(400);
   await shot(page, 'forecast-light.png');
 
   await page.emulateMedia({ colorScheme: 'dark' });
-  await page.waitForTimeout(250);
-  await shot(page, 'forecast-dark.png');
-  await page.emulateMedia({ colorScheme: 'light' });
-
-  await page.click('#forecastInfoBtn');
-  await page.waitForSelector('#forecastInfoModal.show');
-  await page.waitForTimeout(MODAL_MS);
-  await shot(page, 'forecast-info-popover.png');
-  await page.click('#forecastInfoCloseBtn');
-  await page.waitForTimeout(MODAL_MS);
-
-  const dukeRow = await page.$('.forecast-up-row:has-text("Duke Energy")');
-  if (dukeRow) {
-    await dukeRow.click();
-    await page.waitForSelector('#forecastItemEditModal.show');
-    await page.waitForTimeout(MODAL_MS);
-    await shot(page, 'forecast-upcoming-edit-sheet.png');
-    await page.click('#forecastItemEditCancelBtn');
-    await page.waitForTimeout(MODAL_MS);
-  }
-
-  await page.click('#forecastBackBtn');
-  await page.waitForTimeout(250);
-  await page.click('button[data-tab="history"]');
-  await page.waitForTimeout(300);
-  await page.click('[data-activity-range="all"]');
-  await page.waitForTimeout(150);
-  await page.click('.activity-account-segment[data-account-id="acct-checking"]');
   await page.waitForTimeout(200);
-  const opened = await page.evaluate(() => {
-    const row = document.querySelector('.activity-row[data-id="sav-2"]');
-    if (row) { row.click(); return true; }
-    return false;
-  });
-  if (!opened) throw new Error('transfer row not found');
-  await page.waitForSelector('#otherTransferSheet.show');
-  await page.waitForTimeout(MODAL_MS);
-  await shot(page, 'transfer-other-account-detail.png');
-  await page.evaluate(() => {
-    const s = document.getElementById('otherTransferSheet');
-    if (s) s.classList.remove('show');
-  });
-  await page.waitForTimeout(MODAL_MS);
+  await page.click('.forecast-range-btn[data-forecast-days="60"]');
+  await page.waitForTimeout(400);
+  await shot(page, 'forecast-dark.png');
 
-  await page.click('button[data-tab="settings"]');
-  await page.waitForTimeout(250);
-  const fileInput = await page.$('#importFileInput');
-  const sampleBank = join(ROOT, 'test/fixtures/sample-bank.xlsx');
-  if (fileInput && existsSync(sampleBank)) {
-    await fileInput.setInputFiles(sampleBank);
-    await page.waitForSelector('#importAccountModal.show', { timeout: 12000 });
-    await page.waitForTimeout(MODAL_MS);
-    await page.click('#importAccountContinueBtn');
-    await page.waitForSelector('#importModal.show');
-    await page.waitForTimeout(MODAL_MS);
-    await shot(page, 'import-review-auto-transfer.png');
-  }
+  await page.emulateMedia({ colorScheme: 'light' });
+  await page.click('.forecast-range-btn[data-forecast-days="90"]');
+  await page.waitForTimeout(400);
+  await shot(page, 'forecast-90d.png');
 
   console.log('Screenshots saved to', OUT_DIRS.join(', '));
   await browser.close();
