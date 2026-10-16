@@ -13,8 +13,8 @@
 <link rel="manifest" href="manifest.json">
 <link rel="icon" href="icon-192.png">
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
-<link rel="stylesheet" href="styles.css?v=1.6.0">
-<link rel="stylesheet" href="icon-animations.css?v=1.6.0">
+<link rel="stylesheet" href="styles.css?v=1.6.1">
+<link rel="stylesheet" href="icon-animations.css?v=1.6.1">
 <title>Expense Logger</title>
 </head>
 <body>
@@ -646,28 +646,33 @@
 <div class="modal-overlay sheet modal-front" id="balanceSheet">
   <div class="modal sheet-modal balance-sheet-modal">
     <div class="sheet-grabber" aria-hidden="true"></div>
-    <div class="balance-sheet-header">
-      <h3>Set current balance</h3>
-      <button type="button" class="balance-sheet-close" id="balanceSheetClose" aria-label="Close">✕</button>
+    <div class="balance-sheet-scroll">
+      <div class="balance-sheet-header">
+        <h3>Set current balance</h3>
+        <button type="button" class="balance-sheet-close" id="balanceSheetClose" aria-label="Close">✕</button>
+      </div>
+      <div class="balance-sheet-account" id="balanceSheetAccount"></div>
+      <label class="balance-input-wrap">
+        <span class="balance-input-label">Current balance</span>
+        <input type="text" id="balanceAmountInput" inputmode="decimal" autocomplete="off" enterkeyhint="done" aria-label="Current balance" aria-describedby="balanceAmountError">
+      </label>
+      <p class="balance-input-error" id="balanceAmountError" hidden role="alert"></p>
+      <button type="button" class="grouped-row balance-asof-row" id="balanceAsOfRow">
+        <span class="row-icon" data-ui-icon="ui-calendar" data-ui-icon-size="row" aria-hidden="true"></span>
+        <span class="row-label">As of</span>
+        <span class="row-value" id="balanceAsOfPreview">Today</span>
+        <span class="chevron">›</span>
+      </button>
+      <input type="date" id="balanceAsOfInput" class="visually-hidden-input" tabindex="-1">
+      <div class="balance-info-callout" id="balanceInfoCallout">
+        <span class="account-mini-icon" style="background:#20C99722;color:#20C997" aria-hidden="true"><svg viewBox="0 0 16 16" fill="none"><path d="M2.5 6.5V12a1 1 0 001 1h9a1 1 0 001-1V6.5" stroke="currentColor" stroke-width="1.25"/><path d="M1.5 5.5h13v2H1.5v-2z" stroke="currentColor" stroke-width="1.25"/></svg></span>
+        <p>Use the balance in your bank app. Bank CSV exports don't always include a balance, so this is where your forecast starts.</p>
+      </div>
+      <p class="balance-sheet-foot" id="balanceSheetFoot"></p>
     </div>
-    <div class="balance-sheet-account" id="balanceSheetAccount"></div>
-    <label class="balance-input-wrap">
-      <span class="balance-input-label">Current balance</span>
-      <input type="text" id="balanceAmountInput" inputmode="decimal" autocomplete="off" aria-label="Current balance">
-    </label>
-    <button type="button" class="grouped-row balance-asof-row" id="balanceAsOfRow">
-      <span class="row-icon" data-ui-icon="ui-calendar" data-ui-icon-size="row" aria-hidden="true"></span>
-      <span class="row-label">As of</span>
-      <span class="row-value" id="balanceAsOfPreview">Today</span>
-      <span class="chevron">›</span>
-    </button>
-    <input type="date" id="balanceAsOfInput" class="visually-hidden-input" tabindex="-1">
-    <div class="balance-info-callout" id="balanceInfoCallout">
-      <span class="account-mini-icon" style="background:#20C99722;color:#20C997" aria-hidden="true"><svg viewBox="0 0 16 16" fill="none"><path d="M2.5 6.5V12a1 1 0 001 1h9a1 1 0 001-1V6.5" stroke="currentColor" stroke-width="1.25"/><path d="M1.5 5.5h13v2H1.5v-2z" stroke="currentColor" stroke-width="1.25"/></svg></span>
-      <p>Use the balance in your bank app. Bank CSV exports don't always include a balance, so this is where your forecast starts.</p>
+    <div class="balance-sheet-actions">
+      <button type="button" class="save-btn" id="balanceSaveBtn">Save balance</button>
     </div>
-    <p class="balance-sheet-foot" id="balanceSheetFoot"></p>
-    <button type="button" class="save-btn" id="balanceSaveBtn">Save balance</button>
   </div>
 </div>
 
@@ -784,8 +789,8 @@
   </div>
 </div>
 
-<script src="icon-system.js?v=1.6.0"></script>
-<script src="forecast.js?v=1.6.0"></script>
-<script src="app.js?v=1.6.0"></script>
+<script src="icon-system.js?v=1.6.1"></script>
+<script src="forecast.js?v=1.6.1"></script>
+<script src="app.js?v=1.6.1"></script>
 </body>
 </html>
