@@ -1114,20 +1114,59 @@
     return events;
   }
 
+  function forecastOverrideExpiryTs(o) {
+    if (!o || typeof o.applyFromTs !== 'number') return null;
+    var anchor = startOfDay(o.applyFromTs);
+    if (!validMs(anchor)) return null;
+    if (typeof o.nextTs === 'number') {
+      var moved = startOfDay(o.nextTs);
+      if (validMs(moved)) return moved;
+    }
+    return anchor;
+  }
+
+  function forecastOverrideIsExpired(o, nowMs) {
+    var expiry = forecastOverrideExpiryTs(o);
+    if (!validMs(expiry)) return false;
+    var today = startOfDay(nowMs);
+    if (!validMs(today)) return false;
+    return today > expiry;
+  }
+
+  function eventMatchesOverrideOccurrence(ev, itemKey, applyFromTs) {
+    if (!ev || ev.itemKey !== itemKey || typeof applyFromTs !== 'number') return false;
+    var fromTs = startOfDay(applyFromTs);
+    if (!validMs(fromTs)) return false;
+    var evTs = startOfDay(ev.ts);
+    if (validMs(evTs) && evTs === fromTs) return true;
+    if (validMs(ev.nominalTs) && startOfDay(ev.nominalTs) === fromTs) return true;
+    return false;
+  }
+
+  function pruneForecastOverrides(overrides, nowMs) {
+    if (!overrides || typeof overrides !== 'object') return {};
+    var out = {};
+    Object.keys(overrides).forEach(function (key) {
+      var o = overrides[key];
+      if (!o) return;
+      if (!forecastOverrideIsExpired(o, nowMs)) out[key] = o;
+    });
+    return out;
+  }
+
   function applyForecastOverrides(events, overrides, afterMs) {
     if (!overrides) return events;
     var out = events.slice();
     Object.keys(overrides).forEach(function (key) {
       var o = overrides[key];
       if (!o) return;
+      if (typeof o.applyFromTs === 'number' && forecastOverrideIsExpired(o, afterMs)) return;
       var idx = -1;
       if (typeof o.applyFromTs === 'number') {
-        var fromTs = startOfDay(o.applyFromTs);
         for (var j = 0; j < out.length; j++) {
-          if (out[j].itemKey === key && startOfDay(out[j].ts) === fromTs) { idx = j; break; }
+          if (eventMatchesOverrideOccurrence(out[j], key, o.applyFromTs)) { idx = j; break; }
         }
-      }
-      if (idx < 0) {
+      } else {
         for (var i = 0; i < out.length; i++) {
           if (out[i].itemKey === key && out[i].ts > afterMs) { idx = i; break; }
         }
@@ -1135,7 +1174,7 @@
       if (idx >= 0) {
         if (typeof o.amount === 'number') out[idx].amount = o.amount;
         if (typeof o.nextTs === 'number') out[idx].ts = startOfDay(o.nextTs);
-      } else if (typeof o.nextTs === 'number' && o.nextTs > afterMs) {
+      } else if (typeof o.applyFromTs !== 'number' && typeof o.nextTs === 'number' && o.nextTs > afterMs) {
         out.push({
           ts: startOfDay(o.nextTs),
           amount: typeof o.amount === 'number' ? o.amount : 0,
@@ -2073,6 +2112,8 @@
     fitSchedule: fitSchedule,
     expandSchedule: expandSchedule,
     applyForecastOverrides: applyForecastOverrides,
+    pruneForecastOverrides: pruneForecastOverrides,
+    forecastOverrideIsExpired: forecastOverrideIsExpired,
     estimateDailySpend: estimateDailySpend,
     estimateCardPayment: estimateCardPayment,
     buildScheduledEvents: buildScheduledEvents,

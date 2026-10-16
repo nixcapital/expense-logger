@@ -53,7 +53,7 @@
   var TRANSFER_PATTERNS_KEY = 'expenseLogger.transferPatterns.v1';
   var FORECAST_OVERRIDES_KEY = 'expenseLogger.forecastOverrides.v1';
   var FORECAST_ONEOFFS_KEY = 'expenseLogger.forecastCountedOneOffs.v1';
-  var APP_VERSION = '1.7.3';
+  var APP_VERSION = '1.7.4';
   var BACKUP_FORMAT = 2;
   var BACKUP_FORMAT_LEGACY = 1;
   var DEFAULT_ACCOUNT_CHECKING = 'acct-checking';
@@ -349,6 +349,9 @@
   var $backupRestoreConfirmBtn = $('backupRestoreConfirmBtn');
   var $importFileInput = $('importFileInput');
   var $importModal = $('importModal');
+  var $importDiscardModal = $('importDiscardModal');
+  var $importDiscardKeepBtn = $('importDiscardKeepBtn');
+  var $importDiscardConfirmBtn = $('importDiscardConfirmBtn');
   var $importSummary = $('importSummary');
   var $importRowList = $('importRowList');
   var $importConfirmBtn = $('importConfirmBtn');
@@ -785,6 +788,18 @@
     try { localStorage.setItem(FORECAST_OVERRIDES_KEY, JSON.stringify(forecastOverrides)); } catch (e) {}
   }
 
+  function refreshForecastOverridesFromStorage() {
+    var loaded = loadForecastOverrides();
+    if (FC && FC.pruneForecastOverrides) {
+      var pruned = FC.pruneForecastOverrides(loaded, Date.now());
+      var changed = Object.keys(pruned).length !== Object.keys(loaded).length;
+      forecastOverrides = pruned;
+      if (changed) saveForecastOverrides();
+      return;
+    }
+    forecastOverrides = loaded;
+  }
+
   function loadForecastCountedOneOffs() {
     try {
       var raw = localStorage.getItem(FORECAST_ONEOFFS_KEY);
@@ -1095,6 +1110,31 @@
     return (accountId || '') + '|' + (sign || 'out') + '|' + dayKey(ts) + '|' + fmtMoney(amount) + '|' + descriptionMatchKey(note);
   }
 
+  function entryImportDedupeFields(e, layout, accountId) {
+    if (e && e.importDedupeSnapshot && typeof e.importDedupeSnapshot === 'object') {
+      return e.importDedupeSnapshot;
+    }
+    var acctForKey = layout === 'app-export' ? (e.accountId || '') : (accountId || e.accountId || '');
+    return {
+      ts: e.ts,
+      amount: e.amount,
+      note: e.note || '',
+      categoryId: e.categoryId,
+      accountId: acctForKey,
+      sign: importRowSignFromEntry(e)
+    };
+  }
+
+  function entryImportContentKey(e, layout, accountId) {
+    var f = entryImportDedupeFields(e, layout, accountId);
+    return importContentKey(layout, f.ts, f.amount, f.note, f.categoryId, f.accountId, f.sign);
+  }
+
+  function entryImportMatchKey(e, layout, accountId) {
+    var f = entryImportDedupeFields(e, layout, accountId);
+    return importRowMatchKey(f.ts, f.amount, f.note, f.accountId, f.sign);
+  }
+
   function importEntryMatchesAccount(e, layout, accountId) {
     if (layout === 'app-export') return true;
     if (!accountId) return true;
@@ -1106,8 +1146,7 @@
     var map = {};
     entries.forEach(function (e) {
       if (!importEntryMatchesAccount(e, layout, accountId)) return;
-      var acctForKey = layout === 'app-export' ? (e.accountId || '') : (accountId || e.accountId || '');
-      var k = importRowMatchKey(e.ts, e.amount, e.note || '', acctForKey, importRowSignFromEntry(e));
+      var k = entryImportMatchKey(e, layout, accountId);
       if (!map[k]) map[k] = e;
     });
     return map;
@@ -1404,7 +1443,7 @@
     transferUnlinkKeys = loadTransferUnlinkKeys();
     importAccountPrefs = loadImportAccountPrefs();
     transferPatterns = loadTransferPatterns();
-    forecastOverrides = loadForecastOverrides();
+    refreshForecastOverridesFromStorage();
     forecastCountedOneOffs = loadForecastCountedOneOffs();
     ensureDefaultAccounts();
     ensureIncomeCategory();
@@ -5739,9 +5778,7 @@
     entries.forEach(function (e) {
       if (layout !== 'app-export' && e.importSource && e.importSource !== srcWanted) return;
       if (!importEntryMatchesAccount(e, layout, accountId)) return;
-      var acctForKey = layout === 'app-export' ? '' : (accountId || e.accountId || '');
-      var ck = importContentKey(layout, e.ts, e.amount, e.note || '', e.categoryId, acctForKey,
-        importRowSignFromEntry(e));
+      var ck = entryImportContentKey(e, layout, accountId);
       counts[ck] = (counts[ck] || 0) + 1;
     });
     return counts;
@@ -6072,6 +6109,35 @@
       || !!row.isDeposit !== !!row.initialIsDeposit;
   }
 
+  function importReviewHasUnsavedChanges() {
+    if (!pendingImport || !pendingImport.rows) return false;
+    return pendingImport.rows.some(function (r) {
+      if (r.status !== 'import' && r.status !== 'transfer') return false;
+      return !!(r.userSetCategory || r.userSetTransfer);
+    });
+  }
+
+  function dismissImportReview() {
+    pendingImport = null;
+    if ($importModal) $importModal.classList.remove('show');
+  }
+
+  function hideImportDiscardPrompt() {
+    if ($importDiscardModal) $importDiscardModal.classList.remove('show');
+  }
+
+  function showImportDiscardPrompt() {
+    if ($importDiscardModal) $importDiscardModal.classList.add('show');
+  }
+
+  function requestDismissImportReview() {
+    if (!importReviewHasUnsavedChanges()) {
+      dismissImportReview();
+      return;
+    }
+    showImportDiscardPrompt();
+  }
+
   function renderImportReview() {
     if (!pendingImport) return;
     var rows = pendingImport.rows;
@@ -6193,6 +6259,14 @@
       if (inc) entry.categoryId = inc;
     }
     if (r.bankText) entry.bankText = r.bankText;
+    entry.importDedupeSnapshot = {
+      ts: r.ts,
+      amount: r.amount,
+      note: r.note || '',
+      categoryId: r.categoryId,
+      accountId: r.layout === 'app-export' ? (accountId || '') : (accountId || ''),
+      sign: importRowSignFromRow(r)
+    };
     entries.push(entry);
   }
 
@@ -6565,9 +6639,20 @@
   $('importJsonBtn').addEventListener('click', function () { $('jsonFileInput').click(); });
   $('importCsvBtn').addEventListener('click', function () { $importFileInput.click(); });
   if ($importCancelBtn) {
-    $importCancelBtn.addEventListener('click', function () {
-      pendingImport = null;
-      $importModal.classList.remove('show');
+    $importCancelBtn.addEventListener('click', requestDismissImportReview);
+  }
+  if ($importDiscardKeepBtn) {
+    $importDiscardKeepBtn.addEventListener('click', hideImportDiscardPrompt);
+  }
+  if ($importDiscardConfirmBtn) {
+    $importDiscardConfirmBtn.addEventListener('click', function () {
+      hideImportDiscardPrompt();
+      dismissImportReview();
+    });
+  }
+  if ($importDiscardModal) {
+    $importDiscardModal.addEventListener('click', function (e) {
+      if (e.target === $importDiscardModal) hideImportDiscardPrompt();
     });
   }
   if ($importConfirmBtn) {
@@ -8363,18 +8448,36 @@
     });
   });
 
-  [$budgetModal, $catModal, $receiptModal, $pinModal, $importModal, $importAccountModal, $addAccountModal, $wrappedModal, $backupRestoreModal].forEach(function (ov) {
+  [$budgetModal, $catModal, $receiptModal, $pinModal, $importAccountModal, $addAccountModal, $wrappedModal, $backupRestoreModal].forEach(function (ov) {
     if (!ov) return;
     ov.addEventListener('click', function (e) {
       if (e.target === ov) {
         ov.classList.remove('show');
         if (ov === $receiptModal) editingEntryId = null;
-        if (ov === $importModal) pendingImport = null;
         if (ov === $importAccountModal) pendingImportAccount = null;
         if (ov === $backupRestoreModal) pendingBackupRestore = null;
       }
     });
   });
+  if ($importModal) {
+    $importModal.addEventListener('click', function (e) {
+      if (e.target === $importModal) requestDismissImportReview();
+    });
+    var importGrabber = $importModal.querySelector('.sheet-grabber');
+    if (importGrabber) {
+      var importSwipeStartY = null;
+      importGrabber.addEventListener('touchstart', function (ev) {
+        if (!ev.touches || !ev.touches.length) return;
+        importSwipeStartY = ev.touches[0].clientY;
+      }, { passive: true });
+      importGrabber.addEventListener('touchend', function (ev) {
+        if (importSwipeStartY == null || !ev.changedTouches || !ev.changedTouches.length) return;
+        var dy = ev.changedTouches[0].clientY - importSwipeStartY;
+        importSwipeStartY = null;
+        if (dy > 72) requestDismissImportReview();
+      }, { passive: true });
+    }
+  }
 
   // Resize / orientation
   var resizeTimer = null;
@@ -8517,7 +8620,7 @@
       transferUnlinkKeys = loadTransferUnlinkKeys();
       importAccountPrefs = loadImportAccountPrefs();
       transferPatterns = loadTransferPatterns();
-      forecastOverrides = loadForecastOverrides();
+      refreshForecastOverridesFromStorage();
       forecastCountedOneOffs = loadForecastCountedOneOffs();
       ensureDefaultAccounts();
       ensureIncomeCategory();
@@ -8627,6 +8730,8 @@
     importRowMatchKey: importRowMatchKey,
     importContentKey: importContentKey,
     reapplyImportDedupe: reapplyImportDedupe,
+    importReviewHasUnsavedChanges: importReviewHasUnsavedChanges,
+    requestDismissImportReview: requestDismissImportReview,
     buildExistingContentCounts: buildExistingContentCounts,
     descriptionMatchKey: descriptionMatchKey,
     dayKey: dayKey,
