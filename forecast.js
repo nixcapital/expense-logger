@@ -136,13 +136,15 @@
     var asOf = balanceAsOfMs != null ? startOfDay(balanceAsOfMs) : startOfDay(nowMs);
     if (!validMs(asOf)) asOf = startOfDay(nowMs);
     if (!validMs(asOf)) return null;
+    var today = startOfDay(nowMs);
+    if (!validMs(today)) today = asOf;
     var paired = pairedEntryIds(transferPairs);
     var net = 0;
     (entries || []).forEach(function (e) {
       if (!e || e.accountId !== checkingId) return;
       if (!validMs(e.ts)) return;
       var entryDay = startOfDay(e.ts);
-      if (!validMs(entryDay) || entryDay <= asOf) return;
+      if (!validMs(entryDay) || entryDay <= asOf || entryDay > today) return;
       net += entryCheckingDelta(e, checkingId, paired);
     });
     return Math.round((balance + net) * 100) / 100;

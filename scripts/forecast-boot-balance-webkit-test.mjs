@@ -44,10 +44,12 @@ function server() {
 async function run() {
   mkdirSync(OUT, { recursive: true });
   const data = ownerShapeDataset();
+  const seedBalance = 500;
+  const seedAsOf = '2026-10-16';
   const accounts = data.accounts.map((a) => ({
     ...a,
-    currentBalance: data.balance.currentBalance,
-    balanceAsOf: data.balance.balanceAsOf
+    currentBalance: a.type === 'bank' ? seedBalance : a.currentBalance,
+    balanceAsOf: a.type === 'bank' ? seedAsOf : a.balanceAsOf
   }));
 
   const srv = server();
@@ -115,6 +117,12 @@ async function run() {
 
   await page.waitForSelector('#homeForecastCard:not([hidden])', { timeout: 15000 });
 
+  const beforeHome = await page.evaluate(() => ({
+    balance: document.getElementById('homeForecastBalanceVal')?.textContent || '',
+    date: document.getElementById('homeForecastDate')?.textContent || ''
+  }));
+  assert.ok(beforeHome.balance.includes('500.00'), 'home card should reflect seeded balance before save: ' + beforeHome.balance);
+
   await page.click('[data-tab="settings"]');
   await page.click('[data-balance-acct="acct-checking"]');
   await page.waitForSelector('#balanceSheet.show');
@@ -139,6 +147,15 @@ async function run() {
 
   await page.click('[data-tab="summary"]');
   await page.waitForSelector('#homeForecastCard:not([hidden])');
+
+  const afterHome = await page.evaluate(() => ({
+    balance: document.getElementById('homeForecastBalanceVal')?.textContent || '',
+    date: document.getElementById('homeForecastDate')?.textContent || ''
+  }));
+  assert.ok(afterHome.balance.includes('1,234.56'), 'home card must show saved balance: ' + afterHome.balance);
+  assert.notStrictEqual(afterHome.date, beforeHome.date, 'money-lasts date must update after balance save');
+  assert.notStrictEqual(afterHome.balance, beforeHome.balance, 'home balance must change after save');
+
   await page.screenshot({ path: join(OUT, 'home-forecast-after-balance-save.png') });
 
   assert.strictEqual(errors.length, 0, errors.join('; '));
