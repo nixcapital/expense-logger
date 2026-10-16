@@ -585,18 +585,63 @@
     return out;
   }
 
+  /** Resolved in-memory state merged into backups (defaults not yet written to localStorage). */
+  function buildBackupStorageSnapshot() {
+    var storage = collectExpenseLoggerKeys();
+    storage[STORAGE_KEY] = JSON.stringify(entries);
+    storage[CATS_KEY] = JSON.stringify(categories);
+    storage[BUDGETS_KEY] = JSON.stringify(budgets);
+    storage[RECURRING_KEY] = JSON.stringify(recurringItems);
+    storage[IMPORT_RULES_KEY] = JSON.stringify(importRules);
+    storage[IMPORT_SETTINGS_KEY] = JSON.stringify(importSettings);
+    storage[UI_KEY] = JSON.stringify({
+      tab: currentTab === 'add' ? tabBeforeAdd : currentTab,
+      dismissedWrapped: uiState.dismissedWrapped || {}
+    });
+    return storage;
+  }
+
   function buildBackupDocument() {
     return {
       backupFormat: BACKUP_FORMAT,
       appVersion: APP_VERSION,
       createdAt: new Date().toISOString(),
-      storage: collectExpenseLoggerKeys()
+      storage: buildBackupStorageSnapshot()
     };
+  }
+
+  function pickDeviceBackupMeta(meta) {
+    var out = {};
+    if (meta && meta.lastBackupAt) out.lastBackupAt = meta.lastBackupAt;
+    if (meta && meta.backupNudgeHiddenUntil) out.backupNudgeHiddenUntil = meta.backupNudgeHiddenUntil;
+    return out;
+  }
+
+  function mergeDeviceBackupMeta(deviceFields) {
+    if (!deviceFields || typeof deviceFields !== 'object') return;
+    var meta = loadMetaObj();
+    if (deviceFields.lastBackupAt) meta.lastBackupAt = deviceFields.lastBackupAt;
+    else delete meta.lastBackupAt;
+    if (deviceFields.backupNudgeHiddenUntil) meta.backupNudgeHiddenUntil = deviceFields.backupNudgeHiddenUntil;
+    else delete meta.backupNudgeHiddenUntil;
+    saveMetaObj(meta);
+  }
+
+  function applyBackupStorageReplacingAppData(backupStorage, deviceMetaKeep) {
+    var filtered = {};
+    Object.keys(backupStorage || {}).forEach(function (k) {
+      if (k.indexOf('expenseLogger.') === 0 && k !== META_KEY) {
+        filtered[k] = backupStorage[k];
+      }
+    });
+    applyStorageSnapshot(filtered);
+    mergeDeviceBackupMeta(deviceMetaKeep);
   }
 
   function summarizeBackupStorage(storage) {
     var entryCount = 0;
     var catCount = 0;
+    var hasCategoriesInBackup = false;
     var minTs = null;
     var maxTs = null;
     try {
@@ -613,13 +658,29 @@
           });
         }
       }
-      var catsRaw = storage[CATS_KEY];
-      if (catsRaw) {
-        var cats = JSON.parse(catsRaw);
-        if (Array.isArray(cats)) catCount = cats.length;
+      if (Object.prototype.hasOwnProperty.call(storage, CATS_KEY)) {
+        hasCategoriesInBackup = true;
+        var catsRaw = storage[CATS_KEY];
+        if (catsRaw) {
+          var cats = JSON.parse(catsRaw);
+          if (Array.isArray(cats)) catCount = cats.length;
+        }
       }
     } catch (e) {}
-    return { entryCount: entryCount, catCount: catCount, minTs: minTs, maxTs: maxTs };
+    return {
+      entryCount: entryCount,
+      catCount: catCount,
+      hasCategoriesInBackup: hasCategoriesInBackup,
+      minTs: minTs,
+      maxTs: maxTs
+    };
+  }
+
+  function formatCategorySummaryLabel(summary) {
+    if (summary.hasCategoriesInBackup && summary.catCount > 0) {
+      return String(summary.catCount);
+    }
+    return 'Default categories';
   }
 
   function validateBackupDocument(data) {
@@ -820,11 +881,12 @@
 
   function commitBackupRestore(doc) {
     return idbAll().then(function (receipts) {
+      var deviceMetaKeep = pickDeviceBackupMeta(loadMetaObj());
       pendingRestoreUndo = {
         storage: collectExpenseLoggerKeys(),
         receipts: receipts || []
       };
-      applyStorageSnapshot(doc.storage);
+      applyBackupStorageReplacingAppData(doc.storage, deviceMetaKeep);
       reloadAllStateFromStorage();
       idbClear().catch(function () {});
       buildCategoryButtons();
@@ -3766,10 +3828,8 @@
   $('exportJsonBtn').addEventListener('click', exportJSON);
   var $backupDataBtn = $('backupDataBtn');
   if ($backupDataBtn) $backupDataBtn.addEventListener('click', runBackupExport);
-  var $restoreBackupBtn = $('restoreBackupBtn');
   var $backupFileInput = $('backupFileInput');
-  if ($restoreBackupBtn && $backupFileInput) {
-    $restoreBackupBtn.addEventListener('click', function () { $backupFileInput.click(); });
+  if ($backupFileInput) {
     $backupFileInput.addEventListener('change', function (ev) {
       var f = ev.target.files && ev.target.files[0];
       ev.target.value = '';
@@ -3788,7 +3848,7 @@
             '<p class="hint">This will replace all data on this device.</p>'
             + '<div class="summary-row"><span class="label">Entries</span><span class="value">' + s.entryCount + '</span></div>'
             + '<div class="summary-row"><span class="label">Date range</span><span class="value">' + formatBackupDateRange(s.minTs, s.maxTs) + '</span></div>'
-            + '<div class="summary-row"><span class="label">Categories</span><span class="value">' + s.catCount + '</span></div>';
+            + '<div class="summary-row"><span class="label">Categories</span><span class="value">' + formatCategorySummaryLabel(s) + '</span></div>';
         }
         if ($backupRestoreModal) $backupRestoreModal.classList.add('show');
       };
@@ -4484,10 +4544,14 @@
 
   window.ExpenseLoggerBackup = {
     buildBackupDocument: buildBackupDocument,
+    buildBackupStorageSnapshot: buildBackupStorageSnapshot,
     validateBackupDocument: validateBackupDocument,
     applyStorageSnapshot: applyStorageSnapshot,
+    applyBackupStorageReplacingAppData: applyBackupStorageReplacingAppData,
     collectExpenseLoggerKeys: collectExpenseLoggerKeys,
     summarizeBackupStorage: summarizeBackupStorage,
+    formatCategorySummaryLabel: formatCategorySummaryLabel,
+    pickDeviceBackupMeta: pickDeviceBackupMeta,
     commitBackupRestore: commitBackupRestore
   };
 

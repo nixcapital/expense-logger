@@ -175,6 +175,68 @@ async function run() {
     'keep1'
   );
 
+  const defaultCatsBackup = await page.evaluate(() => {
+    localStorage.clear();
+    localStorage.setItem(
+      'expenseLogger.entries.v1',
+      JSON.stringify([{ id: 'only1', amount: 2, categoryId: 'groceries', ts: Date.now() }])
+    );
+    return true;
+  });
+  assert.strictEqual(defaultCatsBackup, true);
+  await page.reload({ waitUntil: 'networkidle' });
+
+  const resolvedCats = await page.evaluate(() => {
+    const B = window.ExpenseLoggerBackup;
+    const doc = B.buildBackupDocument();
+    const raw = doc.storage['expenseLogger.categories.v1'];
+    if (!raw) return 0;
+    return JSON.parse(raw).length;
+  });
+  assert.ok(resolvedCats >= 6, 'backup must include resolved default categories, got ' + resolvedCats);
+
+  const restoreDefaults = await page.evaluate(async () => {
+    const B = window.ExpenseLoggerBackup;
+    const doc = B.buildBackupDocument();
+    localStorage.removeItem('expenseLogger.categories.v1');
+    await B.commitBackupRestore(doc);
+    const raw = localStorage.getItem('expenseLogger.categories.v1');
+    return raw ? JSON.parse(raw).length : 0;
+  });
+  assert.ok(restoreDefaults >= 6, 'restore must write categories from backup');
+
+  const categoryLabel = await page.evaluate(() => {
+    const B = window.ExpenseLoggerBackup;
+    const summary = B.summarizeBackupStorage({
+      'expenseLogger.entries.v1': JSON.stringify([{ id: 'a', amount: 1, categoryId: 'groceries', ts: 1 }]),
+      'expenseLogger.ui.v1': '{}'
+    });
+    return B.formatCategorySummaryLabel(summary);
+  });
+  assert.strictEqual(categoryLabel, 'Default categories');
+
+  const metaIso = '2025-06-01T12:00:00.000Z';
+  const metaKept = await page.evaluate(async (iso) => {
+    localStorage.setItem('expenseLogger.meta.v1', JSON.stringify({ lastBackupAt: iso }));
+    localStorage.setItem(
+      'expenseLogger.categories.v1',
+      JSON.stringify([{ id: 'groceries', name: 'Groceries', icon: 'shopping-cart', color: '#4dabf7' }])
+    );
+    const B = window.ExpenseLoggerBackup;
+    await B.commitBackupRestore({
+      backupFormat: 1,
+      appVersion: '1.3.1',
+      createdAt: new Date().toISOString(),
+      storage: {
+        'expenseLogger.entries.v1': JSON.stringify([{ id: 'n', amount: 9, categoryId: 'groceries', ts: Date.now() }]),
+        'expenseLogger.meta.v1': JSON.stringify({ lastBackupAt: '2020-01-01T00:00:00.000Z' })
+      }
+    });
+    const meta = JSON.parse(localStorage.getItem('expenseLogger.meta.v1') || '{}');
+    return meta.lastBackupAt;
+  }, metaIso);
+  assert.strictEqual(metaKept, metaIso, 'device last-backup time must survive restore');
+
   rmSync(tmpDir, { recursive: true, force: true });
   await browser.close();
   server.close();

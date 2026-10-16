@@ -238,8 +238,8 @@
       <p class="hint inset-hint data-meta-hint" id="storageStatusLine">Storage: standard</p>
       <p class="hint inset-hint data-meta-hint" id="lastBackupLine" hidden></p>
       <button class="settings-row-btn" id="backupDataBtn" type="button">Back up data <span class="chevron">›</span></button>
-      <button class="settings-row-btn" id="restoreBackupBtn" type="button">Restore from backup <span class="chevron">›</span></button>
-      <input type="file" id="backupFileInput" accept=".json,application/json" hidden>
+      <label class="settings-row-btn" id="restoreBackupLabel" for="backupFileInput">Restore from backup <span class="chevron">›</span></label>
+      <input type="file" id="backupFileInput" class="backup-file-input" accept=".json,application/json">
       <button class="settings-row-btn" id="exportBtn" type="button">Export CSV <span class="chevron">›</span></button>
       <button class="settings-row-btn" id="exportJsonBtn" type="button">Export JSON backup <span class="chevron">›</span></button>
       <button class="settings-row-btn" id="importJsonBtn" type="button">Import JSON backup <span class="chevron">›</span></button>
