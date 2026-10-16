@@ -700,6 +700,7 @@
   }
 
   function updateDonutCenter(catId, total, byCat) {
+    if (!$donutCenterLabel || !$donutCenterValue || !$donutCenterSub) return;
     if (catId && byCat[catId] > 0) {
       var c = getCat(catId);
       var amt = byCat[catId];
@@ -707,10 +708,14 @@
       $donutCenterLabel.textContent = c.emoji + ' ' + c.name;
       $donutCenterValue.textContent = '$' + fmtMoney(amt);
       $donutCenterSub.textContent = pct + '% of spending';
+    } else if (total === 0) {
+      $donutCenterLabel.textContent = 'Total';
+      $donutCenterValue.textContent = '$0.00';
+      $donutCenterSub.textContent = 'No spending this month';
     } else {
       $donutCenterLabel.textContent = 'Total';
       $donutCenterValue.textContent = '$' + fmtMoney(total);
-      $donutCenterSub.textContent = total > 0 ? 'Tap a slice or category' : '';
+      $donutCenterSub.textContent = 'Tap a slice or category';
     }
   }
 
@@ -736,6 +741,7 @@
   }
 
   function drawDonutFrame(byCat, total, progress, highlightId) {
+    if (!$donutChart) return;
     var cx = 110, cy = 110, rOuter = 92, rInner = 58;
     var rows = categories
       .map(function (c) { return { c: c, amt: byCat[c.id] || 0 }; })
@@ -743,8 +749,9 @@
       .sort(function (a, b) { return b.amt - a.amt; });
 
     if (total === 0 || rows.length === 0) {
-      $donutChart.innerHTML = '<circle cx="110" cy="110" r="92" fill="none" stroke="' + cssVar('--card-2', '#1f232e') + '" stroke-width="34"/>'
-        + '<text x="110" y="118" text-anchor="middle" fill="' + cssVar('--text-dim', '#8b93a7') + '" font-size="13" font-family="-apple-system,sans-serif">No spending</text>';
+      if ($donutChart) {
+        $donutChart.innerHTML = '<circle cx="110" cy="110" r="92" fill="none" stroke="' + cssVar('--card-2', '#1f232e') + '" stroke-width="34"/>';
+      }
       return;
     }
 
@@ -765,7 +772,7 @@
     $donutChart.innerHTML = html;
   }
 
-  $donutChart.addEventListener('click', function (e) {
+  if ($donutChart) $donutChart.addEventListener('click', function (e) {
     var path = e.target.closest ? e.target.closest('.donut-seg') : null;
     if (!path || !lastDonutData) return;
     var id = path.getAttribute('data-cat');
@@ -785,6 +792,7 @@
   }
 
   function renderLegendInteractive(byCat, total) {
+    if (!$legendEl) return;
     if (total === 0) {
       $legendEl.innerHTML = '<div class="empty chart-empty">Add expenses to see your category breakdown.</div>';
       return;
@@ -812,11 +820,23 @@
     });
   }
 
-  var trendCtx = $trendChart.getContext('2d');
-  var dailyCtx = $dailyChart.getContext('2d');
+  var trendCtx = null;
+  var dailyCtx = null;
   var chartDpr = Math.min(window.devicePixelRatio || 1, 2);
 
+  function getTrendCtx() {
+    if (!$trendChart) return null;
+    if (!trendCtx) trendCtx = $trendChart.getContext('2d');
+    return trendCtx;
+  }
+  function getDailyCtx() {
+    if (!$dailyChart) return null;
+    if (!dailyCtx) dailyCtx = $dailyChart.getContext('2d');
+    return dailyCtx;
+  }
+
   function sizeChartCanvas(canvas, ctx, cssH) {
+    if (!canvas || !ctx) return { W: 0, H: 0 };
     var cssW = canvas.clientWidth || canvas.parentNode.clientWidth || 320;
     canvas.style.height = cssH + 'px';
     canvas.width = Math.round(cssW * chartDpr);
@@ -860,16 +880,18 @@
   }
 
   function drawTrendFrame(months, progress, endY, endM) {
-    var dim = sizeChartCanvas($trendChart, trendCtx, 168);
+    var tctx = getTrendCtx();
+    if (!tctx || !$trendChart) return;
+    var dim = sizeChartCanvas($trendChart, tctx, 168);
     var W = dim.W, H = dim.H;
-    trendCtx.clearRect(0, 0, W, H);
+    tctx.clearRect(0, 0, W, H);
     var hasData = months.some(function (mo) { return mo.total > 0; });
     if (!hasData) {
-      trendCtx.fillStyle = cssVar('--text-dim', '#8b93a7');
-      trendCtx.font = '14px -apple-system, sans-serif';
-      trendCtx.textAlign = 'center';
-      trendCtx.textBaseline = 'middle';
-      trendCtx.fillText('Trend appears as you log more months', W / 2, H / 2);
+      tctx.fillStyle = cssVar('--text-dim', '#8b93a7');
+      tctx.font = '14px -apple-system, sans-serif';
+      tctx.textAlign = 'center';
+      tctx.textBaseline = 'middle';
+      tctx.fillText('Trend appears as you log more months', W / 2, H / 2);
       return;
     }
     var padL = 8, padR = 8, padT = 12, padB = 28;
@@ -887,28 +909,28 @@
       var y = padT + chartH - h;
       var isSel = mo.y === endY && mo.m === endM;
       var isNow = mo.y === now.getFullYear() && mo.m === now.getMonth();
-      trendCtx.fillStyle = cssVar('--card-2', '#1f232e');
-      roundRect(trendCtx, x, padT, barW, chartH, 4);
-      trendCtx.fill();
+      tctx.fillStyle = cssVar('--card-2', '#1f232e');
+      roundRect(tctx, x, padT, barW, chartH, 4);
+      tctx.fill();
       if (mo.total > 0 && h >= 1) {
-        var grad = trendCtx.createLinearGradient(0, y, 0, padT + chartH);
-        grad.addColorStop(0, isSel || isNow ? cssVar('--accent', '#4dabf7') : hexLighten(cssVar('--accent', '#4dabf7'), 0.25));
+        var grad = tctx.createLinearGradient(0, y, 0, padT + chartH);
+        grad.addColorStop(0, isSel || isNow ? cssVar('--accent', '#4dabf7') : hexLighten(cssVar('--accent', '#4dabf7'), 0.15));
         grad.addColorStop(1, isSel || isNow ? hexLighten(cssVar('--accent', '#4dabf7'), 0.15) : cssVar('--card-2', '#1f232e'));
-        trendCtx.fillStyle = grad;
-        roundRect(trendCtx, x, y, barW, h, 4);
-        trendCtx.fill();
+        tctx.fillStyle = grad;
+        roundRect(tctx, x, y, barW, h, 4);
+        tctx.fill();
       }
       if (isSel || isNow) {
-        trendCtx.strokeStyle = cssVar('--accent', '#4dabf7');
-        trendCtx.lineWidth = 2;
-        roundRect(trendCtx, x - 1, padT - 1, barW + 2, chartH + 2, 5);
-        trendCtx.stroke();
+        tctx.strokeStyle = cssVar('--accent', '#4dabf7');
+        tctx.lineWidth = 2;
+        roundRect(tctx, x - 1, padT - 1, barW + 2, chartH + 2, 5);
+        tctx.stroke();
       }
-      trendCtx.fillStyle = cssVar('--text-dim', '#8b93a7');
-      trendCtx.font = '600 10px -apple-system, sans-serif';
-      trendCtx.textAlign = 'center';
-      trendCtx.textBaseline = 'top';
-      trendCtx.fillText(monthShort(new Date(mo.y, mo.m, 1)), x + barW / 2, padT + chartH + 6);
+      tctx.fillStyle = cssVar('--text-dim', '#8b93a7');
+      tctx.font = '600 10px -apple-system, sans-serif';
+      tctx.textAlign = 'center';
+      tctx.textBaseline = 'top';
+      tctx.fillText(monthShort(new Date(mo.y, mo.m, 1)), x + barW / 2, padT + chartH + 6);
     });
   }
 
@@ -932,9 +954,11 @@
   }
 
   function drawDailyFrame(daily, y, m, progress) {
-    var dim = sizeChartCanvas($dailyChart, dailyCtx, 200);
+    var dctx = getDailyCtx();
+    if (!dctx || !$dailyChart) return;
+    var dim = sizeChartCanvas($dailyChart, dctx, 200);
     var W = dim.W, H = dim.H;
-    dailyCtx.clearRect(0, 0, W, H);
+    dctx.clearRect(0, 0, W, H);
     var total = daily.reduce(function (s, v) { return s + v; }, 0);
     $dailyMonthLabel.textContent = '· ' + monthShort(new Date(y, m, 1));
     var budget = getTotalBudgetLimit();
@@ -943,20 +967,22 @@
     var dayOfMonth = isCurrentMonth ? now.getDate() : daysInMonth(y, m);
 
     if (total === 0) {
-      dailyCtx.fillStyle = cssVar('--text-dim', '#8b93a7');
-      dailyCtx.font = '14px -apple-system, sans-serif';
-      dailyCtx.textAlign = 'center';
-      dailyCtx.textBaseline = 'middle';
-      dailyCtx.fillText('No daily spending this month', W / 2, H / 2);
-      $dailySubtitle.textContent = budget > 0 ? 'Monthly budget: $' + fmtMoney(budget) : 'Log expenses to see your daily rhythm.';
-      $dailyLegend.innerHTML = '';
+      dctx.fillStyle = cssVar('--text-dim', '#8b93a7');
+      dctx.font = '14px -apple-system, sans-serif';
+      dctx.textAlign = 'center';
+      dctx.textBaseline = 'middle';
+      dctx.fillText('No daily spending this month', W / 2, H / 2);
+      if ($dailySubtitle) $dailySubtitle.textContent = budget > 0 ? 'Monthly budget: $' + fmtMoney(budget) : 'Log expenses to see your daily rhythm.';
+      if ($dailyLegend) $dailyLegend.innerHTML = '';
       return;
     }
 
     var cum = [];
     var run = 0;
     daily.forEach(function (v) { run += v; cum.push(run); });
-    var maxY = Math.max(total, budget || 0, cum[cum.length - 1] || 0) * 1.08 || 1;
+    var lastCumDayIdx = isCurrentMonth ? Math.max(0, dayOfMonth - 1) : daily.length - 1;
+    var cumAtEnd = cum[lastCumDayIdx] || 0;
+    var maxY = Math.max(cumAtEnd, budget || 0, total) * 1.08 || 1;
 
     if (isCurrentMonth && dayOfMonth > 0) {
       var pace = (total / dayOfMonth) * daysInMonth(y, m);
@@ -974,68 +1000,69 @@
     var gap = 2;
     var barW = Math.max(2, (chartW - gap * (n - 1)) / n);
 
-    dailyCtx.strokeStyle = cssVar('--border', '#2a2f3d');
-    dailyCtx.lineWidth = 1;
-    dailyCtx.beginPath();
-    dailyCtx.moveTo(padL, padT + chartH);
-    dailyCtx.lineTo(padL + chartW, padT + chartH);
-    dailyCtx.stroke();
+    dctx.strokeStyle = cssVar('--border', '#2a2f3d');
+    dctx.lineWidth = 1;
+    dctx.beginPath();
+    dctx.moveTo(padL, padT + chartH);
+    dctx.lineTo(padL + chartW, padT + chartH);
+    dctx.stroke();
 
     daily.forEach(function (v, i) {
       var x = padL + i * (barW + gap);
       var h = Math.max(0, (v / maxY) * chartH * progress);
       var yBar = padT + chartH - h;
-      dailyCtx.fillStyle = cssVar('--card-2', '#1f232e');
-      dailyCtx.fillRect(x, padT + chartH - 1, barW, 1);
+      dctx.fillStyle = cssVar('--card-2', '#1f232e');
+      dctx.fillRect(x, padT + chartH - 1, barW, 1);
       if (v > 0 && h >= 1) {
-        dailyCtx.fillStyle = cssVar('--accent', '#4dabf7');
-        dailyCtx.globalAlpha = 0.85;
-        roundRect(dailyCtx, x, yBar, barW, h, 2);
-        dailyCtx.fill();
-        dailyCtx.globalAlpha = 1;
+        dctx.fillStyle = cssVar('--accent', '#4dabf7');
+        dctx.globalAlpha = 0.85;
+        roundRect(dctx, x, yBar, barW, h, 2);
+        dctx.fill();
+        dctx.globalAlpha = 1;
       }
     });
 
     if (budget > 0) {
-      dailyCtx.setLineDash([4, 4]);
-      dailyCtx.strokeStyle = cssVar('--success', '#51cf66');
-      dailyCtx.lineWidth = 1.5;
-      dailyCtx.beginPath();
+      dctx.setLineDash([4, 4]);
+      dctx.strokeStyle = cssVar('--success', '#51cf66');
+      dctx.lineWidth = 1.5;
+      dctx.beginPath();
       for (var d = 1; d <= n; d++) {
         var bx = padL + (d - 0.5) * (barW + gap);
         var by = padT + chartH - (budget * (d / n) / maxY) * chartH;
-        if (d === 1) dailyCtx.moveTo(bx, by);
-        else dailyCtx.lineTo(bx, by);
+        if (d === 1) dctx.moveTo(bx, by);
+        else dctx.lineTo(bx, by);
       }
-      dailyCtx.stroke();
-      dailyCtx.setLineDash([]);
+      dctx.stroke();
+      dctx.setLineDash([]);
     }
 
-    dailyCtx.strokeStyle = cssVar('--text', '#e8ecf3');
-    dailyCtx.lineWidth = 2;
-    dailyCtx.lineJoin = 'round';
-    dailyCtx.beginPath();
+    dctx.strokeStyle = cssVar('--text', '#e8ecf3');
+    dctx.lineWidth = 2;
+    dctx.lineJoin = 'round';
+    dctx.beginPath();
     var lastX = 0, lastY = 0;
     cum.forEach(function (c, i) {
+      if (i > lastCumDayIdx) return;
       var cx = padL + (i + 0.5) * (barW + gap);
       var cy = padT + chartH - (c / maxY) * chartH * progress;
-      if (i === 0) dailyCtx.moveTo(cx, cy);
-      else dailyCtx.lineTo(cx, cy);
+      if (i === 0) dctx.moveTo(cx, cy);
+      else dctx.lineTo(cx, cy);
       lastX = cx; lastY = cy;
     });
-    dailyCtx.stroke();
-    if (progress > 0.9 && isCurrentMonth) {
-      dailyCtx.fillStyle = cssVar('--accent', '#4dabf7');
-      dailyCtx.beginPath();
-      dailyCtx.arc(lastX, lastY, 4, 0, Math.PI * 2);
-      dailyCtx.fill();
+    dctx.stroke();
+    if (progress > 0.9 && isCurrentMonth && lastCumDayIdx >= 0) {
+      dctx.fillStyle = cssVar('--accent', '#4dabf7');
+      dctx.beginPath();
+      dctx.arc(lastX, lastY, 4, 0, Math.PI * 2);
+      dctx.fill();
     }
 
-    dailyCtx.fillStyle = cssVar('--text-dim', '#8b93a7');
-    dailyCtx.font = '10px -apple-system, sans-serif';
-    dailyCtx.textAlign = 'right';
-    dailyCtx.fillText('$' + fmtMoney(maxY), padL - 4, padT + 8);
-    dailyCtx.fillText('$0', padL - 4, padT + chartH);
+    dctx.fillStyle = cssVar('--text-dim', '#8b93a7');
+    dctx.font = '10px -apple-system, sans-serif';
+    dctx.textAlign = 'right';
+    dctx.fillText('$' + fmtMoney(maxY), padL - 4, padT + 8);
+    dctx.fillText('$0', padL - 4, padT + chartH);
 
     var leg = '';
     if (budget > 0) {
@@ -1043,7 +1070,7 @@
     }
     leg += '<span class="mini-leg"><span class="swatch line"></span>Cumulative</span>';
     leg += '<span class="mini-leg"><span class="swatch bar"></span>Daily</span>';
-    $dailyLegend.innerHTML = leg;
+    if ($dailyLegend) $dailyLegend.innerHTML = leg;
   }
 
   function prepareDailyChart(y, m) {
@@ -1068,6 +1095,7 @@
   }
 
   function renderInsights(y, m) {
+    if (!$insightsList) return;
     var data = getSummaryData(y, m);
     var now = new Date();
     var isCurrent = y === now.getFullYear() && m === now.getMonth();
@@ -1174,15 +1202,17 @@
     var dailyTotals = prepareDailyChart(y, m);
     renderInsights(y, m);
     renderBudgets(data.byCat);
-    runChartAnim(750, function (p) {
-      drawDonutFrame(data.byCat, data.total, p, selectedLegendCatId);
-      drawTrendFrame(trendMonths, p, y, m);
-      drawDailyFrame(dailyTotals, y, m, p);
-    }, function () {
-      drawDonutFrame(data.byCat, data.total, 1, selectedLegendCatId);
-      drawTrendFrame(trendMonths, 1, y, m);
-      drawDailyFrame(dailyTotals, y, m, 1);
-    });
+    if ($donutChart || $trendChart || $dailyChart) {
+      runChartAnim(750, function (p) {
+        drawDonutFrame(data.byCat, data.total, p, selectedLegendCatId);
+        drawTrendFrame(trendMonths, p, y, m);
+        drawDailyFrame(dailyTotals, y, m, p);
+      }, function () {
+        drawDonutFrame(data.byCat, data.total, 1, selectedLegendCatId);
+        drawTrendFrame(trendMonths, 1, y, m);
+        drawDailyFrame(dailyTotals, y, m, 1);
+      });
+    }
   }
 
   function renderBudgets(byCat) {
@@ -2218,20 +2248,41 @@
   }
 
   // ---------- Service worker ----------
+  var swReloading = false;
+  var SW_RELOAD_GUARD = 'expenseLogger.swReloadGuard';
+
   function registerSW() {
     if (!('serviceWorker' in navigator)) return;
+
+    navigator.serviceWorker.addEventListener('controllerchange', function () {
+      if (!navigator.serviceWorker.controller || swReloading) return;
+      if (sessionStorage.getItem(SW_RELOAD_GUARD) === '1') {
+        sessionStorage.removeItem(SW_RELOAD_GUARD);
+        return;
+      }
+      swReloading = true;
+      sessionStorage.setItem(SW_RELOAD_GUARD, '1');
+      window.location.reload();
+    });
+
     navigator.serviceWorker.register('sw.js').then(function (reg) {
+      if (reg.update) reg.update();
       reg.addEventListener('updatefound', function () {
         var nw = reg.installing;
         if (!nw) return;
         nw.addEventListener('statechange', function () {
           if (nw.state === 'installed' && navigator.serviceWorker.controller) {
-            toast('Update available — close and reopen the app');
+            nw.postMessage('SKIP_WAITING');
           }
         });
       });
+      if (reg.waiting && navigator.serviceWorker.controller) {
+        reg.waiting.postMessage('SKIP_WAITING');
+      }
     }).catch(function () {});
   }
+
+  registerSW();
 
   // ---------- Boot ----------
   categories = loadCategories();
@@ -2266,6 +2317,5 @@
   else showApp();
 
   switchTab(currentTab);
-  registerSW();
 
 })();
