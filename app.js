@@ -842,27 +842,39 @@
 
   function bindBalanceSheetViewport() {
     if (balanceSheetViewportBound || !window.visualViewport) return;
+    var vv = window.visualViewport;
+    if (!vv || typeof vv.addEventListener !== 'function') return;
     balanceSheetViewportBound = true;
     var adjust = function () {
-      var sheet = $('balanceSheet');
-      if (!sheet || !sheet.classList.contains('show')) return;
-      var modal = sheet.querySelector('.modal');
-      if (!modal) return;
-      var vv = window.visualViewport;
-      var gap = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
-      var kb = gap > 40 ? gap : 0;
-      modal.style.paddingBottom = kb
-        ? 'calc(var(--sp-4) + env(safe-area-inset-bottom, 0px) + ' + kb + 'px)'
-        : '';
-      var btn = $('balanceSaveBtn');
-      if (btn && kb > 0 && btn.scrollIntoView) {
-        try { btn.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); } catch (e) {
-          btn.scrollIntoView(false);
+      try {
+        var sheet = $('balanceSheet');
+        if (!sheet || !sheet.classList.contains('show')) return;
+        var modal = sheet.querySelector('.modal');
+        if (!modal) return;
+        var viewport = window.visualViewport;
+        if (!viewport) return;
+        var gap = Math.max(0, window.innerHeight - viewport.height - (viewport.offsetTop || 0));
+        var kb = gap > 40 ? gap : 0;
+        modal.style.paddingBottom = kb
+          ? 'calc(var(--sp-4) + env(safe-area-inset-bottom, 0px) + ' + kb + 'px)'
+          : '';
+        var btn = $('balanceSaveBtn');
+        if (btn && kb > 0 && btn.scrollIntoView) {
+          try { btn.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); } catch (e) {
+            btn.scrollIntoView(false);
+          }
         }
+      } catch (err) {
+        logBootSectionError('balance sheet viewport', err);
       }
     };
-    window.visualViewport.addEventListener('resize', adjust);
-    window.visualViewport.addEventListener('scroll', adjust);
+    try {
+      vv.addEventListener('resize', adjust);
+      vv.addEventListener('scroll', adjust);
+    } catch (err) {
+      balanceSheetViewportBound = false;
+      logBootSectionError('balance sheet viewport bind', err);
+    }
   }
 
   function loadTransferPairs() {
@@ -4056,6 +4068,15 @@
     setTimeout(function () {
       $splashScreen.style.display = 'none';
     }, prefersReducedMotion() ? 50 : 350);
+    if (window.__elPendingSwReload && !swReloading) {
+      window.__elPendingSwReload = false;
+      try {
+        if (sessionStorage.getItem(SW_RELOAD_GUARD) === '1') return;
+      } catch (e) {}
+      swReloading = true;
+      try { sessionStorage.setItem(SW_RELOAD_GUARD, '1'); } catch (e2) {}
+      window.location.reload();
+    }
   }
 
   function clearHomeForecastError() {
@@ -7263,12 +7284,18 @@
 
     navigator.serviceWorker.addEventListener('controllerchange', function () {
       if (!navigator.serviceWorker.controller || swReloading) return;
-      if (sessionStorage.getItem(SW_RELOAD_GUARD) === '1') {
-        sessionStorage.removeItem(SW_RELOAD_GUARD);
+      if (!window.__elBootCompleted) {
+        window.__elPendingSwReload = true;
         return;
       }
+      try {
+        if (sessionStorage.getItem(SW_RELOAD_GUARD) === '1') {
+          sessionStorage.removeItem(SW_RELOAD_GUARD);
+          return;
+        }
+      } catch (e) {}
       swReloading = true;
-      sessionStorage.setItem(SW_RELOAD_GUARD, '1');
+      try { sessionStorage.setItem(SW_RELOAD_GUARD, '1'); } catch (e2) {}
       window.location.reload();
     });
 
@@ -7288,8 +7315,6 @@
       }
     }).catch(function () {});
   }
-
-  registerSW();
 
   function bootApp() {
     var bootFailed = false;
@@ -7377,6 +7402,7 @@
   }
 
   bootApp();
+  registerSW();
   if (EI && EI.preloadIcons) {
     EI.preloadIcons(function () {
       refreshCategorySurfacesAfterIcons();

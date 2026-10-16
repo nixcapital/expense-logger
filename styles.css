@@ -1956,8 +1956,8 @@ button.legend-row.legend-btn.active { background: color-mix(in srgb, var(--accen
 .forecast-home-chevron { position: absolute; right: 14px; top: 50%; transform: translateY(-50%); color: var(--text-dim); }
 
 .home-section-error {
-  border: 1px solid color-mix(in srgb, var(--danger, #ff6b6b) 35%, var(--card-border, #2a2d36));
-  background: color-mix(in srgb, var(--danger, #ff6b6b) 8%, var(--card));
+  border: 1px solid rgba(255, 90, 95, 0.35);
+  background: var(--card);
   padding: var(--sp-3) var(--sp-4);
   margin-bottom: var(--sp-3);
 }

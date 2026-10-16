@@ -224,6 +224,32 @@ async function assertBoot(page, url, fixture, label) {
   return snap;
 }
 
+function standaloneInitScript() {
+  return () => {
+    try {
+      Object.defineProperty(navigator, 'standalone', { get: () => true, configurable: true });
+    } catch (e) {}
+  };
+}
+
+function assertNoModernSyntaxInShell() {
+  const files = ['app.js', 'forecast.js', 'icon-system.js', 'sw.js'];
+  const forbidden = [
+    { re: /\bfindLast(?:Index)?\s*\(/, name: 'Array.findLast/findLastIndex' },
+    { re: /\btoSorted\s*\(/, name: 'Array.toSorted' },
+    { re: /\btoReversed\s*\(/, name: 'Array.toReversed' },
+    { re: /\bstructuredClone\s*\(/, name: 'structuredClone' },
+    { re: /\(\?<[=!]/, name: 'regex lookbehind' },
+    { re: /^[\s\S]*?\bawait\s+import\s*\(/m, name: 'top-level await import' }
+  ];
+  files.forEach((f) => {
+    const src = readFileSync(join(ROOT, f), 'utf8');
+    forbidden.forEach(({ re, name }) => {
+      assert.ok(!re.test(src), f + ' must not use ' + name + ' (iOS WebKit compatibility)');
+    });
+  });
+}
+
 async function runFixtures(browserName, launch) {
   const srv = server(() => ROOT);
   await new Promise((r) => srv.listen(PORT, r));
@@ -232,8 +258,12 @@ async function runFixtures(browserName, launch) {
     ...devices['iPhone 13 Pro Max'],
     viewport: VIEWPORT,
     hasTouch: true,
-    isMobile: true
+    isMobile: true,
+    serviceWorkers: browserName === 'webkit' ? 'allow' : undefined
   });
+  if (browserName === 'webkit') {
+    await context.addInitScript(standaloneInitScript());
+  }
   const page = await context.newPage();
   const url = `http://127.0.0.1:${PORT}/index.html`;
   const fixtures = buildFixtures();
@@ -250,7 +280,7 @@ async function runFixtures(browserName, launch) {
   srv.close();
 }
 
-async function runSwUpgrade(fromTag, label) {
+async function runSwUpgrade(fromTag, label, launch, standalone) {
   const ROOT_OLD = '/tmp/el-sw-' + fromTag.replace(/\W/g, '');
   execSync(`rm -rf ${ROOT_OLD} && mkdir -p ${ROOT_OLD}`);
   execSync(`git archive ${fromTag} | tar -x -C ${ROOT_OLD}`);
@@ -258,8 +288,19 @@ async function runSwUpgrade(fromTag, label) {
   const srv = server(() => currentRoot);
   await new Promise((r) => srv.listen(PORT + 1, r));
 
-  const browser = await chromium.launch();
-  const page = await browser.newPage();
+  const browser = await launch();
+  const ctxOpts = standalone
+    ? {
+        ...devices['iPhone 13 Pro Max'],
+        viewport: VIEWPORT,
+        hasTouch: true,
+        isMobile: true,
+        serviceWorkers: 'allow'
+      }
+    : {};
+  const context = standalone ? await browser.newContext(ctxOpts) : null;
+  if (standalone) await context.addInitScript(standaloneInitScript());
+  const page = context ? await context.newPage() : await browser.newPage();
   const url = `http://127.0.0.1:${PORT + 1}/index.html`;
   await page.goto(url, { waitUntil: 'networkidle' });
   await page.evaluate(() => navigator.serviceWorker.register('sw.js'));
@@ -279,6 +320,50 @@ async function runSwUpgrade(fromTag, label) {
   assert.ok(snap.splashHidden, label + ': splash after SW upgrade');
   assert.ok(snap.version.indexOf('1.6.2') !== -1, label + ': version after upgrade');
   assert.ok(snap.entries && snap.entries.indexOf('fc-0') !== -1, label + ': entries preserved');
+  await browser.close();
+  srv.close();
+}
+
+/** iOS PWA: stale SW used to respond to .js with index.html — boot must recover via failsafe. */
+async function runIosJsFallbackRecovery(launch) {
+  const PORT_FB = PORT + 3;
+  const srv = createServer((req, res) => {
+    let p = req.url.split('?')[0];
+    if (p === '/') p = '/index.html';
+    if (/\.(js|css)$/.test(p)) {
+      res.writeHead(200, { 'Content-Type': 'text/javascript' });
+      res.end(readFileSync(join(ROOT, 'index.html')));
+      return;
+    }
+    const file = join(ROOT, p);
+    if (!existsSync(file)) {
+      res.writeHead(404);
+      res.end('not found');
+      return;
+    }
+    res.writeHead(200, { 'Content-Type': MIME[extname(file)] || 'application/octet-stream' });
+    res.end(readFileSync(file));
+  });
+  await new Promise((r) => srv.listen(PORT_FB, r));
+  const browser = await launch();
+  const context = await browser.newContext({
+    ...devices['iPhone 13 Pro Max'],
+    viewport: VIEWPORT,
+    hasTouch: true,
+    isMobile: true
+  });
+  await context.addInitScript(standaloneInitScript());
+  const page = await context.newPage();
+  await page.goto(`http://127.0.0.1:${PORT_FB}/index.html`, { waitUntil: 'domcontentloaded' });
+  await page.waitForTimeout(7200);
+  const snap = await page.evaluate(() => ({
+    splashHidden: document.getElementById('splashScreen')?.classList.contains('hide'),
+    bootErr: document.getElementById('homeBootError') && !document.getElementById('homeBootError').hidden,
+    standalone: !!navigator.standalone
+  }));
+  assert.ok(snap.standalone, 'ios-js-fallback: standalone profile');
+  assert.ok(snap.splashHidden, 'ios-js-fallback: splash must dismiss via failsafe');
+  assert.ok(snap.bootErr, 'ios-js-fallback: boot error card should show when scripts fail');
   await browser.close();
   srv.close();
 }
@@ -311,10 +396,13 @@ async function captureScreenshots() {
 
 async function main() {
   mkdirSync(ARTIFACT_DIR, { recursive: true });
+  assertNoModernSyntaxInShell();
   await runFixtures('chromium', () => chromium.launch());
   await runFixtures('webkit', () => webkit.launch());
-  await runSwUpgrade('4a0cba0', 'sw-150-to-162');
-  await runSwUpgrade('8f561db', 'sw-160-to-162');
+  await runSwUpgrade('4a0cba0', 'sw-150-to-162', () => chromium.launch(), false);
+  await runSwUpgrade('8f561db', 'sw-160-to-162', () => chromium.launch(), false);
+  await runSwUpgrade('8f561db', 'sw-160-to-162-webkit-standalone', () => webkit.launch(), true);
+  await runIosJsFallbackRecovery(() => webkit.launch());
   await captureScreenshots();
   console.log('splash-boot-test: PASS');
 }
