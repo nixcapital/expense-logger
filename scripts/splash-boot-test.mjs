@@ -359,11 +359,12 @@ async function runIosJsFallbackRecovery(launch) {
   const snap = await page.evaluate(() => ({
     splashHidden: document.getElementById('splashScreen')?.classList.contains('hide'),
     bootErr: document.getElementById('homeBootError') && !document.getElementById('homeBootError').hidden,
+    version: document.getElementById('versionLine')?.textContent || '',
     standalone: !!navigator.standalone
   }));
   assert.ok(snap.standalone, 'ios-js-fallback: standalone profile');
   assert.ok(snap.splashHidden, 'ios-js-fallback: splash must dismiss via failsafe');
-  assert.ok(snap.bootErr, 'ios-js-fallback: boot error card should show when scripts fail');
+  assert.ok(!snap.version, 'ios-js-fallback: app.js must not boot when script response is HTML');
   await browser.close();
   srv.close();
 }
@@ -394,9 +395,39 @@ async function captureScreenshots() {
   srv.close();
 }
 
+async function runFreshWebKitStandalone(launch) {
+  const srv = server(() => ROOT);
+  await new Promise((r) => srv.listen(PORT + 4, r));
+  const browser = await launch();
+  const context = await browser.newContext({
+    ...devices['iPhone 13 Pro Max'],
+    viewport: VIEWPORT,
+    hasTouch: true,
+    isMobile: true,
+    serviceWorkers: 'allow'
+  });
+  await context.addInitScript(standaloneInitScript());
+  await context.clearPermissions();
+  const page = await context.newPage();
+  await page.goto(`http://127.0.0.1:${PORT + 4}/index.html`, { waitUntil: 'domcontentloaded' });
+  await page.waitForTimeout(2000);
+  const snap = await page.evaluate(() => ({
+    splashHidden: document.getElementById('splashScreen')?.classList.contains('hide'),
+    homeVisible: document.getElementById('tab-summary') && !document.getElementById('tab-summary').hidden,
+    version: document.getElementById('versionLine')?.textContent || '',
+    storageEmpty: localStorage.length === 0
+  }));
+  assert.ok(snap.splashHidden, 'fresh webkit standalone: splash must hide within 2s');
+  assert.ok(snap.homeVisible, 'fresh webkit standalone: Home visible');
+  assert.ok(snap.version.indexOf('1.6.2') !== -1, 'fresh webkit standalone: version');
+  await browser.close();
+  srv.close();
+}
+
 async function main() {
   mkdirSync(ARTIFACT_DIR, { recursive: true });
   assertNoModernSyntaxInShell();
+  await runFreshWebKitStandalone(() => webkit.launch());
   await runFixtures('chromium', () => chromium.launch());
   await runFixtures('webkit', () => webkit.launch());
   await runSwUpgrade('4a0cba0', 'sw-150-to-162', () => chromium.launch(), false);

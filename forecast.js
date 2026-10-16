@@ -11,21 +11,32 @@
 
   function pad2(n) { return n < 10 ? '0' + n : String(n); }
 
+  function validMs(ts) {
+    return typeof ts === 'number' && isFinite(ts);
+  }
+
   function startOfDay(ts) {
+    if (!validMs(ts)) return NaN;
     var d = new Date(ts);
+    if (isNaN(d.getTime())) return NaN;
     return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
   }
 
   function addDays(ts, n) {
-    return startOfDay(ts) + n * MS_DAY;
+    var sod = startOfDay(ts);
+    if (!validMs(sod)) return NaN;
+    return sod + n * MS_DAY;
   }
 
   function dayKey(ts) {
+    if (!validMs(ts)) return 'invalid';
     var d = new Date(ts);
+    if (isNaN(d.getTime())) return 'invalid';
     return d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate());
   }
 
   function dateMs(y, m, d) {
+    if (!isFinite(y) || !isFinite(m) || !isFinite(d)) return NaN;
     return startOfDay(new Date(y, m, d).getTime());
   }
 
@@ -90,11 +101,15 @@
   function projectedStartingBalance(balance, balanceAsOfMs, entries, checkingId, transferPairs, nowMs) {
     if (balance == null || isNaN(balance)) return null;
     var asOf = balanceAsOfMs != null ? startOfDay(balanceAsOfMs) : startOfDay(nowMs);
+    if (!validMs(asOf)) asOf = startOfDay(nowMs);
+    if (!validMs(asOf)) return null;
     var paired = pairedEntryIds(transferPairs);
     var net = 0;
     (entries || []).forEach(function (e) {
-      if (e.accountId !== checkingId) return;
-      if (startOfDay(e.ts) <= asOf) return;
+      if (!e || e.accountId !== checkingId) return;
+      if (!validMs(e.ts)) return;
+      var entryDay = startOfDay(e.ts);
+      if (!validMs(entryDay) || entryDay <= asOf) return;
       net += entryCheckingDelta(e, checkingId, paired);
     });
     return Math.round((balance + net) * 100) / 100;
@@ -197,13 +212,24 @@
   }
 
   function isWeekend(ts) {
-    var dow = new Date(ts).getDay();
+    if (!validMs(ts)) return false;
+    var d = new Date(ts);
+    if (isNaN(d.getTime())) return false;
+    var dow = d.getDay();
     return dow === 0 || dow === 6;
   }
 
   function isBankHoliday(ts) {
-    var y = new Date(ts).getFullYear();
-    return !!bankHolidayKeysForYear(y)[dayKey(ts)];
+    if (!validMs(ts)) return false;
+    var d = new Date(ts);
+    if (isNaN(d.getTime())) return false;
+    var y = d.getFullYear();
+    if (!isFinite(y)) return false;
+    try {
+      return !!bankHolidayKeysForYear(y)[dayKey(ts)];
+    } catch (e) {
+      return false;
+    }
   }
 
   function isBusinessDay(ts) {
@@ -775,6 +801,8 @@
 
   function simulateBalanceTimeline(input) {
     var nowMs = startOfDay(input.nowMs || Date.now());
+    if (!validMs(nowMs)) nowMs = startOfDay(Date.now());
+    if (!validMs(nowMs)) return { ok: false, reason: 'bad-date' };
     var startBal = input.startingBalance;
     if (startBal == null || isNaN(startBal)) {
       return { ok: false, reason: 'no-balance' };
@@ -972,9 +1000,10 @@
     return false;
   }
 
-  function runForecast(input) {
+  function runForecastCore(input) {
     input = input || {};
-    var nowMs = input.nowMs || Date.now();
+    var nowMs = startOfDay(input.nowMs || Date.now());
+    if (!validMs(nowMs)) nowMs = startOfDay(Date.now());
     var checkingId = input.checkingId;
     var startBal = projectedStartingBalance(
       input.balance,
@@ -1014,6 +1043,14 @@
       dailySpend: sim.dailySpend,
       schedules: sim.schedules
     };
+  }
+
+  function runForecast(input) {
+    try {
+      return runForecastCore(input);
+    } catch (err) {
+      return { ok: false, reason: 'forecast-error' };
+    }
   }
 
   return {

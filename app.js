@@ -5,6 +5,37 @@
 (function () {
   'use strict';
 
+  // ---------- Splash dismiss (visual layer only until boot completes) ----------
+  function splashEl() {
+    try { return document.getElementById('splashScreen'); } catch (e) { return null; }
+  }
+  function hideSplashVisualOnly() {
+    try {
+      var splash = splashEl();
+      if (!splash || splash.classList.contains('hide')) return;
+      splash.style.pointerEvents = 'none';
+      splash.classList.add('hide');
+      setTimeout(function () {
+        try { splash.style.display = 'none'; } catch (e2) {}
+      }, 350);
+    } catch (e) {}
+  }
+  function markBootCompleted() {
+    window.__elBootCompleted = true;
+    if (typeof window.__elFlushPendingSkipWaiting === 'function') {
+      window.__elFlushPendingSkipWaiting();
+    }
+  }
+  function armSplashDismissTimers() {
+    if (window.__elSplashDismissArmed) return;
+    window.__elSplashDismissArmed = true;
+    setTimeout(hideSplashVisualOnly, 450);
+    setTimeout(hideSplashVisualOnly, 1800);
+    setTimeout(hideSplashVisualOnly, 4500);
+  }
+  armSplashDismissTimers();
+  window.__elHideSplashVisualOnly = hideSplashVisualOnly;
+
   // ---------- Storage keys (DO NOT RENAME) ----------
   var STORAGE_KEY   = 'expenseLogger.entries.v1';
   var CATS_KEY      = 'expenseLogger.categories.v1';
@@ -767,6 +798,28 @@
     saveMetaObj(meta);
   }
 
+  function safeParseDateMs(raw, fallbackMs) {
+    if (raw == null || raw === '') return fallbackMs;
+    if (typeof raw === 'number' && isFinite(raw)) return raw;
+    var s = String(raw).trim();
+    if (!s) return fallbackMs;
+    if (/^\d{11,}$/.test(s)) {
+      var n = parseInt(s, 10);
+      return isFinite(n) ? n : fallbackMs;
+    }
+    var datePart = s.match(/^(\d{4}-\d{2}-\d{2})/);
+    if (datePart) {
+      var iso = datePart[1] + 'T12:00:00';
+      var d1 = new Date(iso);
+      var t1 = d1.getTime();
+      if (!isNaN(t1)) return t1;
+    }
+    var normalized = s.indexOf('T') === -1 ? s.replace(' ', 'T') : s;
+    var d2 = new Date(normalized);
+    var t2 = d2.getTime();
+    return isNaN(t2) ? fallbackMs : t2;
+  }
+
   function accountBalanceAsOfMs(acct) {
     if (!acct || !acct.balanceAsOf) return null;
     var parts = String(acct.balanceAsOf).split('-');
@@ -775,7 +828,8 @@
     var m = parseInt(parts[1], 10) - 1;
     var d = parseInt(parts[2], 10);
     if (isNaN(y) || isNaN(m) || isNaN(d)) return null;
-    return new Date(y, m, d).getTime();
+    var t = new Date(y, m, d).getTime();
+    return isNaN(t) ? null : t;
   }
 
   function formatBalanceAsOfLabel(asOfStr) {
@@ -4061,13 +4115,8 @@
   }
 
   function dismissSplash() {
-    window.__elBootCompleted = true;
-    if (!$splashScreen) return;
-    $splashScreen.style.pointerEvents = 'none';
-    $splashScreen.classList.add('hide');
-    setTimeout(function () {
-      $splashScreen.style.display = 'none';
-    }, prefersReducedMotion() ? 50 : 350);
+    markBootCompleted();
+    hideSplashVisualOnly();
     if (window.__elPendingSwReload && !swReloading) {
       window.__elPendingSwReload = false;
       try {
@@ -7279,6 +7328,27 @@
   var swReloading = false;
   var SW_RELOAD_GUARD = 'expenseLogger.swReloadGuard';
 
+  function postSkipWaiting(worker) {
+    if (!worker || !worker.postMessage) return;
+    try { worker.postMessage('SKIP_WAITING'); } catch (e) {}
+  }
+
+  function flushPendingSkipWaiting() {
+    if (!window.__elPendingSkipWaitingWorker) return;
+    if (!window.__elBootCompleted) return;
+    var w = window.__elPendingSkipWaitingWorker;
+    window.__elPendingSkipWaitingWorker = null;
+    postSkipWaiting(w);
+  }
+  window.__elFlushPendingSkipWaiting = flushPendingSkipWaiting;
+
+  function flushPendingSwReload() {
+    if (!window.__elPendingSwReload || swReloading) return;
+    if (!window.__elBootCompleted) return;
+    dismissSplash();
+  }
+  window.__elFlushPendingSwReload = flushPendingSwReload;
+
   function registerSW() {
     if (!('serviceWorker' in navigator)) return;
 
@@ -7305,13 +7375,17 @@
         var nw = reg.installing;
         if (!nw) return;
         nw.addEventListener('statechange', function () {
-          if (nw.state === 'installed' && navigator.serviceWorker.controller) {
-            nw.postMessage('SKIP_WAITING');
+          if (nw.state !== 'installed' || !navigator.serviceWorker.controller) return;
+          if (!window.__elBootCompleted) {
+            window.__elPendingSkipWaitingWorker = nw;
+            return;
           }
+          postSkipWaiting(nw);
         });
       });
       if (reg.waiting && navigator.serviceWorker.controller) {
-        reg.waiting.postMessage('SKIP_WAITING');
+        if (!window.__elBootCompleted) window.__elPendingSkipWaitingWorker = reg.waiting;
+        else postSkipWaiting(reg.waiting);
       }
     }).catch(function () {});
   }
@@ -7401,7 +7475,18 @@
     return !bootFailed;
   }
 
-  bootApp();
+  try {
+    bootApp();
+  } catch (bootErr) {
+    logBootSectionError('boot-outer', bootErr);
+    showHomeBootError('Something went wrong while opening the app. Your saved entries and settings on this device were not changed.');
+    try {
+      if ($app) $app.hidden = false;
+      if ($lockScreen) $lockScreen.hidden = true;
+      if ($('tab-summary')) $('tab-summary').hidden = false;
+    } catch (e2) {}
+    hideSplashVisualOnly();
+  }
   registerSW();
   if (EI && EI.preloadIcons) {
     EI.preloadIcons(function () {

@@ -25,6 +25,21 @@
   <p class="splash-title">Expense Logger</p>
   <p class="splash-tag">Quick entries, saved on this device</p>
 </div>
+<script>
+(function () {
+  'use strict';
+  function hideSplashEarly() {
+    var s = document.getElementById('splashScreen');
+    if (!s || s.classList.contains('hide')) return;
+    s.style.pointerEvents = 'none';
+    s.classList.add('hide');
+    setTimeout(function () { s.style.display = 'none'; }, 300);
+  }
+  setTimeout(hideSplashEarly, 600);
+  setTimeout(hideSplashEarly, 2000);
+  setTimeout(hideSplashEarly, 5000);
+})();
+</script>
 
 <!-- LOCK SCREEN -->
 <div id="lockScreen" class="lock-screen" hidden>
@@ -805,7 +820,7 @@
 <script>
 (function () {
   'use strict';
-  var MAX_MS = 6500;
+  var MAX_MS = 5000;
   function dismissSplashFailsafe() {
     var splash = document.getElementById('splashScreen');
     if (!splash || splash.classList.contains('hide')) return;
