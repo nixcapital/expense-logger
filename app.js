@@ -4793,6 +4793,44 @@
     }
   }
 
+  var catPickerSchemeDark = null;
+  var catPickerSchemeFrame = 0;
+
+  function refreshCategoryPickerForColorScheme() {
+    if (!$catModal || !$catModal.classList.contains('show')) return;
+    renderIconPicker();
+    updateCatNameFieldUI(false);
+  }
+
+  function catPickerSchemeTick() {
+    if (!$catModal || !$catModal.classList.contains('show')) {
+      catPickerSchemeFrame = 0;
+      catPickerSchemeDark = null;
+      return;
+    }
+    var isDark = !!(window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches);
+    if (catPickerSchemeDark !== null && catPickerSchemeDark !== isDark) {
+      refreshCategoryPickerForColorScheme();
+    }
+    catPickerSchemeDark = isDark;
+    catPickerSchemeFrame = requestAnimationFrame(catPickerSchemeTick);
+  }
+
+  function startCatPickerSchemeWatch() {
+    catPickerSchemeDark = !!(window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches);
+    if (!catPickerSchemeFrame) {
+      catPickerSchemeFrame = requestAnimationFrame(catPickerSchemeTick);
+    }
+  }
+
+  function stopCatPickerSchemeWatch() {
+    if (catPickerSchemeFrame) {
+      cancelAnimationFrame(catPickerSchemeFrame);
+      catPickerSchemeFrame = 0;
+    }
+    catPickerSchemeDark = null;
+  }
+
   function syncIconPickerAria() {
     if (!$iconPicker) return;
     Array.prototype.forEach.call($iconPicker.querySelectorAll('.icon-picker-option'), function (btn) {
@@ -4941,7 +4979,10 @@
       $colorSwatches.appendChild(sw);
     });
     updateCatNameFieldUI(false);
+    var catSheet = $catModal.querySelector('.cat-sheet-modal');
+    if (catSheet) catSheet.scrollTop = 0;
     $catModal.classList.add('show');
+    startCatPickerSchemeWatch();
   }
 
   if ($catNameInput) {
@@ -4950,7 +4991,19 @@
     });
   }
 
-  $('catCancelBtn').addEventListener('click', function () { $catModal.classList.remove('show'); });
+  if (window.matchMedia) {
+    var catPickerSchemeMq = window.matchMedia('(prefers-color-scheme: dark)');
+    var onCatPickerSchemeChange = function () { refreshCategoryPickerForColorScheme(); };
+    if (catPickerSchemeMq.addEventListener) catPickerSchemeMq.addEventListener('change', onCatPickerSchemeChange);
+    else if (catPickerSchemeMq.addListener) catPickerSchemeMq.addListener(onCatPickerSchemeChange);
+  }
+
+  function closeCategoryModal() {
+    stopCatPickerSchemeWatch();
+    $catModal.classList.remove('show');
+  }
+
+  $('catCancelBtn').addEventListener('click', closeCategoryModal);
   $('catSaveBtn').addEventListener('click', function () {
     var name = $catNameInput.value.trim();
     if (!name) { toast('Enter a category name'); return; }
@@ -4964,7 +5017,7 @@
       categories.push({ id: newId, name: name, emoji: '📦', icon: selectedIconId, color: selectedColor });
     }
     saveCategories();
-    $catModal.classList.remove('show');
+    closeCategoryModal();
     buildCategoryButtons(); rebuildFilterDropdowns();
     renderCategoryList(); renderBudgetSettings(); renderAll();
     toast(editingCategoryId ? 'Category updated' : 'Category added');

@@ -50,10 +50,11 @@ async function waitForRender(page) {
       await new Promise((resolve) => window.ExpenseIcons.preloadIcons(resolve));
     }
   });
-  await page.waitForTimeout(350);
+  await page.waitForTimeout(400);
 }
 
 async function boot(page) {
+  await page.emulateMedia({ colorScheme: 'light' });
   await page.goto(`http://127.0.0.1:${PORT}/index.html?v=icon-picker-qa`, { waitUntil: 'networkidle' });
   await page.evaluate(async () => {
     const regs = await navigator.serviceWorker.getRegistrations();
@@ -89,15 +90,19 @@ await new Promise((r) => server.listen(PORT, r));
 const browser = await chromium.launch();
 const context = await browser.newContext({
   viewport: { width: 428, height: 926 },
-  deviceScaleFactor: 2
+  deviceScaleFactor: 2,
+  colorScheme: 'light'
 });
 const page = await context.newPage();
 
 await boot(page);
+await page.locator('#categoryList').scrollIntoViewIfNeeded();
+await waitForRender(page);
 await page.screenshot({ path: join(OUT, 'settings-categories-context.png') });
 
 await openEditGroceries(page);
 await page.emulateMedia({ colorScheme: 'light' });
+await waitForRender(page);
 await page.screenshot({ path: join(OUT, '1-picker-light.png') });
 
 await page.emulateMedia({ colorScheme: 'dark' });
@@ -106,13 +111,13 @@ await page.screenshot({ path: join(OUT, '2-picker-dark.png') });
 
 await page.click('#catCancelBtn');
 await page.waitForSelector('#catModal:not(.show)');
+await page.emulateMedia({ colorScheme: 'light' });
 await page.click('#addCategoryBtn');
 await page.waitForSelector('#catModal.show');
 await page.fill('#catNameInput', 'Coffee');
 await page.click('#iconPicker .icon-picker-option[data-icon-id="coffee"]');
 await page.click('#colorSwatches .color-swatch[data-color="#ff922b"]');
 await waitForRender(page);
-await page.emulateMedia({ colorScheme: 'light' });
 await page.screenshot({ path: join(OUT, '3-picker-selected.png') });
 
 await browser.close();
