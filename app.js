@@ -14,8 +14,14 @@
   var PIN_KEY       = 'expenseLogger.pin.v1';
   var IMPORT_RULES_KEY    = 'expenseLogger.importRules.v1';
   var IMPORT_SETTINGS_KEY = 'expenseLogger.importSettings.v1';
+  var META_KEY            = 'expenseLogger.meta.v1';
 
-  var APP_VERSION = '1.3.0';
+  var APP_VERSION = '1.3.1';
+  var BACKUP_FORMAT = 1;
+  var MS_DAY = 86400000;
+  var BACKUP_NUDGE_AFTER_DAYS = 30;
+  var BACKUP_NUDGE_MIN_ENTRIES = 50;
+  var BACKUP_NUDGE_HIDE_DAYS = 14;
   var EI = window.ExpenseIcons;
 
   function iconBadge(cat, size) {
@@ -133,7 +139,10 @@
   var tabBeforeAdd = 'summary';
   var addEntryDate = null;
   var pendingDelete = null;
+  var pendingRestoreUndo = null;
+  var pendingBackupRestore = null;
   var undoTimer = null;
+  var storagePersistStatus = 'unknown';
   var editingCategoryId = null;
   var selectedIconId = 'boxes';
   var selectedColor = '#adb5bd';
@@ -235,6 +244,14 @@
   var $forgotPinBtn = $('forgotPinBtn');
 
   var $versionLine = $('versionLine');
+  var $storageStatusLine = $('storageStatusLine');
+  var $lastBackupLine = $('lastBackupLine');
+  var $backupReminderLine = $('backupReminderLine');
+  var $homeBackupNudge = $('homeBackupNudge');
+  var $backupRestoreModal = $('backupRestoreModal');
+  var $backupRestoreSummary = $('backupRestoreSummary');
+  var $backupRestoreCancelBtn = $('backupRestoreCancelBtn');
+  var $backupRestoreConfirmBtn = $('backupRestoreConfirmBtn');
   var $importFileInput = $('importFileInput');
   var $importModal = $('importModal');
   var $importSummary = $('importSummary');
@@ -541,6 +558,355 @@
       }
     } catch (e) {}
     return {};
+  }
+
+  function loadMetaObj() {
+    try {
+      var raw = localStorage.getItem(META_KEY);
+      if (raw) {
+        var p = JSON.parse(raw);
+        if (p && typeof p === 'object') return p;
+      }
+    } catch (e) {}
+    return {};
+  }
+  function saveMetaObj(obj) {
+    try { localStorage.setItem(META_KEY, JSON.stringify(obj || {})); } catch (e) {}
+  }
+
+  function collectExpenseLoggerKeys() {
+    var out = {};
+    try {
+      for (var i = 0; i < localStorage.length; i++) {
+        var k = localStorage.key(i);
+        if (k && k.indexOf('expenseLogger.') === 0) out[k] = localStorage.getItem(k);
+      }
+    } catch (e) {}
+    return out;
+  }
+
+  /** Resolved in-memory state merged into backups (defaults not yet written to localStorage). */
+  function buildBackupStorageSnapshot() {
+    var storage = collectExpenseLoggerKeys();
+    storage[STORAGE_KEY] = JSON.stringify(entries);
+    storage[CATS_KEY] = JSON.stringify(categories);
+    storage[BUDGETS_KEY] = JSON.stringify(budgets);
+    storage[RECURRING_KEY] = JSON.stringify(recurringItems);
+    storage[IMPORT_RULES_KEY] = JSON.stringify(importRules);
+    storage[IMPORT_SETTINGS_KEY] = JSON.stringify(importSettings);
+    storage[UI_KEY] = JSON.stringify({
+      tab: currentTab === 'add' ? tabBeforeAdd : currentTab,
+      dismissedWrapped: uiState.dismissedWrapped || {}
+    });
+    return storage;
+  }
+
+  function buildBackupDocument() {
+    return {
+      backupFormat: BACKUP_FORMAT,
+      appVersion: APP_VERSION,
+      createdAt: new Date().toISOString(),
+      storage: buildBackupStorageSnapshot()
+    };
+  }
+
+  function pickDeviceBackupMeta(meta) {
+    var out = {};
+    if (meta && meta.lastBackupAt) out.lastBackupAt = meta.lastBackupAt;
+    if (meta && meta.backupNudgeHiddenUntil) out.backupNudgeHiddenUntil = meta.backupNudgeHiddenUntil;
+    return out;
+  }
+
+  function mergeDeviceBackupMeta(deviceFields) {
+    if (!deviceFields || typeof deviceFields !== 'object') return;
+    var meta = loadMetaObj();
+    if (deviceFields.lastBackupAt) meta.lastBackupAt = deviceFields.lastBackupAt;
+    else delete meta.lastBackupAt;
+    if (deviceFields.backupNudgeHiddenUntil) meta.backupNudgeHiddenUntil = deviceFields.backupNudgeHiddenUntil;
+    else delete meta.backupNudgeHiddenUntil;
+    saveMetaObj(meta);
+  }
+
+  function applyBackupStorageReplacingAppData(backupStorage, deviceMetaKeep) {
+    var filtered = {};
+    Object.keys(backupStorage || {}).forEach(function (k) {
+      if (k.indexOf('expenseLogger.') === 0 && k !== META_KEY) {
+        filtered[k] = backupStorage[k];
+      }
+    });
+    applyStorageSnapshot(filtered);
+    mergeDeviceBackupMeta(deviceMetaKeep);
+  }
+
+  function summarizeBackupStorage(storage) {
+    var entryCount = 0;
+    var catCount = 0;
+    var hasCategoriesInBackup = false;
+    var minTs = null;
+    var maxTs = null;
+    try {
+      var entriesRaw = storage[STORAGE_KEY];
+      if (entriesRaw) {
+        var list = JSON.parse(entriesRaw);
+        if (Array.isArray(list)) {
+          entryCount = list.length;
+          list.forEach(function (e) {
+            if (e && typeof e.ts === 'number') {
+              if (minTs === null || e.ts < minTs) minTs = e.ts;
+              if (maxTs === null || e.ts > maxTs) maxTs = e.ts;
+            }
+          });
+        }
+      }
+      if (Object.prototype.hasOwnProperty.call(storage, CATS_KEY)) {
+        hasCategoriesInBackup = true;
+        var catsRaw = storage[CATS_KEY];
+        if (catsRaw) {
+          var cats = JSON.parse(catsRaw);
+          if (Array.isArray(cats)) catCount = cats.length;
+        }
+      }
+    } catch (e) {}
+    return {
+      entryCount: entryCount,
+      catCount: catCount,
+      hasCategoriesInBackup: hasCategoriesInBackup,
+      minTs: minTs,
+      maxTs: maxTs
+    };
+  }
+
+  function formatCategorySummaryLabel(summary) {
+    if (summary.hasCategoriesInBackup && summary.catCount > 0) {
+      return String(summary.catCount);
+    }
+    return 'Default categories';
+  }
+
+  function validateBackupDocument(data) {
+    if (!data || typeof data !== 'object') return { ok: false, error: 'Invalid backup format' };
+    if (data.backupFormat !== BACKUP_FORMAT) return { ok: false, error: 'Unsupported backup version' };
+    if (!data.storage || typeof data.storage !== 'object') return { ok: false, error: 'Missing storage data' };
+    var hasKey = false;
+    Object.keys(data.storage).forEach(function (k) {
+      if (k.indexOf('expenseLogger.') === 0) hasKey = true;
+    });
+    if (!hasKey) return { ok: false, error: 'No app data in backup' };
+    if (data.storage[STORAGE_KEY] !== undefined) {
+      try {
+        var parsed = JSON.parse(data.storage[STORAGE_KEY]);
+        if (!Array.isArray(parsed)) return { ok: false, error: 'Corrupt entries data' };
+      } catch (e) {
+        return { ok: false, error: 'Corrupt entries data' };
+      }
+    }
+    if (data.storage[CATS_KEY] !== undefined) {
+      try {
+        var cats = JSON.parse(data.storage[CATS_KEY]);
+        if (!Array.isArray(cats)) return { ok: false, error: 'Corrupt categories data' };
+      } catch (e) {
+        return { ok: false, error: 'Corrupt categories data' };
+      }
+    }
+    return { ok: true, summary: summarizeBackupStorage(data.storage) };
+  }
+
+  function applyStorageSnapshot(storage) {
+    var remove = [];
+    try {
+      for (var i = 0; i < localStorage.length; i++) {
+        var k = localStorage.key(i);
+        if (k && k.indexOf('expenseLogger.') === 0) remove.push(k);
+      }
+    } catch (e) {}
+    remove.forEach(function (k) {
+      try { localStorage.removeItem(k); } catch (e) {}
+    });
+    Object.keys(storage).forEach(function (k) {
+      if (k.indexOf('expenseLogger.') === 0 && storage[k] != null) {
+        try { localStorage.setItem(k, storage[k]); } catch (e) {}
+      }
+    });
+  }
+
+  function reloadAllStateFromStorage() {
+    categories = loadCategories();
+    budgets = loadBudgets();
+    recurringItems = loadRecurring();
+    importRules = loadImportRules();
+    importSettings = loadImportSettings();
+    entries = loadEntries();
+    if ($countCardPayments) $countCardPayments.checked = importSettings.countCardPayments;
+  }
+
+  function storageStatusLabel() {
+    if (storagePersistStatus === 'protected') return 'Storage: protected';
+    if (storagePersistStatus === 'volatile') return 'Storage: may be cleared by iOS';
+    return 'Storage: standard';
+  }
+
+  function renderDataMetaLines() {
+    if ($storageStatusLine) $storageStatusLine.textContent = storageStatusLabel();
+    if (!$lastBackupLine) return;
+    var meta = loadMetaObj();
+    if (meta.lastBackupAt) {
+      var d = new Date(meta.lastBackupAt);
+      $lastBackupLine.hidden = false;
+      $lastBackupLine.textContent = 'Last backup: ' + d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+    } else {
+      $lastBackupLine.hidden = true;
+      $lastBackupLine.textContent = '';
+    }
+  }
+
+  function daysSinceBackup() {
+    var meta = loadMetaObj();
+    if (!meta.lastBackupAt) return null;
+    var t = Date.parse(meta.lastBackupAt);
+    if (isNaN(t)) return null;
+    return Math.floor((Date.now() - t) / MS_DAY);
+  }
+
+  function shouldShowBackupNudge() {
+    var meta = loadMetaObj();
+    if (meta.backupNudgeHiddenUntil && Date.now() < meta.backupNudgeHiddenUntil) return false;
+    var days = daysSinceBackup();
+    if (days !== null && days > BACKUP_NUDGE_AFTER_DAYS) return true;
+    if (days === null && entries.length >= BACKUP_NUDGE_MIN_ENTRIES) return true;
+    return false;
+  }
+
+  function backupNudgeMessage() {
+    var days = daysSinceBackup();
+    if (days !== null && days > BACKUP_NUDGE_AFTER_DAYS) {
+      return 'Last backup ' + days + ' days ago';
+    }
+    return 'Consider backing up your data';
+  }
+
+  function renderBackupReminder() {
+    var show = shouldShowBackupNudge();
+    var msg = backupNudgeMessage();
+    if ($backupReminderLine) {
+      $backupReminderLine.hidden = !show;
+      var textEl = $backupReminderLine.querySelector('[data-backup-nudge-text]');
+      if (textEl) textEl.textContent = msg;
+    }
+    if ($homeBackupNudge) {
+      $homeBackupNudge.hidden = !show;
+      var homeText = $homeBackupNudge.querySelector('[data-backup-nudge-text]');
+      if (homeText) homeText.textContent = msg;
+    }
+  }
+
+  function dismissBackupNudge() {
+    var meta = loadMetaObj();
+    meta.backupNudgeHiddenUntil = Date.now() + BACKUP_NUDGE_HIDE_DAYS * MS_DAY;
+    saveMetaObj(meta);
+    renderBackupReminder();
+  }
+
+  function recordBackupTime() {
+    var meta = loadMetaObj();
+    meta.lastBackupAt = new Date().toISOString();
+    saveMetaObj(meta);
+    renderDataMetaLines();
+    renderBackupReminder();
+  }
+
+  function initPersistentStorage() {
+    var storage = navigator.storage;
+    if (!storage || typeof storage.persist !== 'function') {
+      storagePersistStatus = 'unknown';
+      renderDataMetaLines();
+      return;
+    }
+    function afterPersist(granted) {
+      storagePersistStatus = granted ? 'protected' : 'volatile';
+      renderDataMetaLines();
+    }
+    if (typeof storage.persisted === 'function') {
+      storage.persisted().then(function (already) {
+        if (already) {
+          storagePersistStatus = 'protected';
+          renderDataMetaLines();
+          return;
+        }
+        storage.persist().then(afterPersist).catch(function () {
+          storagePersistStatus = 'volatile';
+          renderDataMetaLines();
+        });
+      }).catch(function () {
+        storagePersistStatus = 'volatile';
+        renderDataMetaLines();
+      });
+      return;
+    }
+    storage.persist().then(afterPersist).catch(function () {
+      storagePersistStatus = 'volatile';
+      renderDataMetaLines();
+    });
+  }
+
+  function runBackupExport() {
+    var doc = buildBackupDocument();
+    var json = JSON.stringify(doc);
+    var blob = new Blob([json], { type: 'application/json' });
+    var filename = 'expense-logger-backup-' + localDateStamp() + '.json';
+    shareOrDownload(blob, filename, 'application/json');
+    recordBackupTime();
+  }
+
+  function formatBackupDateRange(minTs, maxTs) {
+    if (minTs === null || maxTs === null) return 'No dated entries';
+    var a = new Date(minTs);
+    var b = new Date(maxTs);
+    var fmt = function (d) {
+      return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+    };
+    if (fmt(a) === fmt(b)) return fmt(a);
+    return fmt(a) + ' – ' + fmt(b);
+  }
+
+  function showRestoreUndoToast() {
+    if (undoTimer) clearTimeout(undoTimer);
+    pendingDelete = null;
+    $undoText.textContent = 'Restored from backup — Undo';
+    $undoToast.classList.add('show');
+    undoTimer = setTimeout(function () {
+      $undoToast.classList.remove('show');
+      pendingRestoreUndo = null;
+    }, 12000);
+  }
+
+  function commitBackupRestore(doc) {
+    return idbAll().then(function (receipts) {
+      var deviceMetaKeep = pickDeviceBackupMeta(loadMetaObj());
+      pendingRestoreUndo = {
+        storage: collectExpenseLoggerKeys(),
+        receipts: receipts || []
+      };
+      applyBackupStorageReplacingAppData(doc.storage, deviceMetaKeep);
+      reloadAllStateFromStorage();
+      idbClear().catch(function () {});
+      buildCategoryButtons();
+      rebuildFilterDropdowns();
+      renderAll();
+      renderCategoryList();
+      renderBudgetSettings();
+      renderRecurringList();
+      renderImportRulesList();
+      buildYearSelect(true);
+      renderReport();
+      renderDataMetaLines();
+      renderBackupReminder();
+      if ($backupRestoreModal) $backupRestoreModal.classList.remove('show');
+      pendingBackupRestore = null;
+      toast('Data restored from backup');
+      showRestoreUndoToast();
+    }).catch(function () {
+      toast('Could not finish restore');
+    });
   }
 
   // ---------- Recurring ----------
@@ -937,8 +1303,39 @@
     $undoToast.classList.remove('show');
     if (undoTimer) clearTimeout(undoTimer);
     pendingDelete = null;
+    pendingRestoreUndo = null;
   }
   $undoBtn.addEventListener('click', function () {
+    if (pendingRestoreUndo) {
+      applyStorageSnapshot(pendingRestoreUndo.storage);
+      reloadAllStateFromStorage();
+      var receiptList = pendingRestoreUndo.receipts || [];
+      idbClear().then(function () {
+        var chain = Promise.resolve();
+        receiptList.forEach(function (r) {
+          if (r && r.id) chain = chain.then(function () { return idbPut(r); });
+        });
+        return chain;
+      }).then(function () {
+        buildCategoryButtons();
+        rebuildFilterDropdowns();
+        renderAll();
+        renderCategoryList();
+        renderBudgetSettings();
+        renderRecurringList();
+        renderImportRulesList();
+        buildYearSelect(true);
+        renderReport();
+        renderDataMetaLines();
+        renderBackupReminder();
+        toast('Previous data restored');
+      }).catch(function () {
+        toast('Undo partially failed');
+      });
+      pendingRestoreUndo = null;
+      hideUndo();
+      return;
+    }
     if (pendingDelete) {
       entries.push(pendingDelete);
       saveEntries();
@@ -3429,6 +3826,62 @@
 
   $exportBtn.addEventListener('click', exportCSV);
   $('exportJsonBtn').addEventListener('click', exportJSON);
+  var $backupDataBtn = $('backupDataBtn');
+  if ($backupDataBtn) $backupDataBtn.addEventListener('click', runBackupExport);
+  var $backupFileInput = $('backupFileInput');
+  if ($backupFileInput) {
+    $backupFileInput.addEventListener('change', function (ev) {
+      var f = ev.target.files && ev.target.files[0];
+      ev.target.value = '';
+      if (!f) return;
+      var reader = new FileReader();
+      reader.onload = function (e) {
+        var data;
+        try { data = JSON.parse(e.target.result); }
+        catch (err) { toast('Invalid backup file'); return; }
+        var check = validateBackupDocument(data);
+        if (!check.ok) { toast(check.error || 'Invalid backup'); return; }
+        pendingBackupRestore = data;
+        if ($backupRestoreSummary && check.summary) {
+          var s = check.summary;
+          $backupRestoreSummary.innerHTML =
+            '<p class="hint">This will replace all data on this device.</p>'
+            + '<div class="summary-row"><span class="label">Entries</span><span class="value">' + s.entryCount + '</span></div>'
+            + '<div class="summary-row"><span class="label">Date range</span><span class="value">' + formatBackupDateRange(s.minTs, s.maxTs) + '</span></div>'
+            + '<div class="summary-row"><span class="label">Categories</span><span class="value">' + formatCategorySummaryLabel(s) + '</span></div>';
+        }
+        if ($backupRestoreModal) $backupRestoreModal.classList.add('show');
+      };
+      reader.readAsText(f);
+    });
+  }
+  if ($backupRestoreCancelBtn) {
+    $backupRestoreCancelBtn.addEventListener('click', function () {
+      pendingBackupRestore = null;
+      if ($backupRestoreModal) $backupRestoreModal.classList.remove('show');
+    });
+  }
+  if ($backupRestoreConfirmBtn) {
+    $backupRestoreConfirmBtn.addEventListener('click', function () {
+      if (!pendingBackupRestore) return;
+      commitBackupRestore(pendingBackupRestore);
+    });
+  }
+  var $backupNudgeDismiss = $('backupNudgeDismiss');
+  if ($backupNudgeDismiss) $backupNudgeDismiss.addEventListener('click', dismissBackupNudge);
+  var $homeBackupNudgeDismiss = $('homeBackupNudgeDismiss');
+  if ($homeBackupNudgeDismiss) {
+    $homeBackupNudgeDismiss.addEventListener('click', function (ev) {
+      ev.stopPropagation();
+      dismissBackupNudge();
+    });
+  }
+  var $homeBackupNudgeBtn = $('homeBackupNudgeBtn');
+  if ($homeBackupNudgeBtn) {
+    $homeBackupNudgeBtn.addEventListener('click', function () {
+      switchTab('settings');
+    });
+  }
   $('importJsonBtn').addEventListener('click', function () { $('jsonFileInput').click(); });
   $('importCsvBtn').addEventListener('click', function () { $importFileInput.click(); });
   if ($importCancelBtn) {
@@ -3677,13 +4130,15 @@
     $('tab-report').hidden = tab !== 'report';
     $('tab-history').hidden = tab !== 'history';
     $('tab-settings').hidden = tab !== 'settings';
-    if (tab === 'summary') { renderTotals(); renderMonthlySummary(); renderRecent(); }
+    if (tab === 'summary') { renderTotals(); renderMonthlySummary(); renderRecent(); renderBackupReminder(); }
     if (tab === 'history') { renderEntries(); updateActivityStickyTop(); }
     if (tab === 'report') renderReport();
     if (tab === 'settings') {
       renderCategoryList(); renderBudgetSettings(); renderRecurringList();
       renderImportRulesList();
       if ($countCardPayments) $countCardPayments.checked = importSettings.countCardPayments;
+      renderDataMetaLines();
+      renderBackupReminder();
       $versionLine.textContent = 'Version ' + APP_VERSION;
     }
     window.scrollTo(0, 0);
@@ -3914,13 +4369,14 @@
   });
 
   // Close modals on backdrop tap
-  [$budgetModal, $catModal, $receiptModal, $pinModal, $importModal, $wrappedModal].forEach(function (ov) {
+  [$budgetModal, $catModal, $receiptModal, $pinModal, $importModal, $wrappedModal, $backupRestoreModal].forEach(function (ov) {
     if (!ov) return;
     ov.addEventListener('click', function (e) {
       if (e.target === ov) {
         ov.classList.remove('show');
         if (ov === $receiptModal) editingEntryId = null;
         if (ov === $importModal) pendingImport = null;
+        if (ov === $backupRestoreModal) pendingBackupRestore = null;
       }
     });
   });
@@ -3966,6 +4422,7 @@
     renderEntries();
     renderTotals();
     renderMonthlySummary();
+    renderBackupReminder();
     if (currentTab === 'report') renderReport();
     if (currentTab === 'settings') buildYearSelect();
   }
@@ -4022,6 +4479,7 @@
 
   function bootApp() {
   // ---------- Boot ----------
+  initPersistentStorage();
   categories = loadCategories();
   budgets = loadBudgets();
   recurringItems = loadRecurring();
@@ -4054,6 +4512,8 @@
   updateSaveState();
   renderRecent();
   $versionLine.textContent = 'Version ' + APP_VERSION;
+  renderDataMetaLines();
+  renderBackupReminder();
 
   // Passcode label derived from stored state
   $togglePinBtn.textContent = getStoredPin() ? 'On' : 'Off';
@@ -4081,5 +4541,18 @@
       refreshCategorySurfacesAfterIcons();
     });
   }
+
+  window.ExpenseLoggerBackup = {
+    buildBackupDocument: buildBackupDocument,
+    buildBackupStorageSnapshot: buildBackupStorageSnapshot,
+    validateBackupDocument: validateBackupDocument,
+    applyStorageSnapshot: applyStorageSnapshot,
+    applyBackupStorageReplacingAppData: applyBackupStorageReplacingAppData,
+    collectExpenseLoggerKeys: collectExpenseLoggerKeys,
+    summarizeBackupStorage: summarizeBackupStorage,
+    formatCategorySummaryLabel: formatCategorySummaryLabel,
+    pickDeviceBackupMeta: pickDeviceBackupMeta,
+    commitBackupRestore: commitBackupRestore
+  };
 
 })();

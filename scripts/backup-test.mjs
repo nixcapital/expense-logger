@@ -1,0 +1,251 @@
+/**
+ * Backup / restore round-trip tests with fake localStorage data.
+ * Run: node scripts/backup-test.mjs
+ */
+import { chromium } from 'playwright';
+import { createServer } from 'http';
+import { readFileSync, existsSync, writeFileSync, mkdtempSync, rmSync } from 'fs';
+import { join, extname } from 'path';
+import { tmpdir } from 'os';
+import assert from 'assert';
+
+const PORT = 8879;
+const ROOT = '/workspace';
+
+const MIME = {
+  '.html': 'text/html',
+  '.js': 'text/javascript',
+  '.css': 'text/css',
+  '.json': 'application/json',
+  '.png': 'image/png'
+};
+
+const server = createServer((req, res) => {
+  let p = req.url.split('?')[0];
+  if (p === '/') p = '/index.html';
+  const file = join(ROOT, p);
+  if (!existsSync(file)) {
+    res.writeHead(404);
+    res.end('not found');
+    return;
+  }
+  res.writeHead(200, {
+    'Content-Type': MIME[extname(file)] || 'application/octet-stream',
+    'Cache-Control': 'no-store'
+  });
+  res.end(readFileSync(file));
+});
+
+function fakeSeed() {
+  const now = Date.now();
+  return {
+    'expenseLogger.entries.v1': JSON.stringify([
+      { id: 'e1', amount: 12.5, categoryId: 'groceries', note: 'fake', ts: now - 86400000 * 40 },
+      { id: 'e2', amount: 8, categoryId: 'dining', note: '', ts: now - 86400000 * 5 }
+    ]),
+    'expenseLogger.categories.v1': JSON.stringify([
+      { id: 'groceries', name: 'Groceries', icon: 'shopping-cart', color: '#4dabf7' },
+      { id: 'dining', name: 'Dining', icon: 'utensils', color: '#ff922b' }
+    ]),
+    'expenseLogger.budgets.v1': JSON.stringify({ groceries: 400 }),
+    'expenseLogger.importRules.v1': JSON.stringify([{ id: 'r1', pattern: 'COFFEE', categoryId: 'dining' }]),
+    'expenseLogger.importSettings.v1': JSON.stringify({ countCardPayments: true }),
+    'expenseLogger.recurring.v1': JSON.stringify([]),
+    'expenseLogger.ui.v1': JSON.stringify({ tab: 'summary', dismissedWrapped: {} })
+  };
+}
+
+async function run() {
+  await new Promise((r) => server.listen(PORT, r));
+  const browser = await chromium.launch();
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(String(e)));
+
+  await page.goto(`http://127.0.0.1:${PORT}/index.html`, { waitUntil: 'networkidle' });
+
+  const seed = fakeSeed();
+  await page.evaluate((s) => {
+    Object.keys(s).forEach((k) => localStorage.setItem(k, s[k]));
+  }, seed);
+  await page.reload({ waitUntil: 'networkidle' });
+
+  const roundTrip = await page.evaluate(async () => {
+    const B = window.ExpenseLoggerBackup;
+    const before = B.collectExpenseLoggerKeys();
+    const doc = B.buildBackupDocument();
+    const check = B.validateBackupDocument(doc);
+    if (!check.ok) return { ok: false, step: 'validate-built', error: check.error };
+    const keyCount = Object.keys(before).length;
+    if (keyCount < 6) return { ok: false, step: 'seed', keyCount };
+    const restorePayload = {
+      backupFormat: 1,
+      appVersion: '1.3.1',
+      createdAt: new Date().toISOString(),
+      storage: {
+        'expenseLogger.entries.v1': JSON.stringify([{ id: 'x9', amount: 99, categoryId: 'groceries', ts: Date.now() }]),
+        'expenseLogger.categories.v1': JSON.stringify([{ id: 'groceries', name: 'Groceries', icon: 'shopping-cart', color: '#4dabf7' }]),
+        'expenseLogger.importRules.v1': JSON.stringify([]),
+        'expenseLogger.budgets.v1': JSON.stringify({}),
+        'expenseLogger.recurring.v1': JSON.stringify([]),
+        'expenseLogger.importSettings.v1': JSON.stringify({ countCardPayments: false }),
+        'expenseLogger.ui.v1': JSON.stringify({ tab: 'summary' })
+      }
+    };
+    await B.commitBackupRestore(restorePayload);
+    const afterReplace = B.collectExpenseLoggerKeys();
+    const entryCount = JSON.parse(afterReplace['expenseLogger.entries.v1']).length;
+    if (entryCount !== 1) return { ok: false, step: 'replace', entryCount };
+
+    B.applyStorageSnapshot(before);
+    const afterUndoKeys = B.collectExpenseLoggerKeys();
+    const keysMatch = Object.keys(before).every((k) => afterUndoKeys[k] === before[k]);
+    return { ok: keysMatch, step: 'undo-keys', keyCount: keyCount };
+  });
+
+  assert.strictEqual(roundTrip.ok, true, 'round trip failed at ' + roundTrip.step);
+
+  const corruptOk = await page.evaluate(() => {
+    const B = window.ExpenseLoggerBackup;
+    const snap = B.collectExpenseLoggerKeys();
+    const bad = { backupFormat: 99, storage: {} };
+    const v = B.validateBackupDocument(bad);
+    if (v.ok) return false;
+    B.applyStorageSnapshot(snap);
+    const after = B.collectExpenseLoggerKeys();
+    return Object.keys(snap).every((k) => after[k] === snap[k]);
+  });
+  assert.strictEqual(corruptOk, true, 'corrupt backup must not mutate data');
+
+  await page.evaluate(() => {
+    const seed = {
+      'expenseLogger.entries.v1': JSON.stringify([
+        { id: 'keep1', amount: 1, categoryId: 'groceries', ts: Date.now() }
+      ]),
+      'expenseLogger.categories.v1': JSON.stringify([
+        { id: 'groceries', name: 'Groceries', icon: 'shopping-cart', color: '#4dabf7' }
+      ])
+    };
+    Object.keys(seed).forEach((k) => localStorage.setItem(k, seed[k]));
+  });
+  await page.reload({ waitUntil: 'networkidle' });
+
+  const tmpDir = mkdtempSync(join(tmpdir(), 'el-backup-'));
+  const backupPath = join(tmpDir, 'restore-me.json');
+  const restoreDoc = {
+    backupFormat: 1,
+    appVersion: '1.3.1',
+    createdAt: new Date().toISOString(),
+    storage: {
+      'expenseLogger.entries.v1': JSON.stringify([
+        { id: 'new1', amount: 42, categoryId: 'groceries', ts: Date.now() },
+        { id: 'new2', amount: 3, categoryId: 'groceries', ts: Date.now() - 1000 }
+      ]),
+      'expenseLogger.categories.v1': JSON.stringify([
+        { id: 'groceries', name: 'Groceries', icon: 'shopping-cart', color: '#4dabf7' }
+      ]),
+      'expenseLogger.budgets.v1': JSON.stringify({}),
+      'expenseLogger.recurring.v1': JSON.stringify([]),
+      'expenseLogger.importRules.v1': JSON.stringify([]),
+      'expenseLogger.importSettings.v1': JSON.stringify({ countCardPayments: false }),
+      'expenseLogger.ui.v1': JSON.stringify({ tab: 'summary' })
+    }
+  };
+  writeFileSync(backupPath, JSON.stringify(restoreDoc));
+
+  await page.click('button[data-tab="settings"]');
+  await page.locator('#backupFileInput').setInputFiles(backupPath);
+  await page.waitForSelector('#backupRestoreModal.show');
+  await page.click('#backupRestoreConfirmBtn');
+  await page.waitForTimeout(400);
+
+  let countAfter = await page.evaluate(() =>
+    JSON.parse(localStorage.getItem('expenseLogger.entries.v1')).length
+  );
+  assert.strictEqual(countAfter, 2, 'restore via UI should apply backup entries');
+
+  await page.click('#undoBtn');
+  await page.waitForTimeout(400);
+  const countUndo = await page.evaluate(() =>
+    JSON.parse(localStorage.getItem('expenseLogger.entries.v1')).length
+  );
+  assert.strictEqual(countUndo, 1, 'undo after restore should revert to prior data');
+  assert.strictEqual(
+    await page.evaluate(() => JSON.parse(localStorage.getItem('expenseLogger.entries.v1'))[0].id),
+    'keep1'
+  );
+
+  const defaultCatsBackup = await page.evaluate(() => {
+    localStorage.clear();
+    localStorage.setItem(
+      'expenseLogger.entries.v1',
+      JSON.stringify([{ id: 'only1', amount: 2, categoryId: 'groceries', ts: Date.now() }])
+    );
+    return true;
+  });
+  assert.strictEqual(defaultCatsBackup, true);
+  await page.reload({ waitUntil: 'networkidle' });
+
+  const resolvedCats = await page.evaluate(() => {
+    const B = window.ExpenseLoggerBackup;
+    const doc = B.buildBackupDocument();
+    const raw = doc.storage['expenseLogger.categories.v1'];
+    if (!raw) return 0;
+    return JSON.parse(raw).length;
+  });
+  assert.ok(resolvedCats >= 6, 'backup must include resolved default categories, got ' + resolvedCats);
+
+  const restoreDefaults = await page.evaluate(async () => {
+    const B = window.ExpenseLoggerBackup;
+    const doc = B.buildBackupDocument();
+    localStorage.removeItem('expenseLogger.categories.v1');
+    await B.commitBackupRestore(doc);
+    const raw = localStorage.getItem('expenseLogger.categories.v1');
+    return raw ? JSON.parse(raw).length : 0;
+  });
+  assert.ok(restoreDefaults >= 6, 'restore must write categories from backup');
+
+  const categoryLabel = await page.evaluate(() => {
+    const B = window.ExpenseLoggerBackup;
+    const summary = B.summarizeBackupStorage({
+      'expenseLogger.entries.v1': JSON.stringify([{ id: 'a', amount: 1, categoryId: 'groceries', ts: 1 }]),
+      'expenseLogger.ui.v1': '{}'
+    });
+    return B.formatCategorySummaryLabel(summary);
+  });
+  assert.strictEqual(categoryLabel, 'Default categories');
+
+  const metaIso = '2025-06-01T12:00:00.000Z';
+  const metaKept = await page.evaluate(async (iso) => {
+    localStorage.setItem('expenseLogger.meta.v1', JSON.stringify({ lastBackupAt: iso }));
+    localStorage.setItem(
+      'expenseLogger.categories.v1',
+      JSON.stringify([{ id: 'groceries', name: 'Groceries', icon: 'shopping-cart', color: '#4dabf7' }])
+    );
+    const B = window.ExpenseLoggerBackup;
+    await B.commitBackupRestore({
+      backupFormat: 1,
+      appVersion: '1.3.1',
+      createdAt: new Date().toISOString(),
+      storage: {
+        'expenseLogger.entries.v1': JSON.stringify([{ id: 'n', amount: 9, categoryId: 'groceries', ts: Date.now() }]),
+        'expenseLogger.meta.v1': JSON.stringify({ lastBackupAt: '2020-01-01T00:00:00.000Z' })
+      }
+    });
+    const meta = JSON.parse(localStorage.getItem('expenseLogger.meta.v1') || '{}');
+    return meta.lastBackupAt;
+  }, metaIso);
+  assert.strictEqual(metaKept, metaIso, 'device last-backup time must survive restore');
+
+  rmSync(tmpDir, { recursive: true, force: true });
+  await browser.close();
+  server.close();
+
+  assert.strictEqual(errors.length, 0, 'page errors: ' + errors.join('; '));
+  console.log('backup-test: PASS');
+}
+
+run().catch((e) => {
+  console.error(e);
+  process.exit(1);
+});
