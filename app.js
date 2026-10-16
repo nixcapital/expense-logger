@@ -120,7 +120,7 @@
     { id: 'gas',       name: 'Gas',       emoji: '⛽', icon: 'fuel', color: '#51cf66' },
     { id: 'bills',     name: 'Bills',     emoji: '📄', icon: 'receipt', color: '#cc5de8' },
     { id: 'fun',       name: 'Fun',       emoji: '🎉', icon: 'ticket', color: '#f783ac' },
-    { id: 'other',     name: 'Other',     emoji: '📦', icon: 'boxes', color: '#adb5bd' }
+    { id: 'other',     name: 'Other',     emoji: '📦', icon: 'boxes', color: '#878e96' }
   ];
 
   // ---------- State ----------
@@ -593,6 +593,13 @@
       }
     });
     if (changed) { saveEntries(); saveCategories(); }
+    categories.forEach(function (c) {
+      if (c.id === 'other' && (c.color === '#adb5bd' || c.color === '#ADB5BD')) {
+        c.color = '#878e96';
+        changed = true;
+      }
+    });
+    if (changed) saveCategories();
     processRecurring();
   }
 
@@ -802,15 +809,19 @@
     main.className = 'row-main';
     var title = document.createElement('div');
     title.className = 'row-title';
-    title.textContent = e.note || cat.name;
-    var sub = document.createElement('div');
-    sub.className = 'row-sub';
-    var subBits = [cat.name];
+    var hasNote = !!(e.note && String(e.note).trim());
+    title.textContent = hasNote ? String(e.note).trim() : cat.name;
+    var subBits = [];
+    if (hasNote) subBits.push(cat.name);
     if (e.recurringId) subBits.push('Recurring');
     if (e.hasReceipt) subBits.push(uiIcon('ui-camera', 'xs'));
-    sub.innerHTML = subBits.join(' · ');
     main.appendChild(title);
-    main.appendChild(sub);
+    if (subBits.length) {
+      var sub = document.createElement('div');
+      sub.className = 'row-sub';
+      sub.innerHTML = subBits.join(' · ');
+      main.appendChild(sub);
+    }
     var amt = document.createElement('span');
     amt.className = 'row-amt';
     amt.textContent = fmtMoneyDisplay(e.amount);
@@ -1160,8 +1171,9 @@
         + '<span class="amt">' + fmtMoneyDisplay(r.amt) + '</span>' + budgetBar;
       row.addEventListener('click', function () {
         selectedLegendCatId = selectedLegendCatId === r.c.id ? null : r.c.id;
-        playCatIcon(row.querySelector('.cat-badge'));
         renderLegendInteractive(byCat, total);
+        var activeRow = $legendEl.querySelector('.legend-row.active');
+        if (activeRow) playCatIcon(activeRow.querySelector('.cat-badge'));
         drawDonutFrame(byCat, total, 1, selectedLegendCatId);
         updateDonutCenter(selectedLegendCatId, total, byCat);
       });
@@ -1834,7 +1846,8 @@
     });
     if (topId && topN >= 2) {
       var c = getCat(topId);
-      return { type: 'category', text: topN + ' ' + c.name.toLowerCase() + (topN === 1 ? '' : 's') };
+      var purchaseWord = topN === 1 ? 'purchase' : 'purchases';
+      return { type: 'category', text: topN + ' ' + purchaseWord + ' in ' + c.name };
     }
     return { type: 'entries', text: monthEntries.length + ' transactions logged' };
   }
@@ -1872,7 +1885,7 @@
       + new Date(recap.biggestDay.ts).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })
       + ' · ' + fmtMoneyDisplay(recap.biggestDay.amt) + '</div></div>' : '';
     $wrappedPreview.innerHTML = '<div class="wrapped-card-ui" id="wrappedCardUi">'
-      + '<h2>Your ' + parts[0] + ',<br><em>wrapped</em></h2>'
+      + '<h2><span class="wrapped-title-lead">Your ' + escHtml(parts[0]) + ',</span> <em>wrapped</em></h2>'
       + '<div class="wrapped-stat"><label>Total spent</label><div class="big">' + fmtMoneyDisplay(recap.total) + '</div></div>'
       + '<div class="wrapped-grid">' + topHtml + dayHtml + '</div>'
       + budgetHtml
@@ -3957,6 +3970,19 @@
     if (currentTab === 'settings') buildYearSelect();
   }
 
+  function refreshCategorySurfacesAfterIcons() {
+    buildCategoryButtons();
+    rebuildFilterDropdowns();
+    renderCategoryList();
+    renderAll();
+    renderReport();
+    if ($wrappedModal && $wrappedModal.classList.contains('show') && wrappedMonth) {
+      renderWrappedPreview(computeRecapData(wrappedMonth.y, wrappedMonth.m));
+    }
+    if (EI && EI.hydrateUiIcons) EI.hydrateUiIcons(document);
+    refreshIconObservers(document);
+  }
+
   // ---------- Service worker ----------
   var swReloading = false;
   var SW_RELOAD_GUARD = 'expenseLogger.swReloadGuard';
@@ -4017,6 +4043,7 @@
   })();
 
   migrate();
+  buildCategoryButtons();
   rebuildFilterDropdowns();
   renderAll();
   renderCategoryList();
@@ -4048,13 +4075,11 @@
   setTimeout(dismissSplash, prefersReducedMotion() ? 80 : 400);
   }
 
+  bootApp();
   if (EI && EI.preloadIcons) {
     EI.preloadIcons(function () {
-      buildCategoryButtons();
-      bootApp();
+      refreshCategorySurfacesAfterIcons();
     });
-  } else {
-    bootApp();
   }
 
 })();

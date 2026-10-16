@@ -57,7 +57,8 @@ function computeFunStat(monthEntries) {
   });
   if (topId && topN >= 2) {
     const c = getCat(topId);
-    return { type: 'category', text: `${topN} ${c.name.toLowerCase()}s` };
+    const purchaseWord = topN === 1 ? 'purchase' : 'purchases';
+    return { type: 'category', text: `${topN} ${purchaseWord} in ${c.name}` };
   }
   return { type: 'entries', text: `${monthEntries.length} transactions logged` };
 }
@@ -104,6 +105,15 @@ assert.strictEqual(recap.topCat.amt, 90);
 assert.strictEqual(recap.biggestDay.amt, 90);
 assert.strictEqual(recap.budgetDelta, 120);
 assert.ok(recap.fun.text.includes('latte'));
+
+const groOnly = [
+  { id: 'g1', amount: 10, categoryId: 'groceries', note: 'a', ts: new Date(y, m, 2).getTime() },
+  { id: 'g2', amount: 10, categoryId: 'groceries', note: 'b', ts: new Date(y, m, 4).getTime() },
+  { id: 'g3', amount: 10, categoryId: 'groceries', note: 'c', ts: new Date(y, m, 6).getTime() },
+  { id: 'g4', amount: 10, categoryId: 'groceries', note: 'd', ts: new Date(y, m, 8).getTime() }
+];
+const groFun = computeFunStat(groOnly);
+assert.strictEqual(groFun.text, '4 purchases in Groceries');
 
 const empty = computeRecapData([], {}, y, m);
 assert.strictEqual(empty.entryCount, 0);

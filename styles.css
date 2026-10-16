@@ -948,8 +948,15 @@ button.legend-row.legend-btn.active { background: color-mix(in srgb, var(--accen
   position: relative;
   overflow: hidden;
 }
-.wrapped-card-ui h2 { font-size: 22px; margin: 0 0 var(--sp-4); line-height: 1.2; }
-.wrapped-card-ui h2 em { color: var(--accent); font-style: normal; }
+.wrapped-card-ui h2 {
+  font-size: 22px;
+  margin: 0 0 var(--sp-4);
+  line-height: 1.25;
+  color: #f2f4f8;
+  font-weight: 700;
+}
+.wrapped-card-ui h2 .wrapped-title-lead { color: #f2f4f8; }
+.wrapped-card-ui h2 em { color: var(--accent); font-style: normal; font-weight: 700; }
 .wrapped-stat {
   background: var(--raised);
   border-radius: var(--radius-input);
