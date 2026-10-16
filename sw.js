@@ -3,8 +3,8 @@
    Offline: fall back to the current release cache only.
    Install precache uses network no-store (not HTTP cache / addAll).
 */
-const CACHE_VERSION = 'expense-logger-v1.1.0';
-const ASSET_V = '1.1.0';
+const CACHE_VERSION = 'expense-logger-v1.2.0';
+const ASSET_V = '1.2.0';
 const SHELL_URLS = [
   './',
   './index.html',

@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
 <meta name="description" content="Offline expense logger with budgets, receipts, and reports.">
 <meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Expenses">
 <meta name="theme-color" content="#0f1117" media="(prefers-color-scheme: dark)">
@@ -12,7 +13,7 @@
 <link rel="manifest" href="manifest.json">
 <link rel="icon" href="icon-192.png">
 <link rel="apple-touch-icon" href="icon-192.png">
-<link rel="stylesheet" href="styles.css?v=1.1.0">
+<link rel="stylesheet" href="styles.css?v=1.2.0">
 <title>Expense Logger</title>
 </head>
 <body>
@@ -219,9 +220,13 @@
       <button class="btn-secondary" id="exportBtn" type="button">⬇ Export CSV</button>
       <button class="btn-secondary" id="exportJsonBtn" type="button">⬇ Export JSON backup (with receipts)</button>
       <button class="btn-secondary" id="importJsonBtn" type="button">⬆ Import JSON backup</button>
-      <button class="btn-secondary" id="importCsvBtn" type="button">⬆ Import CSV</button>
+      <button class="btn-secondary" id="importCsvBtn" type="button">⬆ Import CSV / Excel</button>
       <input type="file" id="jsonFileInput" accept=".json,application/json" hidden>
-      <input type="file" id="csvFileInput" accept=".csv,text/csv" hidden>
+      <input type="file" id="importFileInput" accept=".csv,text/csv,.xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" hidden>
+      <label class="check-row" style="margin-top:12px;">
+        <input type="checkbox" id="countCardPayments">
+        <span>Count credit-card bill payments as spending (if you do not import card files)</span>
+      </label>
     </div>
   </div>
 
@@ -237,6 +242,12 @@
     <h2>Budget Settings</h2>
     <p class="hint">Set monthly spending limits per category.</p>
     <div id="budgetSettings"></div>
+  </div>
+
+  <div class="card">
+    <h2>Import rules</h2>
+    <p class="hint">Learned from imports: category and transfer matching by description (reference numbers ignored).</p>
+    <div id="importRulesList"></div>
   </div>
 
   <div class="card">
@@ -339,21 +350,36 @@
 <div class="modal-overlay" id="pinModal">
   <div class="modal">
     <h3 id="pinModalTitle">Set Passcode</h3>
-    <div class="field">
-      <label for="pinInput1">Passcode (4–8 digits)</label>
-      <input type="password" id="pinInput1" inputmode="numeric" pattern="[0-9]*" maxlength="8" autocomplete="new-password">
-    </div>
-    <div class="field">
-      <label for="pinInput2">Confirm passcode</label>
-      <input type="password" id="pinInput2" inputmode="numeric" pattern="[0-9]*" maxlength="8" autocomplete="new-password">
-    </div>
+    <form id="pinForm" onsubmit="return false;">
+      <div class="field">
+        <label for="pinInput1">Passcode (4–8 digits)</label>
+        <input type="password" id="pinInput1" inputmode="numeric" pattern="[0-9]*" maxlength="8" autocomplete="new-password">
+      </div>
+      <div class="field">
+        <label for="pinInput2">Confirm passcode</label>
+        <input type="password" id="pinInput2" inputmode="numeric" pattern="[0-9]*" maxlength="8" autocomplete="new-password">
+      </div>
+      <div class="btn-row">
+        <button class="btn-secondary" id="pinCancelBtn" type="button">Cancel</button>
+        <button class="save-btn flex1" id="pinSaveBtn" type="button">Save</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- Modal: import review -->
+<div class="modal-overlay" id="importModal">
+  <div class="modal modal-wide import-modal">
+    <h3>Review import</h3>
+    <div id="importSummary"></div>
+    <div id="importRowList" class="import-row-list"></div>
     <div class="btn-row">
-      <button class="btn-secondary" id="pinCancelBtn" type="button">Cancel</button>
-      <button class="save-btn flex1" id="pinSaveBtn" type="button">Save</button>
+      <button class="btn-secondary" id="importCancelBtn" type="button">Cancel</button>
+      <button class="save-btn flex1" id="importConfirmBtn" type="button">Import</button>
     </div>
   </div>
 </div>
 
-<script src="app.js?v=1.1.0"></script>
+<script src="app.js?v=1.2.0"></script>
 </body>
 </html>

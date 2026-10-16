@@ -12,8 +12,10 @@
   var RECURRING_KEY = 'expenseLogger.recurring.v1';
   var UI_KEY        = 'expenseLogger.ui.v1';
   var PIN_KEY       = 'expenseLogger.pin.v1';
+  var IMPORT_RULES_KEY    = 'expenseLogger.importRules.v1';
+  var IMPORT_SETTINGS_KEY = 'expenseLogger.importSettings.v1';
 
-  var APP_VERSION = '1.1.0';
+  var APP_VERSION = '1.2.0';
 
   // ---------- IndexedDB for receipts ----------
   var DB_NAME = 'expenseLogger';
@@ -113,6 +115,9 @@
   var selectedColor = '#adb5bd';
   var pendingReceiptBlob = null; // { id, blob } not yet attached
   var editingEntryId = null;     // id of entry being edited (modal)
+  var importRules = [];
+  var importSettings = { countCardPayments: false };
+  var pendingImport = null;      // { batchId, rows, fileName }
 
   // ---------- DOM ----------
   var $ = function (id) { return document.getElementById(id); };
@@ -206,6 +211,13 @@
   var $forgotPinBtn = $('forgotPinBtn');
 
   var $versionLine = $('versionLine');
+  var $importFileInput = $('importFileInput');
+  var $importModal = $('importModal');
+  var $importSummary = $('importSummary');
+  var $importRowList = $('importRowList');
+  var $importConfirmBtn = $('importConfirmBtn');
+  var $importCancelBtn = $('importCancelBtn');
+  var $importRulesList = $('importRulesList');
 
   // ---------- Utilities ----------
   function uid() {
@@ -316,6 +328,36 @@
     return 'k:' + dateStr + '|' + (Math.round((e.amount || 0) * 100) / 100) + '|' +
       (e.categoryId || '') + '|' + normText(e.note);
   }
+  function fnv1a(str) {
+    var h = 0x811c9dc5;
+    var s = String(str);
+    for (var i = 0; i < s.length; i++) {
+      h ^= s.charCodeAt(i);
+      h = Math.imul(h, 0x01000193);
+    }
+    return (h >>> 0).toString(16);
+  }
+  function importBatchIdFromBytes(bufOrText) {
+    return 'b:' + fnv1a(bufOrText);
+  }
+  function importRowKey(parts) {
+    return 'r:' + fnv1a(parts.join('|'));
+  }
+  function dayKey(ts) {
+    var d = new Date(ts);
+    return d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate());
+  }
+  function cleanImportNote(raw) {
+    var s = String(raw == null ? '' : raw).replace(/\s+/g, ' ').trim();
+    s = s.replace(/\s+\d{8,}\s*$/g, '').trim();
+    s = s.replace(/\s+WEB\s+\d+\s*$/i, '').trim();
+    return s.slice(0, 80);
+  }
+  function descriptionMatchKey(note) {
+    var s = normText(cleanImportNote(note));
+    s = s.replace(/\b\d{6,}\b/g, '#');
+    return s;
+  }
   function pctLabel(amt, total) {
     if (total <= 0 || amt <= 0) return '0%';
     var p = (amt / total) * 100;
@@ -369,6 +411,36 @@
   }
   function saveRecurring() {
     try { localStorage.setItem(RECURRING_KEY, JSON.stringify(recurringItems)); } catch (e) {}
+  }
+  function loadImportRules() {
+    try {
+      var raw = localStorage.getItem(IMPORT_RULES_KEY);
+      if (raw) {
+        var p = JSON.parse(raw);
+        if (Array.isArray(p)) {
+          return p.filter(function (r) {
+            return r && r.id && r.pattern;
+          });
+        }
+      }
+    } catch (e) {}
+    return [];
+  }
+  function saveImportRules() {
+    try { localStorage.setItem(IMPORT_RULES_KEY, JSON.stringify(importRules)); } catch (e) {}
+  }
+  function loadImportSettings() {
+    try {
+      var raw = localStorage.getItem(IMPORT_SETTINGS_KEY);
+      if (raw) {
+        var p = JSON.parse(raw);
+        if (p && typeof p === 'object') return { countCardPayments: !!p.countCardPayments };
+      }
+    } catch (e) {}
+    return { countCardPayments: false };
+  }
+  function saveImportSettings() {
+    try { localStorage.setItem(IMPORT_SETTINGS_KEY, JSON.stringify(importSettings)); } catch (e) {}
   }
   function loadEntries() {
     try {
@@ -1896,6 +1968,668 @@
   if ($editSaveBtn) $editSaveBtn.addEventListener('click', saveEntryEdit);
   if ($editDeleteBtn) $editDeleteBtn.addEventListener('click', deleteEntryFromEditor);
 
+  // ---------- Bank / card import (CSV + XLSX) ----------
+  var TRANSFER_PATTERNS = [
+    /\bautopay\b/i, /\bcredit\s*crd\b/i, /\bcredit\s*card\b/i,
+    /\bcard\s*payment\b/i, /\bonline\s*payment\b/i, /\bpayment\s*thank\s*you\b/i,
+    /\btransfer\s*to\s*savings\b/i, /\bxfer\b/i
+  ];
+  var CARD_PAYMENT_TYPES = { payment: true, 'online payment': true };
+  var CARD_CREDIT_TYPES = { return: true, refund: true, 'credit': true };
+  var CATEGORY_ALIASES = {
+    'food & drink': 'dining', 'food and drink': 'dining', 'restaurants': 'dining',
+    'dining': 'dining', 'groceries': 'groceries', 'grocery': 'groceries',
+    'gas': 'gas', 'gasoline': 'gas', 'fuel': 'gas',
+    'shopping': 'other', 'bills': 'bills', 'utilities': 'bills',
+    'entertainment': 'fun', 'fun': 'fun'
+  };
+
+  function normHeader(h) {
+    return String(h || '').trim().toLowerCase().replace(/[^a-z0-9]+/g, ' ');
+  }
+  function findCol(headers, names) {
+    var norm = headers.map(normHeader);
+    for (var n = 0; n < names.length; n++) {
+      var want = normHeader(names[n]);
+      for (var i = 0; i < norm.length; i++) {
+        if (norm[i] === want) return i;
+      }
+    }
+    for (var n2 = 0; n2 < names.length; n2++) {
+      var w = normHeader(names[n2]);
+      for (var j = 0; j < norm.length; j++) {
+        if (norm[j].indexOf(w) !== -1 || w.indexOf(norm[j]) !== -1) return j;
+      }
+    }
+    return -1;
+  }
+  function parseUsDate(str) {
+    if (!str) return null;
+    var s = String(str).trim();
+    var m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+    if (m) {
+      var dt = new Date(parseInt(m[3], 10), parseInt(m[1], 10) - 1, parseInt(m[2], 10), 12, 0, 0, 0);
+      return isNaN(dt.getTime()) ? null : dt.getTime();
+    }
+    var iso = new Date(s.indexOf('T') === -1 ? s + 'T12:00:00' : s);
+    return isNaN(iso.getTime()) ? null : iso.getTime();
+  }
+  function excelSerialToTs(serial) {
+    var n = parseFloat(serial);
+    if (isNaN(n)) return null;
+    var ms = (n - 25569) * 86400000;
+    var d = new Date(ms);
+    d.setHours(12, 0, 0, 0);
+    return d.getTime();
+  }
+  function parseAmountCell(v) {
+    if (v == null || v === '') return NaN;
+    var s = String(v).replace(/[$,\s]/g, '');
+    return parseFloat(s);
+  }
+  function isRowEmpty(cells) {
+    if (!cells || !cells.length) return true;
+    for (var i = 0; i < cells.length; i++) {
+      if (String(cells[i] || '').trim()) return false;
+    }
+    return true;
+  }
+
+  function readU32(dv, off) { return dv.getUint32(off, true); }
+  function readU16(dv, off) { return dv.getUint16(off, true); }
+
+  function parseZipDirectory(buf) {
+    var dv = new DataView(buf);
+    var len = buf.byteLength;
+    var eocd = -1;
+    for (var i = len - 22; i >= 0; i--) {
+      if (readU32(dv, i) === 0x06054b50) { eocd = i; break; }
+    }
+    if (eocd < 0) throw new Error('Invalid XLSX (zip)');
+    var cdCount = readU16(dv, eocd + 10);
+    var cdOffset = readU32(dv, eocd + 16);
+    var files = {};
+    var pos = cdOffset;
+    for (var c = 0; c < cdCount; c++) {
+      if (readU32(dv, pos) !== 0x02014b50) break;
+      var comp = readU16(dv, pos + 10);
+      var compSize = readU32(dv, pos + 20);
+      var uncompSize = readU32(dv, pos + 24);
+      var nameLen = readU16(dv, pos + 28);
+      var extraLen = readU16(dv, pos + 30);
+      var commentLen = readU16(dv, pos + 32);
+      var localOff = readU32(dv, pos + 42);
+      var name = '';
+      for (var ni = 0; ni < nameLen; ni++) name += String.fromCharCode(dv.getUint8(pos + 46 + ni));
+      pos += 46 + nameLen + extraLen + commentLen;
+      if (readU32(dv, localOff) !== 0x04034b50) continue;
+      var locMethod = readU16(dv, localOff + 8);
+      var locCompSize = readU32(dv, localOff + 18);
+      var locNameLen = readU16(dv, localOff + 26);
+      var locExtra = readU16(dv, localOff + 28);
+      var dataStart = localOff + 30 + locNameLen + locExtra;
+      var size = compSize > 0 ? compSize : locCompSize;
+      if (dataStart + size > len) size = Math.max(0, len - dataStart);
+      var payload = new Uint8Array(buf, dataStart, size);
+      comp = locMethod || comp;
+      var out;
+      if (comp === 0) {
+        out = payload;
+      } else if (comp === 8) {
+        out = null; // filled async
+      } else {
+        throw new Error('Unsupported zip compression in XLSX');
+      }
+      files[name] = { comp: comp, payload: payload, uncompSize: uncompSize };
+    }
+    return files;
+  }
+
+  function inflateRaw(deflated) {
+    if (typeof DecompressionStream === 'undefined') {
+      return Promise.reject(new Error('XLSX requires a browser with DecompressionStream (iOS 16.4+)'));
+    }
+    var input = deflated instanceof Uint8Array ? deflated : new Uint8Array(deflated);
+    return new Promise(function (resolve, reject) {
+      var ds = new DecompressionStream('deflate-raw');
+      var reader = ds.readable.getReader();
+      var chunks = [];
+      function readPump() {
+        reader.read().then(function (step) {
+          if (step.done) {
+            var total = 0;
+            chunks.forEach(function (c) { total += c.length; });
+            var out = new Uint8Array(total);
+            var off = 0;
+            chunks.forEach(function (c) { out.set(c, off); off += c.length; });
+            resolve(out.buffer);
+            return;
+          }
+          chunks.push(step.value);
+          readPump();
+        }).catch(reject);
+      }
+      readPump();
+      var writer = ds.writable.getWriter();
+      writer.write(input).then(function () { return writer.close(); }).catch(reject);
+    });
+  }
+
+  function unzipXlsx(buf) {
+    var meta = parseZipDirectory(buf);
+    var names = Object.keys(meta);
+    var promises = names.map(function (name) {
+      var f = meta[name];
+      if (f.comp === 0) return Promise.resolve({ name: name, data: f.payload });
+      return inflateRaw(f.payload).then(function (ab) {
+        return { name: name, data: new Uint8Array(ab) };
+      });
+    });
+    return Promise.all(promises).then(function (parts) {
+      var map = {};
+      parts.forEach(function (p) { map[p.name] = p.data; });
+      return map;
+    });
+  }
+
+  function decodeXmlText(s) {
+    return s.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&').replace(/&quot;/g, '"');
+  }
+  function parseSharedStrings(xml) {
+    var list = [];
+    var re = /<si>([\s\S]*?)<\/si>/g;
+    var m;
+    while ((m = re.exec(xml))) {
+      var chunk = m[1];
+      var texts = chunk.match(/<t[^>]*>([\s\S]*?)<\/t>/g) || [];
+      var combined = '';
+      texts.forEach(function (t) {
+        var inner = t.replace(/<t[^>]*>/, '').replace(/<\/t>$/, '');
+        combined += decodeXmlText(inner);
+      });
+      list.push(combined);
+    }
+    return list;
+  }
+  function colLettersToIndex(letters) {
+    var n = 0;
+    for (var i = 0; i < letters.length; i++) n = n * 26 + (letters.charCodeAt(i) - 64);
+    return n - 1;
+  }
+  function parseSheetXml(xml, shared) {
+    var rows = [];
+    var rowRe = /<row[^>]*r="(\d+)"[^>]*>([\s\S]*?)<\/row>/g;
+    var rm;
+    while ((rm = rowRe.exec(xml))) {
+      var rowNum = parseInt(rm[1], 10);
+      var rowBody = rm[2];
+      var cells = {};
+      var cellRe = /<c[^>]*r="([A-Z]+)(\d+)"([^>]*?)(\/>|>([\s\S]*?)<\/c>)/g;
+      var cm;
+      while ((cm = cellRe.exec(rowBody))) {
+        var col = colLettersToIndex(cm[1]);
+        var attrs = cm[3];
+        var inner = cm[5] || '';
+        var tAttr = (attrs.match(/\bt="([^"]+)"/) || [])[1];
+        var vMatch = inner.match(/<v>([\s\S]*?)<\/v>/);
+        var val = vMatch ? decodeXmlText(vMatch[1]) : '';
+        if (tAttr === 's') val = shared[parseInt(val, 10)] || '';
+        else if (tAttr === 'inlineStr') {
+          var t = inner.match(/<t[^>]*>([\s\S]*?)<\/t>/);
+          val = t ? decodeXmlText(t[1]) : '';
+        }
+        cells[col] = val;
+      }
+      var maxCol = -1;
+      Object.keys(cells).forEach(function (k) { maxCol = Math.max(maxCol, parseInt(k, 10)); });
+      var arr = [];
+      for (var c = 0; c <= maxCol; c++) arr.push(cells[c] != null ? cells[c] : '');
+      rows[rowNum - 1] = arr;
+    }
+    var dense = [];
+    for (var r = 0; r < rows.length; r++) {
+      if (rows[r]) dense.push(rows[r]);
+      else if (r < rows.length) dense.push([]);
+    }
+    return dense.filter(function (row) { return !isRowEmpty(row); });
+  }
+
+  function parseXlsxBuffer(buf) {
+    return unzipXlsx(buf).then(function (files) {
+      var sheetPath = 'xl/worksheets/sheet1.xml';
+      if (!files[sheetPath]) {
+        var alt = Object.keys(files).filter(function (k) { return k.indexOf('xl/worksheets/') === 0 && k.endsWith('.xml'); })[0];
+        if (!alt) throw new Error('No worksheet found in XLSX');
+        sheetPath = alt;
+      }
+      var shared = [];
+      if (files['xl/sharedStrings.xml']) {
+        var xml = new TextDecoder().decode(files['xl/sharedStrings.xml']);
+        shared = parseSharedStrings(xml);
+      }
+      var sheetXml = new TextDecoder().decode(files[sheetPath]);
+      return parseSheetXml(sheetXml, shared);
+    });
+  }
+
+  function detectImportLayout(headerRow) {
+    var h = headerRow.map(normHeader);
+    var hasDebit = findCol(headerRow, ['debit']) !== -1;
+    var hasCredit = findCol(headerRow, ['credit']) !== -1;
+    var hasType = findCol(headerRow, ['type']) !== -1;
+    var hasAmt = findCol(headerRow, ['amount']) !== -1;
+    var hasCat = findCol(headerRow, ['category']) !== -1;
+    var hasTime = findCol(headerRow, ['time']) !== -1;
+    if (hasDebit && hasCredit) return 'bank';
+    if (hasType && hasAmt && findCol(headerRow, ['description']) !== -1) return 'card';
+    if (hasAmt && hasCat && findCol(headerRow, ['date']) !== -1 && hasTime) return 'app-export';
+    if (hasAmt && findCol(headerRow, ['date']) !== -1) return 'generic';
+    return 'unknown';
+  }
+
+  function mapExternalCategory(extName) {
+    if (!extName) return categories[0] ? categories[0].id : 'other';
+    var key = normText(extName);
+    if (CATEGORY_ALIASES[key]) return CATEGORY_ALIASES[key];
+    for (var i = 0; i < categories.length; i++) {
+      if (normText(categories[i].name) === key) return categories[i].id;
+    }
+    for (var j = 0; j < categories.length; j++) {
+      if (key.indexOf(normText(categories[j].name)) !== -1) return categories[j].id;
+    }
+    return 'other';
+  }
+
+  function findImportRule(note) {
+    var key = descriptionMatchKey(note);
+    for (var i = importRules.length - 1; i >= 0; i--) {
+      var r = importRules[i];
+      if (!r.pattern) continue;
+      if (key.indexOf(r.pattern) !== -1 || r.pattern.indexOf(key) !== -1) return r;
+    }
+    return null;
+  }
+
+  function isBuiltInTransfer(desc, type, layout) {
+    var t = normText(type);
+    if (layout === 'card') {
+      if (CARD_PAYMENT_TYPES[t] && !importSettings.countCardPayments) return true;
+    }
+    var note = normText(desc);
+    if (!note) return false;
+    if (/\bvenmo\b/.test(note)) return false;
+    for (var i = 0; i < TRANSFER_PATTERNS.length; i++) {
+      if (TRANSFER_PATTERNS[i].test(note)) return true;
+    }
+    if (layout === 'bank' && /\bpayment\b/.test(note) && /\b(credit|crd|card|chase|amex|visa|discover)\b/.test(note)) return true;
+    return false;
+  }
+
+  function buildExistingImportIndex() {
+    var byBatchRow = {};
+    var byContent = {};
+    entries.forEach(function (e) {
+      if (e.importBatchId && e.importRowKey) byBatchRow[e.importBatchId + '|' + e.importRowKey] = true;
+      var ck = dayKey(e.ts) + '|' + fmtMoney(e.amount) + '|' + descriptionMatchKey(e.note);
+      byContent[ck] = (byContent[ck] || 0) + 1;
+    });
+    return { byBatchRow: byBatchRow, byContent: byContent };
+  }
+
+  function rowsFromTable(dataRows, headerRow, layout, batchId) {
+    var idx = buildExistingImportIndex();
+    var batchSeen = {};
+    var out = [];
+    var dateIdx = findCol(headerRow, ['transaction date', 'post date', 'date']);
+    var postIdx = findCol(headerRow, ['post date']);
+    var descIdx = findCol(headerRow, ['description', 'payee', 'merchant', 'note']);
+    var amtIdx = findCol(headerRow, ['amount']);
+    var typeIdx = findCol(headerRow, ['type']);
+    var catIdx = findCol(headerRow, ['category']);
+    var timeIdx = findCol(headerRow, ['time']);
+    var debitIdx = findCol(headerRow, ['debit']);
+    var creditIdx = findCol(headerRow, ['credit']);
+    var statusIdx = findCol(headerRow, ['status']);
+
+    for (var ri = 0; ri < dataRows.length; ri++) {
+      var cols = dataRows[ri];
+      if (isRowEmpty(cols)) continue;
+      var first = normText(cols[0]);
+      if (first === 'total' || first === 'subtotal') continue;
+
+      var status = statusIdx !== -1 ? normText(cols[statusIdx]) : '';
+      if (status === 'pending') {
+        out.push({ status: 'pending', reason: 'Pending (not posted yet)', raw: cols });
+        continue;
+      }
+
+      var desc = descIdx !== -1 ? cols[descIdx] : '';
+      var note = cleanImportNote(desc);
+      var typeVal = typeIdx !== -1 ? cols[typeIdx] : '';
+      var ts = null;
+      var amount = NaN;
+      var skipReason = null;
+      var rowStatus = 'import';
+
+      if (layout === 'bank') {
+        var dateCell = postIdx !== -1 ? cols[postIdx] : (dateIdx !== -1 ? cols[dateIdx] : '');
+        ts = /^\d+(\.\d+)?$/.test(String(dateCell).trim()) ? excelSerialToTs(dateCell) : parseUsDate(dateCell);
+        var debit = debitIdx !== -1 ? parseAmountCell(cols[debitIdx]) : NaN;
+        var credit = creditIdx !== -1 ? parseAmountCell(cols[creditIdx]) : NaN;
+        if (!isNaN(debit) && debit > 0) amount = debit;
+        else if (!isNaN(credit) && credit > 0) {
+          out.push({ status: 'credit', reason: 'Credit / deposit (not spending)', note: note, amount: credit, ts: ts });
+          continue;
+        } else {
+          out.push({ status: 'unreadable', reason: 'No debit amount', raw: cols });
+          continue;
+        }
+      } else if (layout === 'card') {
+        var dcell = dateIdx !== -1 ? cols[dateIdx] : '';
+        ts = parseUsDate(dcell);
+        var rawAmt = amtIdx !== -1 ? parseAmountCell(cols[amtIdx]) : NaN;
+        var tnorm = normText(typeVal);
+        if (CARD_PAYMENT_TYPES[tnorm] && !importSettings.countCardPayments) {
+          var payAmt = Math.abs(rawAmt);
+          if (!isNaN(payAmt) && payAmt > 0) {
+            out.push({
+              status: 'transfer', reason: 'Card bill payment', note: note, amount: payAmt, ts: ts,
+              categoryId: mapExternalCategory(catIdx !== -1 ? cols[catIdx] : ''), isTransfer: true, include: false
+            });
+            continue;
+          }
+        }
+        if (tnorm === 'return' || tnorm === 'refund') {
+          out.push({ status: 'credit', reason: 'Card refund/return (not spending)', note: note, amount: Math.abs(rawAmt), ts: ts });
+          continue;
+        }
+        if (!isNaN(rawAmt) && rawAmt > 0 && tnorm !== 'sale' && tnorm !== 'fee' && tnorm !== 'adjustment') {
+          out.push({ status: 'credit', reason: 'Credit/adjustment on card', note: note, amount: rawAmt, ts: ts });
+          continue;
+        }
+        if (isNaN(rawAmt)) {
+          out.push({ status: 'unreadable', reason: 'Missing amount', raw: cols });
+          continue;
+        }
+        amount = Math.abs(rawAmt);
+        if (rawAmt > 0 && tnorm === 'sale') {
+          out.push({ status: 'unreadable', reason: 'Unexpected positive sale amount', raw: cols });
+          continue;
+        }
+      } else {
+        ts = dateIdx !== -1 ? parseUsDate(cols[dateIdx]) : null;
+        if (dateIdx !== -1 && timeIdx !== -1 && cols[dateIdx] && cols[timeIdx]) {
+          var dt = new Date(cols[dateIdx] + 'T' + cols[timeIdx] + ':00');
+          if (!isNaN(dt.getTime())) ts = dt.getTime();
+        }
+        amount = amtIdx !== -1 ? parseAmountCell(cols[amtIdx]) : NaN;
+        if (isNaN(amount) || amount <= 0) {
+          out.push({ status: 'unreadable', reason: 'Invalid or non-positive amount', raw: cols });
+          continue;
+        }
+      }
+
+      if (!ts) {
+        out.push({ status: 'unreadable', reason: 'Could not parse date', note: note });
+        continue;
+      }
+      if (isNaN(amount) || amount <= 0) {
+        out.push({ status: 'unreadable', reason: 'Invalid amount', note: note });
+        continue;
+      }
+      amount = Math.round(amount * 100) / 100;
+
+      var rule = findImportRule(note);
+      var isTransfer = rule && rule.isTransfer;
+      if (rule && rule.countAsSpending) isTransfer = false;
+      if (!rule && isBuiltInTransfer(note, typeVal, layout)) isTransfer = true;
+      if (rule && rule.categoryId && !rule.isTransfer) {
+        // category from rule applied later
+      }
+
+      var postDate = postIdx !== -1 && postIdx !== dateIdx ? String(cols[postIdx] || '') : '';
+      var rowKey = importRowKey([layout, dayKey(ts), fmtMoney(amount), descriptionMatchKey(note), normText(typeVal), postDate, String(ri)]);
+
+      if (idx.byBatchRow[batchId + '|' + rowKey]) {
+        out.push({ status: 'duplicate', reason: 'Already imported from this file', note: note, amount: amount, ts: ts });
+        continue;
+      }
+      if (batchSeen[rowKey]) {
+        out.push({ status: 'duplicate', reason: 'Duplicate row in file', note: note, amount: amount, ts: ts });
+        continue;
+      }
+      batchSeen[rowKey] = true;
+
+      var catId = mapExternalCategory(catIdx !== -1 ? cols[catIdx] : '');
+      if (rule && rule.categoryId) catId = rule.categoryId;
+
+      if (isTransfer) {
+        out.push({
+          status: 'transfer', reason: 'Transfer between accounts', note: note, amount: amount, ts: ts,
+          categoryId: catId, importRowKey: rowKey, isTransfer: true, include: false
+        });
+        continue;
+      }
+
+      out.push({
+        status: 'import', note: note, amount: amount, ts: ts, categoryId: catId,
+        importRowKey: rowKey, isTransfer: false, include: true,
+        typeVal: typeVal, layout: layout
+      });
+    }
+    return out;
+  }
+
+  function summarizeImportRows(rows) {
+    var counts = { import: 0, duplicate: 0, transfer: 0, credit: 0, pending: 0, unreadable: 0 };
+    rows.forEach(function (r) { if (counts[r.status] != null) counts[r.status]++; });
+    return counts;
+  }
+
+  function renderImportReview() {
+    if (!pendingImport) return;
+    var rows = pendingImport.rows;
+    var counts = summarizeImportRows(rows);
+    var html = '<div class="import-stats">';
+    html += '<div class="import-stat"><strong>' + counts.import + '</strong><span>to import</span></div>';
+    html += '<div class="import-stat"><strong>' + counts.duplicate + '</strong><span>duplicates</span></div>';
+    html += '<div class="import-stat"><strong>' + counts.transfer + '</strong><span>transfers</span></div>';
+    html += '<div class="import-stat"><strong>' + counts.credit + '</strong><span>credits skipped</span></div>';
+    html += '<div class="import-stat"><strong>' + counts.pending + '</strong><span>pending</span></div>';
+    html += '<div class="import-stat"><strong>' + counts.unreadable + '</strong><span>unreadable</span></div>';
+    html += '</div>';
+    html += '<p class="hint">Transfers are payments between your accounts (e.g. card autopay). Toggle per row or change category — we remember your choices.</p>';
+    $importSummary.innerHTML = html;
+
+    var listHtml = '';
+    var importIdx = 0;
+    rows.forEach(function (r, i) {
+      if (r.status !== 'import' && r.status !== 'transfer') return;
+      importIdx++;
+      var d = r.ts ? new Date(r.ts).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : '—';
+      var catOpts = '';
+      categories.forEach(function (c) {
+        catOpts += '<option value="' + c.id + '"' + (c.id === r.categoryId ? ' selected' : '') + '>' + c.emoji + ' ' + c.name + '</option>';
+      });
+      listHtml += '<div class="import-row' + (r.status === 'transfer' ? ' is-transfer' : '') + '" data-idx="' + i + '">';
+      listHtml += '<div class="import-row-top"><span class="import-row-date">' + d + '</span>';
+      listHtml += '<span class="import-row-amt">' + fmtMoneyDisplay(r.amount) + '</span></div>';
+      listHtml += '<div class="import-row-note">' + (r.note || '(no description)') + '</div>';
+      listHtml += '<div class="import-row-actions">';
+      listHtml += '<select class="import-cat-select" data-idx="' + i + '">' + catOpts + '</select>';
+      listHtml += '<label class="check-row import-transfer-toggle"><input type="checkbox" data-transfer="' + i + '"' + (r.isTransfer ? ' checked' : '') + '><span>Transfer</span></label>';
+      listHtml += '</div></div>';
+    });
+    if (!listHtml) listHtml = '<div class="empty">No rows to import. Skipped items are counted above.</div>';
+    $importRowList.innerHTML = listHtml;
+
+    Array.prototype.forEach.call($importRowList.querySelectorAll('.import-cat-select'), function (sel) {
+      sel.addEventListener('change', function () {
+        var idx = parseInt(sel.dataset.idx, 10);
+        pendingImport.rows[idx].categoryId = sel.value;
+      });
+    });
+    Array.prototype.forEach.call($importRowList.querySelectorAll('[data-transfer]'), function (cb) {
+      cb.addEventListener('change', function () {
+        var idx = parseInt(cb.dataset.transfer, 10);
+        var row = pendingImport.rows[idx];
+        row.isTransfer = cb.checked;
+        row.status = cb.checked ? 'transfer' : 'import';
+        row.include = !cb.checked;
+        cb.closest('.import-row').classList.toggle('is-transfer', cb.checked);
+      });
+    });
+    $importModal.classList.add('show');
+  }
+
+  function learnFromImportRow(row) {
+    if (!row.note) return;
+    var pattern = descriptionMatchKey(row.note);
+    if (!pattern || pattern.length < 4) return;
+    var existing = null;
+    for (var i = 0; i < importRules.length; i++) {
+      if (importRules[i].pattern === pattern) { existing = importRules[i]; break; }
+    }
+    var rule = existing || { id: uid(), pattern: pattern };
+    rule.categoryId = row.categoryId;
+    rule.isTransfer = !!row.isTransfer;
+    rule.countAsSpending = row.isTransfer ? false : !!rule.countAsSpending;
+    if (!existing) importRules.push(rule);
+    saveImportRules();
+  }
+
+  function commitImport() {
+    if (!pendingImport) return;
+    var batchId = pendingImport.batchId;
+    var rows = pendingImport.rows;
+    var added = 0;
+    var dup = 0;
+    var skippedTransfer = 0;
+    var skippedCredit = 0;
+    var skippedPending = 0;
+    var skippedBad = 0;
+    rows.forEach(function (r) {
+      if (r.status === 'duplicate') { dup++; return; }
+      if (r.status === 'credit') { skippedCredit++; return; }
+      if (r.status === 'pending') { skippedPending++; return; }
+      if (r.status === 'unreadable') { skippedBad++; return; }
+      if (r.status === 'transfer' || (r.isTransfer && !r.include)) {
+        skippedTransfer++;
+        learnFromImportRow(r);
+        return;
+      }
+      if (r.status !== 'import' || !r.include) return;
+      learnFromImportRow(r);
+      entries.push({
+        id: uid(),
+        amount: r.amount,
+        categoryId: r.categoryId,
+        note: r.note || '',
+        ts: r.ts,
+        importBatchId: batchId,
+        importRowKey: r.importRowKey
+      });
+      added++;
+    });
+    saveEntries();
+    renderAll(); rebuildFilterDropdowns();
+    renderCategoryList(); buildYearSelect(true); renderReport();
+    $importModal.classList.remove('show');
+    pendingImport = null;
+    var parts = [added + ' new'];
+    if (dup) parts.push(dup + ' duplicates');
+    if (skippedTransfer) parts.push(skippedTransfer + ' transfers');
+    if (skippedCredit) parts.push(skippedCredit + ' credits');
+    if (skippedPending) parts.push(skippedPending + ' pending');
+    if (skippedBad) parts.push(skippedBad + ' unreadable');
+    toast('Imported ' + parts.join(', '));
+  }
+
+  function startImportReview(rows, batchId, fileName) {
+    pendingImport = { batchId: batchId, rows: rows, fileName: fileName };
+    renderImportReview();
+  }
+
+  function parseTableFromCsvText(text) {
+    var lines = text.split(/\r?\n/).filter(function (l) { return l.trim().length > 0; });
+    if (lines.length < 2) throw new Error('File appears empty');
+    var table = lines.map(function (line) { return parseCSVLine(line); });
+    return table;
+  }
+
+  function processImportTable(table, batchId, fileName) {
+    var header = table[0];
+    var layout = detectImportLayout(header);
+    if (layout === 'unknown') {
+      toast('Unrecognized file layout — check column headers');
+      return;
+    }
+    var dataRows = table.slice(1);
+    var rows = rowsFromTable(dataRows, header, layout, batchId);
+    startImportReview(rows, batchId, fileName);
+  }
+
+  function handleImportFile(file) {
+    if (!file) return;
+    var name = (file.name || '').toLowerCase();
+    if (name.endsWith('.xls')) {
+      toast('.xls files are not supported — export as .xlsx or CSV from your bank');
+      return;
+    }
+    if (name.endsWith('.xlsx')) {
+      file.arrayBuffer().then(function (buf) {
+        var batchId = importBatchIdFromBytes(new Uint8Array(buf));
+        return parseXlsxBuffer(buf).then(function (table) {
+          if (table.length < 2) { toast('Spreadsheet appears empty'); return; }
+          processImportTable(table, batchId, file.name);
+        });
+      }).catch(function (err) {
+        toast(err.message || 'Could not read Excel file');
+      });
+      return;
+    }
+    if (name.endsWith('.csv') || file.type.indexOf('csv') !== -1 || file.type.indexOf('text') !== -1) {
+      var reader = new FileReader();
+      reader.onload = function (e) {
+        try {
+          var text = e.target.result;
+          var batchId = importBatchIdFromBytes(text);
+          var table = parseTableFromCsvText(text);
+          processImportTable(table, batchId, file.name);
+        } catch (err) {
+          toast(err.message || 'Error parsing CSV');
+        }
+      };
+      reader.readAsText(file);
+      return;
+    }
+    toast('Use a .csv or .xlsx file');
+  }
+
+  function renderImportRulesList() {
+    if (!$importRulesList) return;
+    if (importRules.length === 0) {
+      $importRulesList.innerHTML = '<div class="empty">No import rules yet. Change a category or mark a transfer during import to create one.</div>';
+      return;
+    }
+    var html = '';
+    importRules.forEach(function (r) {
+      var cat = r.categoryId ? getCat(r.categoryId).name : '—';
+      html += '<div class="entry import-rule" style="padding:10px 0;">';
+      html += '<div class="entry-info"><div class="top"><span style="font-weight:600;font-size:13px;">' + r.pattern + '</span></div>';
+      html += '<div class="note">' + (r.isTransfer ? 'Transfer' : cat) + '</div></div>';
+      html += '<button class="del-btn" type="button" data-del-rule="' + r.id + '">✕</button></div>';
+    });
+    $importRulesList.innerHTML = html;
+    Array.prototype.forEach.call($importRulesList.querySelectorAll('[data-del-rule]'), function (btn) {
+      btn.addEventListener('click', function () {
+        importRules = importRules.filter(function (x) { return x.id !== btn.dataset.delRule; });
+        saveImportRules();
+        renderImportRulesList();
+      });
+    });
+  }
+
   // ---------- Export / import ----------
   function exportCSV() {
     if (entries.length === 0) { toast('Nothing to export yet'); return; }
@@ -1980,7 +2714,23 @@
   $exportBtn.addEventListener('click', exportCSV);
   $('exportJsonBtn').addEventListener('click', exportJSON);
   $('importJsonBtn').addEventListener('click', function () { $('jsonFileInput').click(); });
-  $('importCsvBtn').addEventListener('click', function () { $('csvFileInput').click(); });
+  $('importCsvBtn').addEventListener('click', function () { $importFileInput.click(); });
+  if ($importCancelBtn) {
+    $importCancelBtn.addEventListener('click', function () {
+      pendingImport = null;
+      $importModal.classList.remove('show');
+    });
+  }
+  if ($importConfirmBtn) {
+    $importConfirmBtn.addEventListener('click', commitImport);
+  }
+  var $countCardPayments = $('countCardPayments');
+  if ($countCardPayments) {
+    $countCardPayments.addEventListener('change', function () {
+      importSettings.countCardPayments = $countCardPayments.checked;
+      saveImportSettings();
+    });
+  }
 
   $('jsonFileInput').addEventListener('change', function (ev) {
     var f = ev.target.files && ev.target.files[0];
@@ -2076,17 +2826,13 @@
     });
   }
 
-  $('csvFileInput').addEventListener('change', function (ev) {
-    var f = ev.target.files && ev.target.files[0];
-    if (!f) return;
-    var reader = new FileReader();
-    reader.onload = function (e) {
-      try { parseCSV(e.target.result); }
-      catch (err) { toast('Error parsing CSV'); }
+  if ($importFileInput) {
+    $importFileInput.addEventListener('change', function (ev) {
+      var f = ev.target.files && ev.target.files[0];
+      if (f) handleImportFile(f);
       ev.target.value = '';
-    };
-    reader.readAsText(f);
-  });
+    });
+  }
 
   function parseCSVLine(line) {
     var result = [];
@@ -2109,97 +2855,6 @@
     return result;
   }
 
-  function parseCSV(text) {
-    var lines = text.split(/\r?\n/).filter(function (l) { return l.trim().length > 0; });
-    if (lines.length < 2) { toast('CSV appears empty'); return; }
-
-    var header = parseCSVLine(lines[0]).map(function (h) { return h.trim().toLowerCase(); });
-    var dateIdx = header.indexOf('date');
-    var timeIdx = header.indexOf('time');
-    var catIdx = header.indexOf('category');
-    var amtIdx = header.indexOf('amount');
-    var noteIdx = header.indexOf('note');
-
-    if (amtIdx === -1) { toast('CSV must have an "Amount" column'); return; }
-
-    // Build existing lookup for dedupe
-    var existingById = {};
-    var existingByKey = {};
-    entries.forEach(function (e) {
-      if (e.id) existingById[e.id] = true;
-      existingByKey[entryDedupeKey({ id: null, ts: e.ts, amount: e.amount, categoryId: e.categoryId, note: e.note })] = true;
-    });
-
-    var imported = 0;
-    var skipped = 0;
-
-    for (var i = 1; i < lines.length; i++) {
-      var cols = parseCSVLine(lines[i]);
-      if (cols.length < 2) continue;
-
-      // Skip TOTAL / summary rows and empty rows
-      var firstCol = (cols[0] || '').trim().toLowerCase();
-      if (!firstCol) continue;
-      if (firstCol === 'total' || firstCol === 'subtotal' || firstCol === 'grand total' || firstCol === 'sum') {
-        continue;
-      }
-
-      var amt = parseFloat(cols[amtIdx]);
-      if (isNaN(amt) || amt <= 0) { skipped++; continue; }
-
-      var catName = catIdx !== -1 ? (cols[catIdx] || '').trim() : 'Other';
-      var catId = null;
-      if (catName) {
-        var found = null;
-        for (var k = 0; k < categories.length; k++) {
-          if (categories[k].name.toLowerCase() === catName.toLowerCase()) { found = categories[k]; break; }
-        }
-        if (found) catId = found.id;
-        else {
-          catId = catName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || uid();
-          if (categories.some(function (c) { return c.id === catId; })) catId += '-' + uid().slice(0, 4);
-          categories.push({ id: catId, name: catName, emoji: '📦', color: '#adb5bd' });
-        }
-      } else catId = categories[0] ? categories[0].id : 'other';
-
-      var ts = Date.now() - (lines.length - i) * 1000; // unique-ish fallback
-      if (dateIdx !== -1 && cols[dateIdx]) {
-        var dateStr = cols[dateIdx].trim();
-        var timeStr = timeIdx !== -1 && cols[timeIdx] ? cols[timeIdx].trim() : '12:00';
-        var dt = new Date(dateStr + 'T' + timeStr + ':00');
-        if (!isNaN(dt.getTime())) ts = dt.getTime();
-      }
-      var note = noteIdx !== -1 ? (cols[noteIdx] || '').trim() : '';
-
-      // Dedupe: compute key from date+amount+category+note (CSV has no id)
-      var key = entryDedupeKey({ id: null, ts: ts, amount: amt, categoryId: catId, note: note });
-      // Also try matching by the same date/amount with existing category ids
-      if (existingByKey[key]) { skipped++; continue; }
-      // Fallback: match by content across categories (in case category id differs)
-      var matched = false;
-      for (var m = 0; m < entries.length; m++) {
-        var ex = entries[m];
-        if (Math.abs((ex.amount || 0) - amt) < 0.005 &&
-            normText(ex.note) === normText(note)) {
-          var ed = new Date(ex.ts), nd = new Date(ts);
-          if (ed.getFullYear() === nd.getFullYear() && ed.getMonth() === nd.getMonth() && ed.getDate() === nd.getDate()) {
-            matched = true; break;
-          }
-        }
-      }
-      if (matched) { skipped++; continue; }
-
-      entries.push({ id: uid(), amount: Math.round(amt * 100) / 100, categoryId: catId, note: note, ts: ts });
-      existingByKey[key] = true;
-      imported++;
-    }
-
-    saveEntries(); saveCategories();
-    renderAll(); rebuildFilterDropdowns();
-    renderCategoryList(); buildYearSelect(true); renderReport();
-    toast('Imported ' + imported + ' new, skipped ' + skipped + ' duplicates');
-  }
-
   // ---------- Clear all ----------
   $('clearAllBtn').addEventListener('click', function () {
     if (!window.confirm('Delete ALL data? This cannot be undone.')) return;
@@ -2212,7 +2867,11 @@
       localStorage.removeItem(CATS_KEY);
       localStorage.removeItem(BUDGETS_KEY);
       localStorage.removeItem(RECURRING_KEY);
+      localStorage.removeItem(IMPORT_RULES_KEY);
+      localStorage.removeItem(IMPORT_SETTINGS_KEY);
     } catch (e) {}
+    importRules = [];
+    importSettings = { countCardPayments: false };
     idbClear().catch(function () {});
     buildCategoryButtons(); rebuildFilterDropdowns();
     renderAll(); renderCategoryList(); renderBudgetSettings(); renderRecurringList();
@@ -2255,6 +2914,8 @@
     if (tab === 'report') renderReport();
     if (tab === 'settings') {
       renderCategoryList(); renderBudgetSettings(); renderRecurringList();
+      renderImportRulesList();
+      if ($countCardPayments) $countCardPayments.checked = importSettings.countCardPayments;
       $versionLine.textContent = 'Version ' + APP_VERSION;
     }
     window.scrollTo(0, 0);
@@ -2431,11 +3092,13 @@
   });
 
   // Close modals on backdrop tap
-  [$budgetModal, $catModal, $receiptModal, $pinModal].forEach(function (ov) {
+  [$budgetModal, $catModal, $receiptModal, $pinModal, $importModal].forEach(function (ov) {
+    if (!ov) return;
     ov.addEventListener('click', function (e) {
       if (e.target === ov) {
         ov.classList.remove('show');
         if (ov === $receiptModal) editingEntryId = null;
+        if (ov === $importModal) pendingImport = null;
       }
     });
   });
@@ -2523,6 +3186,9 @@
   categories = loadCategories();
   budgets = loadBudgets();
   recurringItems = loadRecurring();
+  importRules = loadImportRules();
+  importSettings = loadImportSettings();
+  if ($countCardPayments) $countCardPayments.checked = importSettings.countCardPayments;
   entries = loadEntries();
 
   var ui = loadUI();
