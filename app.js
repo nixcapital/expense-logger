@@ -112,6 +112,7 @@
   var selectedEmoji = '📦';
   var selectedColor = '#adb5bd';
   var pendingReceiptBlob = null; // { id, blob } not yet attached
+  var editingEntryId = null;     // id of entry being edited (modal)
 
   // ---------- DOM ----------
   var $ = function (id) { return document.getElementById(id); };
@@ -126,6 +127,7 @@
   var $recurring = $('recurring');
   var $cats = $('cats');
   var $saveBtn = $('saveBtn');
+  var $saveHint = $('saveHint');
   var $receiptBtn = $('receiptBtn');
   var $receiptInput = $('receiptInput');
   var $receiptPreview = $('receiptPreview');
@@ -177,6 +179,12 @@
   var $receiptModalImg = $('receiptModalImg');
   var $receiptModalClose = $('receiptModalClose');
   var $receiptModalDelete = $('receiptModalDelete');
+  var $editAmount = $('editAmount');
+  var $editCategory = $('editCategory');
+  var $editDate = $('editDate');
+  var $editNote = $('editNote');
+  var $editSaveBtn = $('editSaveBtn');
+  var $editDeleteBtn = $('editDeleteBtn');
 
   var $pinModal = $('pinModal');
   var $pinModalTitle = $('pinModalTitle');
@@ -193,8 +201,25 @@
   function uid() {
     return Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
   }
+  // Raw 2-decimal string (for math / CSV)
   function fmtMoney(n) {
     return (Math.round(n * 100) / 100).toFixed(2);
+  }
+  // Display with thousands separators + $
+  var _usdFmt = null;
+  function fmtMoneyDisplay(n) {
+    if (n == null || isNaN(n)) n = 0;
+    try {
+      if (!_usdFmt) {
+        _usdFmt = new Intl.NumberFormat('en-US', {
+          style: 'currency', currency: 'USD',
+          minimumFractionDigits: 2, maximumFractionDigits: 2
+        });
+      }
+      return _usdFmt.format(n);
+    } catch (e) {
+      return '$' + fmtMoney(n);
+    }
   }
   function pad2(n) { return n < 10 ? '0' + n : '' + n; }
   function daysInMonth(y, m) { return new Date(y, m + 1, 0).getDate(); }
@@ -263,6 +288,25 @@
     var arr = new Uint8Array(len);
     for (var i = 0; i < len; i++) arr[i] = bin.charCodeAt(i);
     return new Blob([arr], { type: mime });
+  }
+  // Normalize text for dedupe keys
+  function normText(s) {
+    return String(s == null ? '' : s).trim().toLowerCase().replace(/\s+/g, ' ');
+  }
+  // Dedupe key: prefer id; else date+amount+cat+note
+  function entryDedupeKey(e) {
+    if (e && e.id) return 'id:' + e.id;
+    if (!e) return '';
+    var d = new Date(e.ts || 0);
+    var dateStr = d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate());
+    return 'k:' + dateStr + '|' + (Math.round((e.amount || 0) * 100) / 100) + '|' +
+      (e.categoryId || '') + '|' + normText(e.note);
+  }
+  function pctLabel(amt, total) {
+    if (total <= 0 || amt <= 0) return '0%';
+    var p = (amt / total) * 100;
+    if (p > 0 && p < 1) return '<1%';
+    return Math.round(p) + '%';
   }
 
   // ---------- Load / save (localStorage) ----------
@@ -418,8 +462,16 @@
 
   function updateSaveState() {
     var v = parseFloat($amount.value);
-    var ok = !isNaN(v) && v > 0 && selectedCat !== null;
+    var hasAmount = !isNaN(v) && v > 0;
+    var hasCat = selectedCat !== null;
+    var ok = hasAmount && hasCat;
     $saveBtn.disabled = !ok;
+    if ($saveHint) {
+      if (!hasAmount && !hasCat) $saveHint.textContent = 'Enter an amount and pick a category';
+      else if (!hasAmount) $saveHint.textContent = 'Enter an amount';
+      else if (!hasCat) $saveHint.textContent = 'Pick a category';
+      else $saveHint.textContent = '';
+    }
   }
 
   // ---------- Entry row rendering ----------
@@ -427,6 +479,13 @@
     var cat = getCat(e.categoryId);
     var row = document.createElement('div');
     row.className = 'entry';
+    row.dataset.id = e.id;
+
+    // Click row (except buttons) to edit
+    row.addEventListener('click', function (ev) {
+      if (ev.target.closest && ev.target.closest('button')) return;
+      openEntryEditor(e.id);
+    });
 
     var info = document.createElement('div');
     info.className = 'entry-info';
@@ -468,7 +527,10 @@
       thumb.className = 'receipt-thumb';
       thumb.alt = 'Receipt';
       thumb.loading = 'lazy';
-      thumb.addEventListener('click', function () { openReceipt(e.id); });
+      thumb.addEventListener('click', function (ev) {
+        ev.stopPropagation();
+        openReceipt(e.id);
+      });
       idbGet('receipt:' + e.id).then(function (rec) {
         if (rec && rec.dataURL) thumb.src = rec.dataURL;
       }).catch(function () {});
@@ -477,7 +539,7 @@
 
     var amt = document.createElement('span');
     amt.className = 'entry-amt';
-    amt.textContent = '$' + fmtMoney(e.amount);
+    amt.textContent = fmtMoneyDisplay(e.amount);
     right.appendChild(amt);
 
     var del = document.createElement('button');
@@ -568,12 +630,12 @@
 
     pendingDelete = entry;
     if (undoTimer) clearTimeout(undoTimer);
-    $undoText.textContent = 'Deleted $' + fmtMoney(entry.amount) + ' — ' + getCat(entry.categoryId).name;
+    $undoText.textContent = 'Deleted ' + fmtMoneyDisplay(entry.amount) + ' — ' + getCat(entry.categoryId).name;
     $undoToast.classList.add('show');
     undoTimer = setTimeout(function () {
       $undoToast.classList.remove('show');
       pendingDelete = null;
-    }, 5000);
+    }, 9000);
   }
   function hideUndo() {
     $undoToast.classList.remove('show');
@@ -616,7 +678,7 @@
       $summaryMonth.value = y + '-' + pad2(m + 1);
     }
     var data = getSummaryData(y, m);
-    $totalVal.textContent = fmtMoney(data.total);
+    $totalVal.textContent = fmtMoneyDisplay(data.total);
     $monthLbl.textContent = '· ' + monthName(new Date(y, m, 1));
     drawChart(data.byCat, data.total);
     renderLegend(data.byCat, data.total);
@@ -631,11 +693,10 @@
       .sort(function (a, b) { return b.amt - a.amt; });
     var html = '';
     rows.forEach(function (r) {
-      var pct = total > 0 ? Math.round((r.amt / total) * 100) : 0;
       html += '<div class="legend-row">'
         + '<span class="name"><span class="dot" style="background:' + r.c.color + '"></span>'
-        + r.c.name + ' <span style="opacity:0.6">· ' + pct + '%</span></span>'
-        + '<span class="amt">$' + fmtMoney(r.amt) + '</span></div>';
+        + r.c.name + ' <span style="opacity:0.6">· ' + pctLabel(r.amt, total) + '</span></span>'
+        + '<span class="amt">' + fmtMoneyDisplay(r.amt) + '</span></div>';
     });
     $legendEl.innerHTML = html;
   }
@@ -656,7 +717,7 @@
       html += '<div class="budget-row">'
         + '<div class="budget-header">'
         + '<span class="cat-name"><span class="dot" style="background:' + c.color + '"></span>' + c.name + '</span>'
-        + '<span class="amounts' + (over ? ' over' : '') + '">$' + fmtMoney(spent) + ' / $' + fmtMoney(limit) + (over ? ' ⚠️' : '') + '</span>'
+        + '<span class="amounts' + (over ? ' over' : '') + '">' + fmtMoneyDisplay(spent) + ' / ' + fmtMoneyDisplay(limit) + (over ? ' ⚠️' : '') + '</span>'
         + '</div>'
         + '<div class="budget-bar-bg"><div class="budget-bar-fill' + (over ? ' over' : '') + '" style="width:' + pct + '%; background:' + barColor + ';"></div></div>'
         + '</div>';
@@ -687,6 +748,15 @@
     ctx.arcTo(x, y, x + w, y, r);
     ctx.closePath();
   }
+  function fitText(ctx, text, maxW) {
+    if (ctx.measureText(text).width <= maxW) return text;
+    var ell = '…';
+    var t = text;
+    while (t.length > 1 && ctx.measureText(t + ell).width > maxW) {
+      t = t.slice(0, -1);
+    }
+    return t + ell;
+  }
   function drawChart(byCat, total) {
     var dim = sizeCanvas();
     var W = dim.W, H = dim.H;
@@ -705,22 +775,35 @@
       .sort(function (a, b) { return b.amt - a.amt; });
     var padTop = 8, padBottom = 8;
     var rowH = Math.max(22, Math.floor((H - padTop - padBottom) / rows.length));
-    var labelW = 92, valueW = 68;
+    var labelW = 92, valueW = 72;
     var barX = labelW;
     var barMaxW = W - labelW - valueW;
     var max = rows[0].amt || 1;
+    var dimColor = getComputedStyle(document.documentElement).getPropertyValue('--text-dim').trim() || '#8b93a7';
+    var cardColor = getComputedStyle(document.documentElement).getPropertyValue('--card-2').trim() || '#222836';
+    var textColor = getComputedStyle(document.documentElement).getPropertyValue('--text').trim() || '#e8ecf3';
+
     chartCtx.font = '13px -apple-system, BlinkMacSystemFont, sans-serif';
     chartCtx.textBaseline = 'middle';
+
     rows.forEach(function (r, i) {
       var y = padTop + i * rowH;
       var barH = Math.min(rowH - 8, 18);
       var barY = y + (rowH - barH) / 2;
-      chartCtx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--text-dim').trim() || '#8b93a7';
+
+      // Category name — clipped to label column
+      chartCtx.fillStyle = dimColor;
       chartCtx.textAlign = 'left';
-      chartCtx.fillText(r.c.name, 6, y + rowH / 2);
-      chartCtx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--card-2').trim() || '#222836';
+      chartCtx.font = '13px -apple-system, BlinkMacSystemFont, sans-serif';
+      var nameText = fitText(chartCtx, r.c.name, labelW - 10);
+      chartCtx.fillText(nameText, 6, y + rowH / 2);
+
+      // Bar background
+      chartCtx.fillStyle = cardColor;
       roundRect(chartCtx, barX, barY, barMaxW, barH, 5);
       chartCtx.fill();
+
+      // Bar fill
       var w = Math.max(3, (r.amt / max) * barMaxW);
       var grad = chartCtx.createLinearGradient(barX, 0, barX + w, 0);
       grad.addColorStop(0, r.c.color);
@@ -728,11 +811,23 @@
       chartCtx.fillStyle = grad;
       roundRect(chartCtx, barX, barY, w, barH, 5);
       chartCtx.fill();
-      chartCtx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--text').trim() || '#e8ecf3';
-      chartCtx.textAlign = 'right';
-      chartCtx.font = '600 13px -apple-system, BlinkMacSystemFont, sans-serif';
-      chartCtx.fillText('$' + fmtMoney(r.amt), W - 6, y + rowH / 2);
-      chartCtx.font = '13px -apple-system, BlinkMacSystemFont, sans-serif';
+
+      // Value label
+      var valText = fmtMoneyDisplay(r.amt);
+      chartCtx.font = '600 12px -apple-system, BlinkMacSystemFont, sans-serif';
+      var valW = chartCtx.measureText(valText).width;
+      var inside = w >= valW + 12;
+      if (inside) {
+        // Draw inside the bar, right-aligned
+        chartCtx.fillStyle = '#ffffff';
+        chartCtx.textAlign = 'right';
+        chartCtx.fillText(valText, barX + w - 6, y + rowH / 2);
+      } else {
+        // Draw right of the bar, right-aligned to canvas edge
+        chartCtx.fillStyle = textColor;
+        chartCtx.textAlign = 'right';
+        chartCtx.fillText(valText, W - 6, y + rowH / 2);
+      }
     });
   }
 
@@ -743,17 +838,24 @@
     if (val) { var p = val.split('-'); y = parseInt(p[0], 10); m = parseInt(p[1], 10) - 1; }
     else { var now = new Date(); y = now.getFullYear(); m = now.getMonth(); }
     var data = getSummaryData(y, m);
-    var days = daysInMonth(y, m);
-    var avgPerDay = days > 0 ? data.total / days : 0;
+
+    // Daily average: for current month use days elapsed so far
+    var now = new Date();
+    var isCurrentMonth = (now.getFullYear() === y && now.getMonth() === m);
+    var denom;
+    if (isCurrentMonth) denom = Math.max(1, now.getDate());
+    else denom = daysInMonth(y, m);
+    var avgPerDay = denom > 0 ? data.total / denom : 0;
+
     var largest = data.entries.length > 0 ? data.entries.reduce(function (mx, e) { return e.amount > mx.amount ? e : mx; }, data.entries[0]) : null;
     var count = data.entries.length;
     var html = '';
     html += '<div class="summary-row"><span class="label">Transactions</span><span class="value">' + count + '</span></div>';
-    html += '<div class="summary-row"><span class="label">Total spent</span><span class="value">$' + fmtMoney(data.total) + '</span></div>';
-    html += '<div class="summary-row"><span class="label">Daily average</span><span class="value">$' + fmtMoney(avgPerDay) + '</span></div>';
+    html += '<div class="summary-row"><span class="label">Total spent</span><span class="value">' + fmtMoneyDisplay(data.total) + '</span></div>';
+    html += '<div class="summary-row"><span class="label">Daily average' + (isCurrentMonth ? ' (so far)' : '') + '</span><span class="value">' + fmtMoneyDisplay(avgPerDay) + '</span></div>';
     if (largest) {
       var lcat = getCat(largest.categoryId);
-      html += '<div class="summary-row"><span class="label">Largest expense</span><span class="value">$' + fmtMoney(largest.amount) + ' (' + lcat.emoji + ')</span></div>';
+      html += '<div class="summary-row"><span class="label">Largest expense</span><span class="value">' + fmtMoneyDisplay(largest.amount) + ' (' + lcat.emoji + ')</span></div>';
     }
     $monthlySummary.innerHTML = html;
     $yearLabel.textContent = '· ' + y;
@@ -775,10 +877,10 @@
     var best = months.reduce(function (b, mo) { return mo.total > b.total ? mo : b; }, months[0]);
 
     var html = '';
-    html += '<div class="summary-row total"><span class="label">Year total</span><span class="value">$' + fmtMoney(yearTotal) + '</span></div>';
-    html += '<div class="summary-row"><span class="label">Monthly average</span><span class="value">$' + fmtMoney(avgMonth) + '</span></div>';
+    html += '<div class="summary-row total"><span class="label">Year total</span><span class="value">' + fmtMoneyDisplay(yearTotal) + '</span></div>';
+    html += '<div class="summary-row"><span class="label">Monthly average</span><span class="value">' + fmtMoneyDisplay(avgMonth) + '</span></div>';
     if (best && best.total > 0) {
-      html += '<div class="summary-row"><span class="label">Highest month</span><span class="value">' + monthShort(new Date(year, best.month, 1)) + ' ($' + fmtMoney(best.total) + ')</span></div>';
+      html += '<div class="summary-row"><span class="label">Highest month</span><span class="value">' + monthShort(new Date(year, best.month, 1)) + ' (' + fmtMoneyDisplay(best.total) + ')</span></div>';
     }
     html += '<div style="margin-top:12px;">';
     months.forEach(function (mo) {
@@ -787,7 +889,7 @@
       html += '<div class="month-bar-row">'
         + '<span class="month-name">' + monthShort(new Date(year, mo.month, 1)) + '</span>'
         + '<div class="bar-wrap"><div class="bar-fill" style="width:' + pct + '%;"></div></div>'
-        + '<span class="month-amt">$' + fmtMoney(mo.total) + '</span></div>';
+        + '<span class="month-amt">' + fmtMoneyDisplay(mo.total) + '</span></div>';
     });
     html += '</div>';
     $yearlySummary.innerHTML = html;
@@ -820,7 +922,7 @@
     html += '<div class="card">';
     html += '<div class="report-header">';
     html += '<h2>' + monthName(new Date(y, m, 1)) + '</h2>';
-    html += '<div class="report-total">$' + fmtMoney(data.total) + '</div>';
+    html += '<div class="report-total">' + fmtMoneyDisplay(data.total) + '</div>';
     html += '<div class="hint">' + data.entries.length + ' transactions</div>';
     html += '</div>';
 
@@ -835,8 +937,7 @@
       html += '<h3>By category</h3>';
       html += '<table class="report-table"><thead><tr><th>Category</th><th>Share</th><th>Amount</th></tr></thead><tbody>';
       rows.forEach(function (r) {
-        var pct = data.total > 0 ? Math.round((r.amt / data.total) * 100) : 0;
-        html += '<tr><td>' + r.c.emoji + ' ' + r.c.name + '</td><td>' + pct + '%</td><td>$' + fmtMoney(r.amt) + '</td></tr>';
+        html += '<tr><td>' + r.c.emoji + ' ' + r.c.name + '</td><td>' + pctLabel(r.amt, data.total) + '</td><td>' + fmtMoneyDisplay(r.amt) + '</td></tr>';
       });
       html += '</tbody></table></div>';
     }
@@ -850,7 +951,7 @@
       budgetRows.forEach(function (c) {
         var spent = data.byCat[c.id] || 0;
         var over = spent > budgets[c.id];
-        html += '<tr><td>' + c.emoji + ' ' + c.name + (over ? ' ⚠️' : '') + '</td><td>$' + fmtMoney(budgets[c.id]) + '</td><td style="color:' + (over ? 'var(--danger)' : 'inherit') + '">$' + fmtMoney(spent) + '</td></tr>';
+        html += '<tr><td>' + c.emoji + ' ' + c.name + (over ? ' ⚠️' : '') + '</td><td>' + fmtMoneyDisplay(budgets[c.id]) + '</td><td style="color:' + (over ? 'var(--danger)' : 'inherit') + '">' + fmtMoneyDisplay(spent) + '</td></tr>';
       });
       html += '</tbody></table></div>';
     }
@@ -866,7 +967,7 @@
         var cat = getCat(e.categoryId);
         var day = d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
         var label = cat.emoji + ' ' + cat.name + (e.note ? ' — ' + e.note : '');
-        html += '<tr><td>' + day + '</td><td>' + label + '</td><td>$' + fmtMoney(e.amount) + '</td></tr>';
+        html += '<tr><td>' + day + '</td><td>' + label + '</td><td>' + fmtMoneyDisplay(e.amount) + '</td></tr>';
       });
       html += '</tbody></table></div>';
     } else {
@@ -889,7 +990,7 @@
         + '<span style="font-size:18px;">' + c.emoji + '</span>'
         + '<span style="font-weight:600;">' + c.name + '</span>'
         + '<span class="cat-pill" style="color:' + c.color + '; border-color:' + c.color + '55;">'
-        + (budgets[c.id] ? '$' + fmtMoney(budgets[c.id]) + '/mo' : 'No budget') + '</span>'
+        + (budgets[c.id] ? fmtMoneyDisplay(budgets[c.id]) + '/mo' : 'No budget') + '</span>'
         + '</div></div>'
         + '<div class="entry-right">'
         + '<button class="del-btn" style="color:var(--accent);" data-edit="' + c.id + '" type="button">✎</button>'
@@ -1059,7 +1160,7 @@
         + '<span class="recurring-badge">Day ' + r.dayOfMonth + '</span></div>'
         + (r.note ? '<div class="note">' + r.note + '</div>' : '')
         + '</div><div class="entry-right">'
-        + '<span class="entry-amt">$' + fmtMoney(r.amount) + '</span>'
+        + '<span class="entry-amt">' + fmtMoneyDisplay(r.amount) + '</span>'
         + '<button class="del-btn" data-del-rec="' + r.id + '" type="button">✕</button>'
         + '</div></div>';
     });
@@ -1111,7 +1212,7 @@
       Array.prototype.forEach.call($cats.children, function (el) { el.classList.remove('selected'); });
       updateSaveState();
       renderAll();
-      toast('Saved $' + fmtMoney(entry.amount));
+      toast('Saved ' + fmtMoneyDisplay(entry.amount));
       $amount.blur(); $note.blur();
     };
 
@@ -1131,6 +1232,104 @@
     } else {
       finish();
     }
+  }
+
+  // ---------- Entry editor (modal) ----------
+  function toDateInputValue(ts) {
+    var d = new Date(ts);
+    return d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate());
+  }
+  function fromDateInputValue(v, originalTs) {
+    // Preserve original time-of-day; only change Y/M/D
+    var parts = (v || '').split('-');
+    if (parts.length !== 3) return originalTs;
+    var y = parseInt(parts[0], 10), m = parseInt(parts[1], 10) - 1, d = parseInt(parts[2], 10);
+    if (isNaN(y) || isNaN(m) || isNaN(d)) return originalTs;
+    var orig = new Date(originalTs);
+    var out = new Date(y, m, d, orig.getHours(), orig.getMinutes(), orig.getSeconds(), 0);
+    return out.getTime();
+  }
+
+  function buildEditCategorySelect(selectedId) {
+    var html = '';
+    categories.forEach(function (c) {
+      html += '<option value="' + c.id + '"' + (c.id === selectedId ? ' selected' : '') + '>' +
+        c.emoji + ' ' + c.name + '</option>';
+    });
+    $editCategory.innerHTML = html;
+  }
+
+  function openEntryEditor(entryId) {
+    var entry = null;
+    for (var i = 0; i < entries.length; i++) if (entries[i].id === entryId) { entry = entries[i]; break; }
+    if (!entry) return;
+    editingEntryId = entryId;
+
+    $editAmount.value = (Math.round(entry.amount * 100) / 100).toString();
+    $editNote.value = entry.note || '';
+    $editDate.value = toDateInputValue(entry.ts);
+    buildEditCategorySelect(entry.categoryId);
+
+    // Receipt preview
+    idbGet('receipt:' + entryId).then(function (rec) {
+      if (rec && rec.dataURL) {
+        $receiptModalImg.src = rec.dataURL;
+        $receiptModalImg.hidden = false;
+        $receiptModalDelete.hidden = false;
+      } else {
+        $receiptModalImg.removeAttribute('src');
+        $receiptModalImg.hidden = true;
+        $receiptModalDelete.hidden = true;
+      }
+    }).catch(function () {
+      $receiptModalImg.removeAttribute('src');
+      $receiptModalImg.hidden = true;
+      $receiptModalDelete.hidden = true;
+    });
+
+    $receiptModal.classList.add('show');
+  }
+
+  function saveEntryEdit() {
+    if (!editingEntryId) return;
+    var entry = null;
+    for (var i = 0; i < entries.length; i++) if (entries[i].id === editingEntryId) { entry = entries[i]; break; }
+    if (!entry) { $receiptModal.classList.remove('show'); return; }
+
+    var v = parseFloat($editAmount.value);
+    if (isNaN(v) || v <= 0) { toast('Enter a valid amount'); return; }
+    var catId = $editCategory.value;
+    if (!catId) { toast('Pick a category'); return; }
+
+    entry.amount = Math.round(v * 100) / 100;
+    entry.categoryId = catId;
+    entry.note = $editNote.value.trim();
+    entry.ts = fromDateInputValue($editDate.value, entry.ts);
+
+    saveEntries();
+    renderAll();
+    buildYearSelect(true);
+    if (currentTab === 'report') renderReport();
+    $receiptModal.classList.remove('show');
+    editingEntryId = null;
+    toast('Changes saved');
+  }
+
+  function deleteEntryFromEditor() {
+    if (!editingEntryId) return;
+    var id = editingEntryId;
+    if (!window.confirm('Delete this expense?')) return;
+    idbDelete('receipt:' + id).catch(function () {});
+    var idx = -1;
+    for (var i = 0; i < entries.length; i++) if (entries[i].id === id) { idx = i; break; }
+    if (idx !== -1) entries.splice(idx, 1);
+    saveEntries();
+    renderAll();
+    buildYearSelect(true);
+    if (currentTab === 'report') renderReport();
+    $receiptModal.classList.remove('show');
+    editingEntryId = null;
+    toast('Expense deleted');
   }
 
   // ---------- Receipt capture ----------
@@ -1172,33 +1371,33 @@
     pendingReceiptBlob = null;
   }
 
-  // ---------- Receipt viewer ----------
+  // ---------- Receipt viewer / editor modal ----------
   var currentReceiptEntryId = null;
   function openReceipt(entryId) {
-    currentReceiptEntryId = entryId;
-    idbGet('receipt:' + entryId).then(function (rec) {
-      if (rec && rec.dataURL) {
-        $receiptModalImg.src = rec.dataURL;
-        $receiptModal.classList.add('show');
-      } else {
-        toast('Receipt not found');
-      }
-    }).catch(function () { toast('Receipt not found'); });
+    // Open the full editor (which also shows the receipt)
+    openEntryEditor(entryId);
   }
-  $receiptModalClose.addEventListener('click', function () { $receiptModal.classList.remove('show'); });
+  $receiptModalClose.addEventListener('click', function () {
+    $receiptModal.classList.remove('show');
+    editingEntryId = null;
+  });
   $receiptModalDelete.addEventListener('click', function () {
-    if (!currentReceiptEntryId) return;
-    var id = currentReceiptEntryId;
+    if (!editingEntryId) return;
+    var id = editingEntryId;
     if (!window.confirm('Delete this receipt?')) return;
     idbDelete('receipt:' + id).then(function () {
       var e = null;
       for (var i = 0; i < entries.length; i++) if (entries[i].id === id) { e = entries[i]; break; }
       if (e) { delete e.hasReceipt; saveEntries(); }
       renderAll();
-      $receiptModal.classList.remove('show');
+      $receiptModalImg.removeAttribute('src');
+      $receiptModalImg.hidden = true;
+      $receiptModalDelete.hidden = true;
       toast('Receipt deleted');
     });
   });
+  if ($editSaveBtn) $editSaveBtn.addEventListener('click', saveEntryEdit);
+  if ($editDeleteBtn) $editDeleteBtn.addEventListener('click', deleteEntryFromEditor);
 
   // ---------- Export / import ----------
   function exportCSV() {
@@ -1301,6 +1500,7 @@
   function importJSON(data) {
     if (!data || typeof data !== 'object') { toast('Invalid backup format'); return; }
     var importedCount = 0;
+    var alreadyCount = 0;
 
     if (Array.isArray(data.categories) && data.categories.length > 0) {
       var ids = {};
@@ -1311,17 +1511,30 @@
     }
 
     if (Array.isArray(data.entries)) {
-      var eids = {};
-      entries.forEach(function (e) { eids[e.id] = true; });
+      // Build lookup of existing entries by id and by content key
+      var existingById = {};
+      var existingByKey = {};
+      entries.forEach(function (e) {
+        if (e.id) existingById[e.id] = true;
+        existingByKey[entryDedupeKey(e)] = true;
+      });
       data.entries.forEach(function (e) {
-        if (e && typeof e.amount === 'number' && e.categoryId) {
-          if (!categories.some(function (c) { return c.id === e.categoryId; })) {
-            categories.push({ id: e.categoryId, name: e.categoryId, emoji: '📦', color: '#adb5bd' });
-          }
-          if (e.id && eids[e.id]) return;
-          entries.push(e);
-          importedCount++;
+        if (!e || typeof e.amount !== 'number' || !e.categoryId) return;
+        if (!categories.some(function (c) { return c.id === e.categoryId; })) {
+          categories.push({ id: e.categoryId, name: e.categoryId, emoji: '📦', color: '#adb5bd' });
         }
+        var dup = false;
+        if (e.id && existingById[e.id]) dup = true;
+        if (!dup) {
+          // content key based on non-id fields
+          var key = entryDedupeKey({ id: null, ts: e.ts, amount: e.amount, categoryId: e.categoryId, note: e.note });
+          if (existingByKey[key]) dup = true;
+        }
+        if (dup) { alreadyCount++; return; }
+        entries.push(e);
+        if (e.id) existingById[e.id] = true;
+        existingByKey[entryDedupeKey({ id: null, ts: e.ts, amount: e.amount, categoryId: e.categoryId, note: e.note })] = true;
+        importedCount++;
       });
     }
 
@@ -1344,7 +1557,8 @@
           receiptPromises.push(
             idbPut({ id: 'receipt:' + entryId, dataURL: dataURL, ts: Date.now() })
               .then(function () {
-                var e = entries.find(function (x) { return x.id === entryId; });
+                var e = null;
+                for (var i = 0; i < entries.length; i++) if (entries[i].id === entryId) { e = entries[i]; break; }
                 if (e) e.hasReceipt = true;
                 receiptCount++;
               }).catch(function () {})
@@ -1359,7 +1573,9 @@
       renderCategoryList(); renderBudgetSettings(); renderRecurringList();
       buildYearSelect(true);
       renderReport();
-      toast('Imported ' + importedCount + ' entries' + (receiptCount ? ', ' + receiptCount + ' receipts' : ''));
+      var msg = importedCount + ' new, ' + alreadyCount + ' already present';
+      if (receiptCount) msg += ', ' + receiptCount + ' receipts';
+      toast('Imported ' + msg);
     });
   }
 
@@ -1409,12 +1625,31 @@
 
     if (amtIdx === -1) { toast('CSV must have an "Amount" column'); return; }
 
+    // Build existing lookup for dedupe
+    var existingById = {};
+    var existingByKey = {};
+    entries.forEach(function (e) {
+      if (e.id) existingById[e.id] = true;
+      existingByKey[entryDedupeKey({ id: null, ts: e.ts, amount: e.amount, categoryId: e.categoryId, note: e.note })] = true;
+    });
+
     var imported = 0;
+    var skipped = 0;
+
     for (var i = 1; i < lines.length; i++) {
       var cols = parseCSVLine(lines[i]);
       if (cols.length < 2) continue;
+
+      // Skip TOTAL / summary rows and empty rows
+      var firstCol = (cols[0] || '').trim().toLowerCase();
+      if (!firstCol) continue;
+      if (firstCol === 'total' || firstCol === 'subtotal' || firstCol === 'grand total' || firstCol === 'sum') {
+        skipped++;
+        continue;
+      }
+
       var amt = parseFloat(cols[amtIdx]);
-      if (isNaN(amt) || amt <= 0) continue;
+      if (isNaN(amt) || amt <= 0) { skipped++; continue; }
 
       var catName = catIdx !== -1 ? (cols[catIdx] || '').trim() : 'Other';
       var catId = null;
@@ -1439,14 +1674,34 @@
         if (!isNaN(dt.getTime())) ts = dt.getTime();
       }
       var note = noteIdx !== -1 ? (cols[noteIdx] || '').trim() : '';
+
+      // Dedupe: compute key from date+amount+category+note (CSV has no id)
+      var key = entryDedupeKey({ id: null, ts: ts, amount: amt, categoryId: catId, note: note });
+      // Also try matching by the same date/amount with existing category ids
+      if (existingByKey[key]) { skipped++; continue; }
+      // Fallback: match by content across categories (in case category id differs)
+      var matched = false;
+      for (var m = 0; m < entries.length; m++) {
+        var ex = entries[m];
+        if (Math.abs((ex.amount || 0) - amt) < 0.005 &&
+            normText(ex.note) === normText(note)) {
+          var ed = new Date(ex.ts), nd = new Date(ts);
+          if (ed.getFullYear() === nd.getFullYear() && ed.getMonth() === nd.getMonth() && ed.getDate() === nd.getDate()) {
+            matched = true; break;
+          }
+        }
+      }
+      if (matched) { skipped++; continue; }
+
       entries.push({ id: uid(), amount: Math.round(amt * 100) / 100, categoryId: catId, note: note, ts: ts });
+      existingByKey[key] = true;
       imported++;
     }
 
     saveEntries(); saveCategories();
     renderAll(); rebuildFilterDropdowns();
     renderCategoryList(); buildYearSelect(true); renderReport();
-    toast('Imported ' + imported + ' entries');
+    toast('Imported ' + imported + ' new, skipped ' + skipped + ' duplicates');
   }
 
   // ---------- Clear all ----------
@@ -1644,6 +1899,7 @@
     idbClear().catch(function () {});
     buildCategoryButtons(); rebuildFilterDropdowns();
     renderAll(); renderCategoryList(); renderBudgetSettings(); renderRecurringList();
+    $togglePinBtn.textContent = 'Off';
     showApp();
     toast('Data erased. Passcode removed.');
   });
@@ -1681,7 +1937,10 @@
   // Close modals on backdrop tap
   [$budgetModal, $catModal, $receiptModal, $pinModal].forEach(function (ov) {
     ov.addEventListener('click', function (e) {
-      if (e.target === ov) ov.classList.remove('show');
+      if (e.target === ov) {
+        ov.classList.remove('show');
+        if (ov === $receiptModal) editingEntryId = null;
+      }
     });
   });
 
@@ -1771,6 +2030,9 @@
   updateSaveState();
   renderRecent();
   $versionLine.textContent = 'Version ' + APP_VERSION;
+
+  // Passcode label derived from stored state
+  $togglePinBtn.textContent = getStoredPin() ? 'On' : 'Off';
 
   if (getStoredPin()) showLock();
   else showApp();
