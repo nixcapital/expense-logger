@@ -314,6 +314,19 @@
     if (h.length === 3) h = h.split('').map(function (c) { return c + c; }).join('');
     return 'rgb(' + parseInt(h.slice(0,2),16) + ', ' + parseInt(h.slice(2,4),16) + ', ' + parseInt(h.slice(4,6),16) + ')';
   }
+  function hexDarken(hex, amt) {
+    var rgb = hexToRgb(hex);
+    if (!rgb) return hex;
+    return 'rgb(' + Math.round(rgb.r * (1 - amt)) + ',' + Math.round(rgb.g * (1 - amt)) + ',' + Math.round(rgb.b * (1 - amt)) + ')';
+  }
+
+  function donutSegmentColor(hex) {
+    if (window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches) {
+      return hexDarken(hex, 0.28);
+    }
+    return hex;
+  }
+
   function hexLighten(hex, amt) {
     var h = hex.replace('#', '');
     if (h.length === 3) h = h.split('').map(function (c) { return c + c; }).join('');
@@ -723,12 +736,7 @@
     else if (typeFilter === 'one-time') list = list.filter(function (e) { return !e.recurringId; });
     else if (typeFilter === 'with-receipt') list = list.filter(function (e) { return !!e.hasReceipt; });
 
-    if (sort === 'newest') list.sort(function (a, b) { return b.ts - a.ts; });
-    else if (sort === 'oldest') list.sort(function (a, b) { return a.ts - b.ts; });
-    else if (sort === 'highest') list.sort(function (a, b) { return b.amount - a.amount; });
-    else if (sort === 'lowest') list.sort(function (a, b) { return a.amount - b.amount; });
-
-    return list;
+    return sortEntriesList(list, sort);
   }
 
   function dayGroupTitle(ts) {
@@ -784,13 +792,50 @@
     return row;
   }
 
+  function sortEntriesList(list, sort) {
+    var out = list.slice();
+    if (sort === 'newest') {
+      out.sort(function (a, b) { return b.ts - a.ts; });
+    } else if (sort === 'oldest') {
+      out.sort(function (a, b) { return a.ts - b.ts; });
+    } else if (sort === 'highest') {
+      out.sort(function (a, b) {
+        if (b.amount !== a.amount) return b.amount - a.amount;
+        return b.ts - a.ts;
+      });
+    } else if (sort === 'lowest') {
+      out.sort(function (a, b) {
+        if (a.amount !== b.amount) return a.amount - b.amount;
+        return b.ts - a.ts;
+      });
+    }
+    return out;
+  }
+
   function renderEntries() {
+    var sort = $filterSort ? $filterSort.value : 'newest';
     var list = getFilteredEntries();
     if ($entriesCt) $entriesCt.textContent = list.length === 1 ? '1 item' : list.length + ' items';
     if (list.length === 0) {
       $entriesEl.innerHTML = '<div class="empty">No matching expenses.<br>Try changing filters.</div>';
       return;
     }
+    var frag = document.createDocumentFragment();
+    var useDayGroups = sort === 'newest' || sort === 'oldest';
+
+    if (!useDayGroups) {
+      var flat = document.createElement('div');
+      flat.className = 'activity-group activity-flat';
+      var flatRows = document.createElement('div');
+      flatRows.className = 'activity-day-rows';
+      list.forEach(function (e) { flatRows.appendChild(createActivityRow(e)); });
+      flat.appendChild(flatRows);
+      frag.appendChild(flat);
+      $entriesEl.innerHTML = '';
+      $entriesEl.appendChild(frag);
+      return;
+    }
+
     var groups = {};
     var order = [];
     list.forEach(function (e) {
@@ -798,7 +843,6 @@
       if (!groups[k]) { groups[k] = []; order.push(k); }
       groups[k].push(e);
     });
-    var frag = document.createDocumentFragment();
     order.forEach(function (k) {
       var dayEntries = groups[k];
       var dayTotal = dayEntries.reduce(function (s, e) { return s + e.amount; }, 0);
@@ -808,7 +852,6 @@
       hdr.className = 'activity-day-header';
       hdr.innerHTML = '<span>' + dayGroupTitle(k) + '</span><span class="day-total">' + fmtMoneyDisplay(dayTotal) + '</span>';
       group.appendChild(hdr);
-      dayEntries.sort(function (a, b) { return a.ts - b.ts; });
       var rowsWrap = document.createElement('div');
       rowsWrap.className = 'activity-day-rows';
       dayEntries.forEach(function (e) { rowsWrap.appendChild(createActivityRow(e)); });
@@ -832,6 +875,7 @@
     pendingDelete = entry;
     if (undoTimer) clearTimeout(undoTimer);
     $undoText.textContent = 'Deleted ' + fmtMoneyDisplay(entry.amount) + ' — ' + getCat(entry.categoryId).name;
+    updateActivityStickyTop();
     $undoToast.classList.add('show');
     undoTimer = setTimeout(function () {
       $undoToast.classList.remove('show');
@@ -888,6 +932,10 @@
 
   function prefersReducedMotion() {
     return !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+  }
+
+  function prefersLightScheme() {
+    return !!(window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches);
   }
 
   function easeOutCubic(t) { return 1 - Math.pow(1 - t, 3); }
@@ -1003,7 +1051,7 @@
 
     if (total === 0 || rows.length === 0) {
       if ($donutChart) {
-        $donutChart.innerHTML = '<circle cx="110" cy="110" r="92" fill="none" stroke="' + cssVar('--card-2', '#1f232e') + '" stroke-width="34"/>';
+        $donutChart.innerHTML = '<circle cx="110" cy="110" r="92" fill="none" stroke="' + cssVar('--raised', '#1F222B') + '" stroke-width="34"/>';
       }
       return;
     }
@@ -1017,9 +1065,9 @@
       var end = angle + slice;
       var path = describeDonutArc(cx, cy, rOuter, rInner, angle, end);
       var opacity = highlightId && highlightId !== r.c.id ? dimOpacity : 1;
-      var strokeW = highlightId === r.c.id ? 3 : 0;
-      html += '<path class="donut-seg" data-cat="' + r.c.id + '" d="' + path + '" fill="' + r.c.color + '"'
-        + ' opacity="' + opacity + '" stroke="' + cssVar('--bg', '#0f1117') + '" stroke-width="' + strokeW + '"/>';
+      var strokeW = highlightId === r.c.id ? 3 : (prefersLightScheme() ? 1.5 : 0);
+      html += '<path class="donut-seg" data-cat="' + r.c.id + '" d="' + path + '" fill="' + donutSegmentColor(r.c.color) + '"'
+        + ' opacity="' + opacity + '" stroke="' + cssVar('--bg', '#0B0C10') + '" stroke-width="' + strokeW + '"/>';
       angle = end;
     });
     $donutChart.innerHTML = html;
@@ -1889,9 +1937,16 @@
   function updateActivityStickyTop() {
     var wrap = document.querySelector('#tab-history:not([hidden]) .screen-header-wrap')
       || document.querySelector('.screen-header-wrap');
-    if (!wrap) return;
-    var h = wrap.getBoundingClientRect().height;
-    document.documentElement.style.setProperty('--activity-day-sticky-top', Math.max(44, Math.round(h)) + 'px');
+    if (wrap) {
+      var h = wrap.getBoundingClientRect().height;
+      document.documentElement.style.setProperty('--activity-day-sticky-top', Math.max(44, Math.round(h)) + 'px');
+    }
+    var tab = $('tabBar');
+    if (tab) {
+      var tabTop = tab.getBoundingClientRect().top;
+      var offset = Math.max(56, Math.ceil(window.innerHeight - tabTop) + 8);
+      document.documentElement.style.setProperty('--tab-bar-offset', offset + 'px');
+    }
   }
 
   function initScreenTitleObservers() {
@@ -2015,7 +2070,7 @@
     categories.forEach(function (c) {
       html += '<div class="entry" style="padding:10px 0;">'
         + '<div class="entry-info"><div class="top">'
-        + '<span style="font-size:18px;">' + c.emoji + '</span>'
+        + '<span class="settings-cat-emoji">' + c.emoji + '</span>'
         + '<span style="font-weight:600;">' + c.name + '</span>'
         + '<span class="cat-pill" style="color:' + c.color + '; border-color:' + c.color + '55;">'
         + (budgets[c.id] ? fmtMoneyDisplay(budgets[c.id]) + '/mo' : 'No budget') + '</span>'
@@ -3484,6 +3539,15 @@
     if ($addDate) $addDate.value = addEntryDate;
     updateAddDatePreview();
     updateAddNotePreview();
+    if ($receiptClearBtn) $receiptClearBtn.hidden = true;
+    if ($receiptPreview) {
+      $receiptPreview.hidden = true;
+      if ($receiptPreview.src && $receiptPreview.src.indexOf('blob:') === 0) {
+        try { URL.revokeObjectURL($receiptPreview.src); } catch (e) {}
+      }
+      $receiptPreview.removeAttribute('src');
+    }
+    pendingReceiptBlob = null;
     $addSheet.classList.add('show');
     setTimeout(function () { if ($amount) $amount.focus(); }, prefersReducedMotion() ? 0 : 280);
   }
@@ -3808,7 +3872,10 @@
   // Follow system dark/light changes for the canvas chart
   if (window.matchMedia) {
     var mq = window.matchMedia('(prefers-color-scheme: dark)');
-    var mqHandler = function () { if (currentTab === 'summary') renderTotals(); };
+    var mqHandler = function () {
+      if (currentTab === 'summary') renderTotals();
+      else if (lastDonutData) drawDonutFrame(lastDonutData.byCat, lastDonutData.total, 1, selectedLegendCatId);
+    };
     if (mq.addEventListener) mq.addEventListener('change', mqHandler);
     else if (mq.addListener) mq.addListener(mqHandler);
   }

@@ -46,6 +46,8 @@
 
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
 
+[hidden] { display: none !important; }
+
 html, body {
   margin: 0;
   padding: 0;
@@ -57,7 +59,21 @@ html, body {
   -webkit-text-size-adjust: 100%;
   -webkit-font-smoothing: antialiased;
   min-height: 100%;
-  overflow-x: hidden;
+  overflow-x: clip;
+}
+
+@media (prefers-color-scheme: light) {
+  .cat-btn {
+    background: var(--card);
+    border: 1px solid var(--sep);
+  }
+  .cat-btn.selected {
+    border-width: 2px;
+    background: color-mix(in srgb, var(--cat-ring, var(--accent)) 14%, var(--card));
+  }
+  .add-cats .cat-btn {
+    box-shadow: 0 1px 0 rgba(0, 0, 0, 0.04);
+  }
 }
 
 body {
@@ -304,6 +320,19 @@ input:focus, select:focus { box-shadow: 0 0 0 2px color-mix(in srgb, var(--accen
 .amount-wrap .dollar {
   position: absolute; left: 14px; top: 50%; transform: translateY(-50%);
   color: var(--text-dim); pointer-events: none;
+  z-index: 1;
+}
+.amount-wrap input[type="number"] {
+  padding-left: 34px;
+}
+input[type="number"]::-webkit-outer-spin-button,
+input[type="number"]::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+input[type="number"] {
+  -moz-appearance: textfield;
+  appearance: textfield;
 }
 
 .cats { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--sp-2); }
@@ -484,8 +513,8 @@ button.legend-row.legend-btn.active { background: color-mix(in srgb, var(--accen
   border-radius: var(--radius-card);
   margin-bottom: var(--sp-4);
   overflow: visible;
-  isolation: isolate;
 }
+.activity-group.activity-flat .activity-day-rows { border-radius: var(--radius-card); }
 .activity-day-header {
   display: flex;
   justify-content: space-between;
@@ -750,6 +779,22 @@ button.legend-row.legend-btn.active { background: color-mix(in srgb, var(--accen
   border-radius: var(--radius-card);
   overflow: hidden;
 }
+.inset-card .entry {
+  padding: var(--sp-3) var(--sp-4);
+}
+.inset-card .entry .top {
+  gap: var(--sp-3);
+  align-items: center;
+}
+.inset-card .settings-cat-emoji {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 28px;
+  font-size: 20px;
+  line-height: 1;
+  flex-shrink: 0;
+}
 .settings-row, .settings-row-btn {
   display: flex;
   justify-content: space-between;
@@ -827,7 +872,18 @@ button.legend-row.legend-btn.active { background: color-mix(in srgb, var(--accen
 }
 .import-stat strong { display: block; font-size: 18px; font-variant-numeric: tabular-nums; }
 .import-stat span { color: var(--text-dim); }
-.import-row-list { max-height: 50vh; overflow-y: auto; }
+.import-row-list {
+  max-height: 50vh;
+  overflow-y: auto;
+  scrollbar-color: color-mix(in srgb, var(--text-dim) 35%, transparent) transparent;
+  scrollbar-width: thin;
+}
+.import-row-list::-webkit-scrollbar { width: 8px; }
+.import-row-list::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--text-dim) 40%, transparent);
+  border-radius: 8px;
+}
+.import-row-list::-webkit-scrollbar-track { background: transparent; }
 .import-row { background: var(--raised); border-radius: var(--radius-input); padding: var(--sp-3); margin-bottom: var(--sp-2); }
 .import-row-top {
   display: flex;
@@ -911,7 +967,7 @@ button.legend-row.legend-btn.active { background: color-mix(in srgb, var(--accen
 .undo-toast {
   position: fixed;
   left: var(--gutter); right: var(--gutter);
-  bottom: calc(env(safe-area-inset-bottom, 0px) + var(--tab-bar-h) + var(--sp-2));
+  bottom: var(--tab-bar-offset, calc(env(safe-area-inset-bottom, 0px) + var(--tab-bar-h) + 12px));
   background: var(--card);
   border-radius: var(--radius-card);
   padding: var(--sp-3) var(--sp-4);
@@ -931,7 +987,7 @@ button.legend-row.legend-btn.active { background: color-mix(in srgb, var(--accen
   visibility: visible;
   pointer-events: auto;
   transform: translateY(0);
-  z-index: 1001;
+  z-index: 1100;
 }
 .undo-toast button {
   background: var(--accent); color: var(--accent-ink);
