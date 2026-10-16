@@ -1,4 +1,4 @@
-/* Expense Logger 1.3.1 — dark-first, iOS-style */
+/* Expense Logger 1.3.2 — dark-first, iOS-style */
 
 :root {
   --bg: #0B0C10;
@@ -112,7 +112,7 @@ body {
 .splash-tag { color: var(--text-dim); font-size: 15px; margin: 0; }
 
 .app-main {
-  padding: calc(env(safe-area-inset-top, 0px) + var(--sp-2)) var(--gutter)
+  padding: var(--sp-2) var(--gutter)
     calc(env(safe-area-inset-bottom, 0px) + var(--tab-bar-h) + var(--sp-6));
   padding-left: calc(env(safe-area-inset-left, 0px) + var(--gutter));
   padding-right: calc(env(safe-area-inset-right, 0px) + var(--gutter));
@@ -122,13 +122,31 @@ body {
 
 .screen-header-wrap {
   position: sticky;
-  top: env(safe-area-inset-top, 0);
+  top: 0;
   z-index: 20;
-  background: var(--bg);
-  padding: var(--sp-2) 0 var(--sp-3);
   margin: 0 calc(-1 * var(--gutter));
-  padding-left: var(--gutter);
-  padding-right: var(--gutter);
+  padding: calc(env(safe-area-inset-top, 0px) + var(--sp-2)) var(--gutter) var(--sp-3);
+  isolation: isolate;
+  -webkit-backface-visibility: hidden;
+  backface-visibility: hidden;
+}
+.screen-header-wrap::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: var(--bg);
+  z-index: -1;
+  pointer-events: none;
+}
+.screen-header-wrap.compact::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 1px;
+  background: var(--sep);
+  pointer-events: none;
 }
 .title-sentinel { height: 1px; margin-top: -1px; pointer-events: none; }
 .screen-title {
@@ -151,7 +169,7 @@ body {
   position: absolute;
   left: var(--gutter);
   right: var(--gutter);
-  top: var(--sp-3);
+  top: calc(env(safe-area-inset-top, 0px) + var(--sp-3));
   text-align: center;
   pointer-events: none;
 }
