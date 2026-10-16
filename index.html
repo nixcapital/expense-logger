@@ -13,8 +13,8 @@
 <link rel="manifest" href="manifest.json">
 <link rel="icon" href="icon-192.png">
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
-<link rel="stylesheet" href="styles.css?v=1.5.0">
-<link rel="stylesheet" href="icon-animations.css?v=1.5.0">
+<link rel="stylesheet" href="styles.css?v=1.7.0">
+<link rel="stylesheet" href="icon-animations.css?v=1.7.0">
 <title>Expense Logger</title>
 </head>
 <body>
@@ -596,21 +596,33 @@
   </div>
 </div>
 
-<!-- Spending Wrapped -->
-<div class="modal-overlay sheet" id="wrappedModal">
-  <div class="modal sheet-modal wrapped-modal">
-    <div class="sheet-grabber" aria-hidden="true"></div>
-    <div class="sheet-header">
-      <button class="btn-secondary sheet-cancel" id="wrappedCloseBtn" type="button">Close</button>
-      <h3>Spending Wrapped</h3>
-      <button class="link-btn" id="wrappedShareBtn" type="button">Share</button>
+<!-- Spending Wrapped (story slides) -->
+<div class="modal-overlay wrapped-overlay" id="wrappedModal" aria-hidden="true">
+  <div class="wrapped-stories" id="wrappedStories" hidden>
+    <div class="wrapped-progress" id="wrappedProgress" role="tablist" aria-label="Slide progress"></div>
+    <header class="wrapped-topbar">
+      <span class="wrapped-topbar-title"><span data-ui-icon="ui-sparkles" data-ui-icon-size="sm" aria-hidden="true"></span> <span id="wrappedTopTitle">Spending Wrapped</span></span>
+      <button type="button" class="wrapped-close-btn" id="wrappedCloseBtn" aria-label="Close">✕</button>
+    </header>
+    <div class="wrapped-stage" id="wrappedStage">
+      <div class="wrapped-tap-zones" id="wrappedTapZones" aria-hidden="true">
+        <button type="button" class="wrapped-tap-back" id="wrappedTapBack" tabindex="-1" aria-label="Previous slide"></button>
+        <button type="button" class="wrapped-tap-next" id="wrappedTapNext" tabindex="-1" aria-label="Next slide"></button>
+      </div>
+      <div class="wrapped-slides" id="wrappedSlides"></div>
     </div>
-    <div id="wrappedPreview" class="wrapped-preview"></div>
-    <p class="hint wrapped-empty" id="wrappedEmpty" hidden>No spending data for this month.</p>
+    <p class="wrapped-footer-hint" id="wrappedFooterHint">Tap to continue ›</p>
+    <div class="wrapped-summary-actions" id="wrappedSummaryActions" hidden>
+      <button type="button" class="wrapped-share-btn" id="wrappedShareBtn"><span data-ui-icon="ui-insight" data-ui-icon-size="sm" aria-hidden="true"></span> Share</button>
+      <button type="button" class="wrapped-done-btn" id="wrappedDoneBtn">Done</button>
+    </div>
+    <p class="wrapped-share-note" id="wrappedShareNote" hidden>Saves as an image. Only these numbers are shared.</p>
   </div>
+  <p class="hint wrapped-empty" id="wrappedEmpty" hidden>No spending data for this month.</p>
 </div>
 
-<script src="icon-system.js?v=1.5.0"></script>
-<script src="app.js?v=1.5.0"></script>
+<script src="icon-system.js?v=1.7.0"></script>
+<script src="wrapped.js?v=1.7.0"></script>
+<script src="app.js?v=1.7.0"></script>
 </body>
 </html>
