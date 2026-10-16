@@ -27,18 +27,23 @@ FILE_TO_ID = {
     16: 'education',
 }
 
+# Relative optical size after a 20-unit fit (~2-unit margin in 24 viewBox).
+# Car / plane / ticket get a slight bump so they don't read smaller.
 OPTICAL = {
-    'car': 1.2,
-    'plane': 1.16,
-    'ticket': 1.05,
-    'shopping-cart': 1.06,
-    'utensils': 1.04,
-    'phone': 0.88,
-    'pets': 0.9,
-    'boxes': 0.92,
-    'bag': 1.06,
-    'home': 1.03,
+    'car': 1.08,
+    'plane': 1.07,
+    'ticket': 1.06,
+    'shopping-cart': 1.03,
+    'utensils': 1.02,
+    'bag': 1.03,
+    'home': 1.02,
+    'phone': 0.97,
+    'pets': 0.97,
+    'boxes': 0.98,
 }
+
+# Hairline thicken in source units (scales with the icon; ~0.07 viewBox at typical scale).
+STROKE_SRC = 1.0
 
 SVG_NS = 'http://www.w3.org/2000/svg'
 ET.register_namespace('', SVG_NS)
@@ -87,18 +92,23 @@ def round_path(d, places=1):
 
 
 def is_simple_rect_path(d):
-    """Clip-path bbox rectangles (no curves)."""
-    if re.search(r'[CcQqAa]', d):
+    """True only for axis-aligned 4-corner clip rectangles — not zigzags like a bolt."""
+    if re.search(r'[CcQqAaSsTt]', d):
         return False
-    bb = path_bbox(d)
-    if not bb:
+    nums = nums_from_path(d)
+    if len(nums) < 8:
         return False
-    w, h = bb[2] - bb[0], bb[3] - bb[1]
-    if w < 8 or h < 8:
+    pts = list(zip(nums[0::2], nums[1::2]))
+    uniq = []
+    for p in pts:
+        pr = (round(p[0], 1), round(p[1], 1))
+        if pr not in uniq:
+            uniq.append(pr)
+    if len(uniq) != 4:
         return False
-    # Mostly 4-segment rects from Canva clips
-    segs = len(re.findall(r'\bL\b', d))
-    return segs <= 5 and 'Z' in d
+    xs = {p[0] for p in uniq}
+    ys = {p[1] for p in uniq}
+    return len(xs) == 2 and len(ys) == 2
 
 
 def collect_visible_paths(root):
@@ -114,7 +124,9 @@ def collect_visible_paths(root):
         if tag == 'path':
             if not skip:
                 d = node.get('d')
-                if d and not is_simple_rect_path(d):
+                # Visible art only — clipPath/defs are skipped above, so keep
+                # axis-aligned bars (gift stripes, plane windows, etc.).
+                if d:
                     rule = node.get('fill-rule') or node.get('clip-rule') or 'nonzero'
                     if rule not in ('nonzero', 'evenodd'):
                         rule = 'nonzero'
@@ -145,10 +157,15 @@ def part_for_path(icon_id, pt, d, bbox):
             return 'nozzle'
         return 'pump'
     if icon_id == 'receipt':
-        if bbox and (bbox[2] - bbox[0]) < 90 and 130 < x < 280 and 120 < y < 280:
-            return 'bolt'
-        if y < 130:
-            return 'lines'
+        if bbox:
+            w, h = bbox[2] - bbox[0], bbox[3] - bbox[1]
+            cx = (bbox[0] + bbox[2]) / 2
+            if h < 20:
+                return 'lines'
+            if cx > 220 and w < 60 and h > 70:
+                return 'bolt'
+            if cx > 200 and 100 < w < 180 and h > 100:
+                return 'bolt'
         return 'paper'
     if icon_id == 'ticket':
         return 'popper'
@@ -191,7 +208,10 @@ def ticket_skip_path(pt):
 def path_to_markup(p):
     d2 = round_path(p['d'])
     rule = p['fill_rule']
-    return f'<path fill="currentColor" fill-rule="{rule}" d="{d2}"/>'
+    return (
+        f'<path fill="currentColor" fill-rule="{rule}" stroke="currentColor" '
+        f'stroke-width="{STROKE_SRC}" stroke-linejoin="round" stroke-linecap="round" d="{d2}"/>'
+    )
 
 
 def build_confetti_dots():
@@ -218,14 +238,10 @@ def process_file(num, icon_id):
         bbox = (0, 0, 384, 384)
 
     minx, miny, maxx, maxy = bbox
-    pad = max(maxx - minx, maxy - miny) * 0.08
-    minx -= pad
-    miny -= pad
-    maxx += pad
-    maxy += pad
     w = maxx - minx
     h = maxy - miny
     size = max(w, h)
+    # 20-unit fit → ~2-unit margin in the 24 viewBox (~15% larger than the padded 17-unit fit).
     target = 20.0
     scale = (target / size) * OPTICAL.get(icon_id, 1.0)
     tx = 12 - (minx + w / 2) * scale
