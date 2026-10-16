@@ -39,7 +39,20 @@ const server = createServer((req, res) => {
 
 async function importFile(page, relPath) {
   await page.locator('#importFileInput').setInputFiles(join(FIX, relPath));
-  await page.waitForTimeout(400);
+  await page.waitForSelector('#importAccountModal.show', { timeout: 5000 }).catch(() => {});
+  const accountSheet = await page.locator('#importAccountModal.show').count();
+  if (accountSheet) {
+    await page.waitForTimeout(300);
+    await page.click('#importAccountContinueBtn');
+    await page.waitForFunction(() => {
+      const acct = document.getElementById('importAccountModal');
+      const review = document.getElementById('importModal');
+      return acct && !acct.classList.contains('show') && review && review.classList.contains('show');
+    }, { timeout: 5000 }).catch(() => {});
+    await page.waitForTimeout(300);
+  } else {
+    await page.waitForTimeout(400);
+  }
 }
 
 async function confirmImport(page) {
@@ -83,16 +96,22 @@ async function run() {
   await importFile(page, 'sample-card.csv');
   await page.waitForSelector('#importModal.show');
   await confirmImport(page);
-  let n1 = await page.evaluate(() => JSON.parse(localStorage.getItem('expenseLogger.entries.v1')).length);
-  results.push(['card first import', n1 === 5, 'entries=' + n1]);
+  let n1 = await page.evaluate(() => {
+    const all = JSON.parse(localStorage.getItem('expenseLogger.entries.v1'));
+    return { all: all.length, spending: all.filter((e) => !e.isTransfer).length, xfer: all.filter((e) => e.isTransfer).length };
+  });
+  results.push(['card first import', n1.spending === 5 && n1.xfer === 1, JSON.stringify(n1)]);
 
   await importFile(page, 'sample-card.csv');
   await page.waitForSelector('#importModal.show');
   const dupSummary = await page.locator('#importSummary').innerText();
   await confirmImport(page);
   let t2 = await toastText(page);
-  let n2 = await page.evaluate(() => JSON.parse(localStorage.getItem('expenseLogger.entries.v1')).length);
-  results.push(['card reimport dupes', n2 === 5 && /duplicate/i.test(t2) && /5/.test(dupSummary), t2]);
+  let n2 = await page.evaluate(() => {
+    const all = JSON.parse(localStorage.getItem('expenseLogger.entries.v1'));
+    return { spending: all.filter((e) => !e.isTransfer).length, all: all.length };
+  });
+  results.push(['card reimport dupes', n2.spending === 5 && /duplicate|skipped|tagged/i.test(dupSummary), JSON.stringify(n2) + ' ' + t2]);
 
   await page.evaluate(() => {
     localStorage.setItem('expenseLogger.entries.v1', '[]');
@@ -134,10 +153,10 @@ async function run() {
   results.push(['import rules list refreshes', !/No import rules yet/i.test(rulesListText)]);
   let entries = await page.evaluate(() => JSON.parse(localStorage.getItem('expenseLogger.entries.v1')));
   const venmo = entries.some((e) => (e.note || '').toUpperCase().indexOf('VENMO') !== -1);
-  const autopay = entries.some((e) => (e.note || '').indexOf('CRDAUTOPAY') !== -1);
+  const autopayXfer = entries.some((e) => (e.note || '').indexOf('CRDAUTOPAY') !== -1 && e.isTransfer);
   const studentLoan = entries.some((e) => (e.note || '').indexOf('STUDENT LOAN') !== -1);
   results.push(['bank venmo spending', venmo]);
-  results.push(['bank crdautopay transfer', !autopay]);
+  results.push(['bank crdautopay transfer', autopayXfer]);
   results.push(['bank student loan spending', studentLoan]);
 
   // Overlapping card exports

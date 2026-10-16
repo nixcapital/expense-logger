@@ -147,12 +147,31 @@ function sumSpending(list) {
   return list.reduce((s, e) => s + entrySpendingAmount(e), 0);
 }
 
-function computeActivitySummary(list, bounds) {
-  const total = sumSpending(list);
-  const days = inclusiveRangeDayCount(bounds, list);
+function computeActivitySummary(displayItems, bounds) {
+  let total = 0;
+  let expenseCount = 0;
+  let transferCount = 0;
+  displayItems.forEach((it) => {
+    if (it.kind === 'paired-transfer') {
+      transferCount++;
+      return;
+    }
+    if (it.entry && it.entry.isTransfer) transferCount++;
+    else if (it.entry) {
+      if (it.entry.excluded || it.entry.countAsSpending === false) return;
+      expenseCount++;
+      total += it.entry.amount;
+    } else if (it.amount && !it.isTransfer) {
+      expenseCount++;
+      total += it.amount;
+    }
+  });
+  const days = inclusiveRangeDayCount(bounds, displayItems.map((it) => (it.kind === 'entry' ? it.entry : { ts: it.ts, amount: it.amount })));
   return {
     total,
-    count: list.length,
+    expenseCount,
+    transferCount,
+    count: expenseCount + transferCount,
     avgPerDay: total / days,
     rangeLabel: formatActivityRangeLabel(bounds)
   };
@@ -209,22 +228,27 @@ assert.strictEqual(inRange.length, 2);
 
 // --- Summary + transfer exclusion ---
 const list = [
-  { amount: 100, isTransfer: false },
-  { amount: 50, isTransfer: true },
-  { amount: 25, excluded: true },
-  { amount: 10, countAsSpending: false }
+  { kind: 'entry', entry: { amount: 100, isTransfer: false }, ts: tsLocal(2026, 9, 1) },
+  { kind: 'entry', entry: { amount: 50, isTransfer: true }, ts: tsLocal(2026, 9, 2) },
+  { kind: 'entry', entry: { amount: 25, excluded: true }, ts: tsLocal(2026, 9, 3) },
+  { kind: 'entry', entry: { amount: 10, countAsSpending: false }, ts: tsLocal(2026, 9, 4) }
 ];
 const summary = computeActivitySummary(list, thisMo);
 assert.strictEqual(summary.total, 100);
-assert.strictEqual(summary.count, 4);
+assert.strictEqual(summary.expenseCount, 1);
+assert.strictEqual(summary.transferCount, 1);
+assert.strictEqual(summary.count, 2);
 assert.ok(Math.abs(summary.avgPerDay - 100 / 16) < 0.001);
 
-const allEntries = [{ ts: tsLocal(2026, 9, 1), amount: 30 }, { ts: tsLocal(2026, 6, 15), amount: 20 }];
+const allEntries = [
+  { kind: 'entry', entry: { ts: tsLocal(2026, 9, 1), amount: 30 }, ts: tsLocal(2026, 9, 1) },
+  { kind: 'entry', entry: { ts: tsLocal(2026, 6, 15), amount: 20 }, ts: tsLocal(2026, 6, 15) }
+];
 const allBounds = getActivityRangeBounds('all', nowOct16);
 const allSummary = computeActivitySummary(allEntries, allBounds);
 assert.strictEqual(allSummary.total, 50);
 assert.strictEqual(
-  inclusiveRangeDayCount(allBounds, allEntries),
+  inclusiveRangeDayCount(allBounds, allEntries.map((it) => it.entry)),
   Math.round((dayStart(2026, 9, 16) - dayStart(2026, 6, 15)) / MS_DAY) + 1
 );
 
