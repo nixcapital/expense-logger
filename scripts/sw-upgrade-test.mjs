@@ -1,5 +1,5 @@
 /**
- * Simulates 1.6.3 → 1.6.4 deploy on the same origin (port).
+ * Simulates 1.6.4 → 1.6.5 deploy on the same origin (port).
  * Run: node scripts/sw-upgrade-test.mjs [--baseline]
  * --baseline uses main-branch sw.js/app (reproduces mixed-cache issues).
  */
@@ -91,7 +91,7 @@ async function run(useBaseline) {
     const deployNew = '/tmp/el-upgrade-new';
     execSync(`rm -rf ${deployNew} && cp -a ${ROOT_NEW} ${deployNew}`);
     currentRoot = deployNew;
-    console.log('Switching server files to full 1.6.4');
+    console.log('Switching server files to full 1.6.5');
   }
 
   await page.reload({ waitUntil: 'networkidle' });
@@ -102,7 +102,7 @@ async function run(useBaseline) {
   console.log('After deploy reload:', v2, 'caches:', caches, 'entries preserved:', !!entries);
 
   let reloads = 0;
-  while (!v2.includes('1.6.4') && reloads < 2) {
+  while (!v2.includes('1.6.5') && reloads < 2) {
     await page.reload({ waitUntil: 'networkidle' });
     await page.waitForTimeout(2500);
     v2 = await page.evaluate(() => document.getElementById('versionLine')?.textContent || '');
@@ -111,7 +111,7 @@ async function run(useBaseline) {
     console.log('Extra reload', reloads + ':', v2, 'caches:', caches);
   }
 
-  const ok = v2.includes('1.6.4') && entries && entries.includes('12.5') && errors.length === 0;
+  const ok = v2.includes('1.6.5') && entries && entries.includes('12.5') && errors.length === 0;
   console.log('page errors:', errors);
   console.log(ok ? 'PASS' : 'FAIL');
 

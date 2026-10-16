@@ -416,4 +416,59 @@ const paySim = FC.simulateBalanceTimeline({
 });
 assert.ok(paySim.lowestInWindow.balance >= 0, 'with paychecks 60d window stays positive');
 
+console.log('forecast-test: window breakdown totals');
+const brFx = FC.computeWindowBreakdown({
+  nowMs: fx.nowMs,
+  windowDays: 30,
+  startingBalance: fxRun.startingBalance,
+  points: fxSim.points,
+  entries: fx.entries,
+  checkingId: fx.checkingId,
+  chaseId: fx.chaseId,
+  transferPairs: fx.transferPairs,
+  maxLookaheadDays: 365
+});
+assert.ok(brFx.ok, 'breakdown ok');
+assert.strictEqual(brFx.totalOut, brFx.bills + brFx.cardPayments + brFx.everyday);
+assert.strictEqual(brFx.net, Math.round((brFx.income - brFx.totalOut) * 100) / 100);
+
+console.log('forecast-test: cause line after lasts-until');
+const headlineFx = FC.buildForecastHeadline({
+  nowMs: fx.nowMs,
+  windowDays: 30,
+  cushion: 600,
+  sim: fxSim
+});
+if (fxSim.lastsUntil && !fxSim.neverRunsOut) {
+  assert.ok(headlineFx.cause, 'cause event when runout in window');
+  assert.ok(headlineFx.cause.ts > fxSim.lastsUntil);
+}
+
+console.log('forecast-test: moved-from on weekend-shifted card payment');
+assert.ok(chase);
+const chaseOcc = FC.expandSchedule(chase, fx.nowMs, FC.addDays(fx.nowMs, 45), fx.entries, fx.checkingId);
+const shiftedOcc = chaseOcc.find(function (ev) { return ev.nominalTs && ev.nominalTs !== ev.ts; });
+assert.ok(shiftedOcc, 'at least one shifted occurrence exposes nominalTs');
+
+console.log('forecast-test: counted one-off repeats in schedule');
+const oneOff = FC.detectPossibleOneOffs(fx.entries, fxRun.schedules, fx.checkingId, fx.nowMs, { minAmount: 200 });
+assert.ok(oneOff.length >= 1, 'home depot one-off candidate');
+const withOneOff = FC.buildScheduledEvents({
+  nowMs: fx.nowMs,
+  checkingId: fx.checkingId,
+  entries: fx.entries,
+  transferPairs: fx.transferPairs,
+  maxLookaheadDays: 60,
+  countedOneOffs: [{
+    oneOffKey: oneOff[0].oneOffKey,
+    label: oneOff[0].label,
+    amount: oneOff[0].amount,
+    dayOfMonth: oneOff[0].dayOfMonth,
+    lastTs: oneOff[0].ts
+  }]
+});
+assert.ok(withOneOff.events.some(function (e) {
+  return e.itemKey && e.itemKey.indexOf('oneoff|') === 0;
+}), 'counted one-off generates forecast events');
+
 console.log('PASS');

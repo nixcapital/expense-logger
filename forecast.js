@@ -1077,7 +1077,7 @@
       var ts = adjustToBusinessDay(nom, schedule.shiftRule || 'next');
       if (ts <= afterMs || ts > untilMs) return;
       if (entries && checkingId && paymentPostedInCycle(entries, checkingId, schedule, ts)) return;
-      events.push({
+      var ev = {
         ts: ts,
         amount: schedule.amount,
         kind: schedule.kind,
@@ -1086,7 +1086,9 @@
         categoryId: schedule.categoryId,
         itemKey: schedule.itemKey,
         recurringKey: schedule.itemKey
-      });
+      };
+      if (validMs(nom) && nom !== ts) ev.nominalTs = nom;
+      events.push(ev);
     });
     return events;
   }
@@ -1319,6 +1321,25 @@
       events = events.concat(expandSchedule(s, nowMs, untilMs, input.entries, checkingId));
     });
 
+    (input.countedOneOffs || []).forEach(function (item) {
+      if (!item || !item.amount || !item.oneOffKey) return;
+      var dom = item.dayOfMonth || 1;
+      var s = {
+        itemKey: 'oneoff|' + item.oneOffKey,
+        label: item.label || 'One-off bill',
+        amount: item.amount,
+        kind: 'outflow',
+        scheduleType: 'monthly_dom',
+        dayOfMonth: dom,
+        shiftRule: 'next',
+        inferenceDetail: 'Counted one-off (repeats monthly)',
+        lastTs: item.lastTs || nowMs,
+        fromOneOff: true
+      };
+      schedules.push(s);
+      events = events.concat(expandSchedule(s, nowMs, untilMs, input.entries, checkingId));
+    });
+
     events = applyForecastOverrides(events, input.overrides, nowMs);
 
     var daily = input.dailySpend != null ? input.dailySpend
@@ -1430,7 +1451,7 @@
         else if (ev.kind === 'transfer-other') delta = ev.inflow ? ev.amount : -ev.amount;
         else delta = -ev.amount;
         bal = Math.round((bal + delta) * 100) / 100;
-        dayUpcoming.push({
+        var up = {
           ts: ev.ts,
           kind: ev.kind,
           label: ev.label,
@@ -1440,7 +1461,9 @@
           categoryId: ev.categoryId,
           daily: !!ev.daily,
           itemKey: ev.itemKey
-        });
+        };
+        if (validMs(ev.nominalTs) && ev.nominalTs !== ev.ts) up.nominalTs = ev.nominalTs;
+        dayUpcoming.push(up);
       });
       var eodBal = bal;
       dayUpcoming.forEach(function (u) { u.balanceAfter = eodBal; });
@@ -1482,7 +1505,8 @@
           label: ev.label,
           kind: ev.kind,
           itemKey: ev.itemKey,
-          categoryId: ev.categoryId
+          categoryId: ev.categoryId,
+          nominalTs: ev.nominalTs
         };
       }
     });
@@ -1706,6 +1730,183 @@
     return false;
   }
 
+  function roundMoney(n) {
+    return Math.round(n * 100) / 100;
+  }
+
+  function balanceOnDay(points, dayTs) {
+    if (!points || !points.length) return null;
+    var target = startOfDay(dayTs);
+    var best = null;
+    for (var i = 0; i < points.length; i++) {
+      var p = points[i];
+      if (!validMs(p.ts)) continue;
+      if (p.ts <= target) best = p.balance;
+      if (p.ts >= target) break;
+    }
+    return best;
+  }
+
+  function computeWindowBreakdown(input) {
+    input = input || {};
+    var nowMs = startOfDay(input.nowMs || Date.now());
+    var windowDays = input.windowDays || 30;
+    if (!validMs(nowMs) || windowDays < 1) {
+      return { ok: false, reason: 'bad-input' };
+    }
+    var endMs = addDays(nowMs, windowDays);
+    var scheduled = buildScheduledEvents(input);
+    var income = 0;
+    var bills = 0;
+    var cardPayments = 0;
+    var everyday = 0;
+    scheduled.events.forEach(function (ev) {
+      if (ev.ts <= nowMs || ev.ts > endMs) return;
+      if (ev.kind === 'inflow') income += ev.amount;
+      else if (ev.kind === 'card-payment') cardPayments += ev.amount;
+      else if (ev.kind === 'daily') everyday += ev.amount;
+      else if (ev.kind === 'outflow') bills += ev.amount;
+    });
+    income = roundMoney(income);
+    bills = roundMoney(bills);
+    cardPayments = roundMoney(cardPayments);
+    everyday = roundMoney(everyday);
+    var totalOut = roundMoney(bills + cardPayments + everyday);
+    var net = roundMoney(income - totalOut);
+    var startBal = input.startingBalance;
+    var endBal = startBal != null ? roundMoney(startBal + net) : null;
+    if (input.points && input.points.length) {
+      var fromPts = balanceOnDay(input.points, endMs);
+      if (fromPts != null) endBal = fromPts;
+    }
+    return {
+      ok: true,
+      windowDays: windowDays,
+      endMs: endMs,
+      income: income,
+      bills: bills,
+      cardPayments: cardPayments,
+      everyday: everyday,
+      dailyRate: scheduled.dailySpend,
+      totalOut: totalOut,
+      net: net,
+      startBalance: startBal,
+      endBalance: endBal
+    };
+  }
+
+  function findForecastCauseEvent(input) {
+    input = input || {};
+    var upcoming = input.upcoming || [];
+    var lastsUntil = input.lastsUntil;
+    var cushion = input.cushion != null ? input.cushion : 600;
+    if (!lastsUntil) return null;
+    var cutoff = startOfDay(lastsUntil);
+    var cause = null;
+    upcoming.slice().sort(function (a, b) { return a.ts - b.ts; }).forEach(function (u) {
+      if (cause) return;
+      if (u.ts <= cutoff) return;
+      if (u.kind === 'inflow') return;
+      if (u.daily) return;
+      var after = u.balanceAfter;
+      if (after < 0 || after < cushion) cause = u;
+    });
+    if (!cause && input.peekPastWindow) {
+      var peek = input.peekPastWindow;
+      if (peek.ts > cutoff && peek.kind !== 'inflow') {
+        cause = {
+          ts: peek.ts,
+          label: peek.label,
+          amount: peek.amount,
+          kind: peek.kind,
+          itemKey: peek.itemKey,
+          categoryId: peek.categoryId,
+          nominalTs: peek.nominalTs
+        };
+      }
+    }
+    return cause;
+  }
+
+  function buildForecastHeadline(input) {
+    input = input || {};
+    var nowMs = startOfDay(input.nowMs || Date.now());
+    var windowDays = input.windowDays || 30;
+    var cushion = input.cushion != null ? input.cushion : 600;
+    var sim = input.sim || {};
+    var endMs = addDays(nowMs, windowDays);
+    var positiveAllWindow = !!(sim.lowestInWindow && sim.lowestInWindow.balance >= 0 && (
+      sim.neverRunsOut ||
+      (sim.lastsUntil != null && sim.lastsUntil >= endMs && !sim.peekPastWindow)
+    ));
+    var cause = positiveAllWindow ? null : findForecastCauseEvent({
+      upcoming: sim.upcoming,
+      lastsUntil: sim.lastsUntil,
+      cushion: cushion,
+      peekPastWindow: sim.peekPastWindow
+    });
+    return {
+      positiveAllWindow: positiveAllWindow,
+      lastsUntil: sim.lastsUntil,
+      neverRunsOut: sim.neverRunsOut,
+      daysAway: sim.daysAway,
+      windowDays: windowDays,
+      windowEndMs: endMs,
+      lowestInWindow: sim.lowestInWindow,
+      cause: cause
+    };
+  }
+
+  function oneOffKeyForEntry(entry) {
+    if (!entry) return '';
+    return descriptionKey(entry.note || entry.bankText || '') + '|' + Math.round(entry.amount);
+  }
+
+  function detectPossibleOneOffs(entries, schedules, checkingId, nowMs, opts) {
+    opts = opts || {};
+    var minAmt = opts.minAmount != null ? opts.minAmount : 200;
+    var sinceMs = addDays(nowMs, -400);
+    var scheduleKeys = {};
+    (schedules || []).forEach(function (s) {
+      if (s && s.itemKey) scheduleKeys[s.itemKey] = true;
+    });
+    var byKey = {};
+    (entries || []).forEach(function (e) {
+      if (!e || e.accountId !== checkingId) return;
+      if (!validMs(e.ts) || e.ts < sinceMs || e.ts > nowMs) return;
+      if (e.isTransfer) return;
+      if (isDepositEntry(e)) return;
+      var amt = typeof e.amount === 'number' ? e.amount : 0;
+      if (amt < minAmt) return;
+      var key = oneOffKeyForEntry(e);
+      if (!key) return;
+      if (!byKey[key]) byKey[key] = [];
+      byKey[key].push(e);
+    });
+    var out = [];
+    Object.keys(byKey).forEach(function (key) {
+      var list = byKey[key];
+      if (list.length !== 1) return;
+      var e = list[0];
+      var matched = (schedules || []).some(function (s) {
+        if (!s || s.kind !== 'outflow') return false;
+        return patternMatches(e.note || e.bankText || '', s.label);
+      });
+      if (matched) return;
+      out.push({
+        oneOffKey: key,
+        entryId: e.id,
+        label: (e.note || e.bankText || 'Debit').trim(),
+        amount: roundMoney(e.amount),
+        ts: e.ts,
+        dayOfMonth: new Date(e.ts).getDate(),
+        categoryId: e.categoryId
+      });
+    });
+    out.sort(function (a, b) { return b.ts - a.ts; });
+    return out;
+  }
+
   function runForecastCore(input) {
     input = input || {};
     var nowMs = startOfDay(input.nowMs || Date.now());
@@ -1734,7 +1935,8 @@
       maxLookaheadDays: input.maxLookaheadDays || 365,
       cushion: input.cushion,
       dailySpend: input.dailySpend,
-      overrides: input.overrides
+      overrides: input.overrides,
+      countedOneOffs: input.countedOneOffs
     });
     if (!sim.ok) return sim;
     var incomeSince = addDays(nowMs, -400);
@@ -1794,6 +1996,12 @@
     estimateCardPayment: estimateCardPayment,
     buildScheduledEvents: buildScheduledEvents,
     simulateBalanceTimeline: simulateBalanceTimeline,
+    computeWindowBreakdown: computeWindowBreakdown,
+    findForecastCauseEvent: findForecastCauseEvent,
+    buildForecastHeadline: buildForecastHeadline,
+    detectPossibleOneOffs: detectPossibleOneOffs,
+    oneOffKeyForEntry: oneOffKeyForEntry,
+    balanceOnDay: balanceOnDay,
     runForecast: runForecast,
     bankHolidayKeysForYear: bankHolidayKeysForYear,
     forecastChartAxisStep: forecastChartAxisStep,
