@@ -11,21 +11,65 @@
 
   function pad2(n) { return n < 10 ? '0' + n : String(n); }
 
+  function validMs(ts) {
+    return typeof ts === 'number' && isFinite(ts);
+  }
+
   function startOfDay(ts) {
+    if (!validMs(ts)) return NaN;
     var d = new Date(ts);
+    if (isNaN(d.getTime())) return NaN;
     return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
   }
 
+  function forecastWarn(msg, detail) {
+    try {
+      if (typeof console !== 'undefined' && console.warn) {
+        console.warn('[ExpenseForecast] ' + msg, detail != null ? detail : '');
+      }
+    } catch (e) {}
+  }
+
+  /** Calendar-day step (local TZ). Avoids DST 24h-ms stalls. */
   function addDays(ts, n) {
-    return startOfDay(ts) + n * MS_DAY;
+    var sod = startOfDay(ts);
+    if (!validMs(sod) || !isFinite(n)) return NaN;
+    var d = new Date(sod);
+    d.setDate(d.getDate() + n);
+    return startOfDay(d.getTime());
+  }
+
+  function stepDays(ts, n, context) {
+    var cur = startOfDay(ts);
+    if (!validMs(cur)) {
+      forecastWarn('stepDays invalid current', { context: context, ts: ts, n: n });
+      return null;
+    }
+    var next = addDays(cur, n);
+    if (!validMs(next)) {
+      forecastWarn('stepDays invalid result', { context: context, ts: cur, n: n });
+      return null;
+    }
+    if (n > 0 && next <= cur) {
+      forecastWarn('stepDays not forward', { context: context, ts: cur, n: n, next: next });
+      return null;
+    }
+    if (n < 0 && next >= cur) {
+      forecastWarn('stepDays not backward', { context: context, ts: cur, n: n, next: next });
+      return null;
+    }
+    return next;
   }
 
   function dayKey(ts) {
+    if (!validMs(ts)) return 'invalid';
     var d = new Date(ts);
+    if (isNaN(d.getTime())) return 'invalid';
     return d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate());
   }
 
   function dateMs(y, m, d) {
+    if (!isFinite(y) || !isFinite(m) || !isFinite(d)) return NaN;
     return startOfDay(new Date(y, m, d).getTime());
   }
 
@@ -90,11 +134,17 @@
   function projectedStartingBalance(balance, balanceAsOfMs, entries, checkingId, transferPairs, nowMs) {
     if (balance == null || isNaN(balance)) return null;
     var asOf = balanceAsOfMs != null ? startOfDay(balanceAsOfMs) : startOfDay(nowMs);
+    if (!validMs(asOf)) asOf = startOfDay(nowMs);
+    if (!validMs(asOf)) return null;
+    var today = startOfDay(nowMs);
+    if (!validMs(today)) today = asOf;
     var paired = pairedEntryIds(transferPairs);
     var net = 0;
     (entries || []).forEach(function (e) {
-      if (e.accountId !== checkingId) return;
-      if (startOfDay(e.ts) <= asOf) return;
+      if (!e || e.accountId !== checkingId) return;
+      if (!validMs(e.ts)) return;
+      var entryDay = startOfDay(e.ts);
+      if (!validMs(entryDay) || entryDay <= asOf || entryDay > today) return;
       net += entryCheckingDelta(e, checkingId, paired);
     });
     return Math.round((balance + net) * 100) / 100;
@@ -197,13 +247,24 @@
   }
 
   function isWeekend(ts) {
-    var dow = new Date(ts).getDay();
+    if (!validMs(ts)) return false;
+    var d = new Date(ts);
+    if (isNaN(d.getTime())) return false;
+    var dow = d.getDay();
     return dow === 0 || dow === 6;
   }
 
   function isBankHoliday(ts) {
-    var y = new Date(ts).getFullYear();
-    return !!bankHolidayKeysForYear(y)[dayKey(ts)];
+    if (!validMs(ts)) return false;
+    var d = new Date(ts);
+    if (isNaN(d.getTime())) return false;
+    var y = d.getFullYear();
+    if (!isFinite(y)) return false;
+    try {
+      return !!bankHolidayKeysForYear(y)[dayKey(ts)];
+    } catch (e) {
+      return false;
+    }
   }
 
   function isBusinessDay(ts) {
@@ -212,15 +273,27 @@
 
   function nextBusinessDay(ts) {
     var c = addDays(ts, 1);
+    if (!validMs(c)) return ts;
     var guard = 0;
-    while (!isBusinessDay(c) && guard < 14) { c = addDays(c, 1); guard++; }
+    while (!isBusinessDay(c) && guard < 14) {
+      var nxt = stepDays(c, 1, 'nextBusinessDay');
+      if (nxt == null) break;
+      c = nxt;
+      guard++;
+    }
     return c;
   }
 
   function prevBusinessDay(ts) {
     var c = addDays(ts, -1);
+    if (!validMs(c)) return ts;
     var guard = 0;
-    while (!isBusinessDay(c) && guard < 14) { c = addDays(c, -1); guard++; }
+    while (!isBusinessDay(c) && guard < 14) {
+      var prv = stepDays(c, -1, 'prevBusinessDay');
+      if (prv == null) break;
+      c = prv;
+      guard++;
+    }
     return c;
   }
 
@@ -500,20 +573,34 @@
     var guard = 0;
     if (schedule.scheduleType === 'biweekly') {
       var cursor = startOfDay(schedule.anchorMs || schedule.lastTs);
-      while (cursor <= afterMs && guard < 200) { cursor = addDays(cursor, 14); guard++; }
-      while (cursor <= untilMs && guard < 200) {
+      while (validMs(cursor) && cursor <= afterMs && guard < 200) {
+        var advB = stepDays(cursor, 14, 'biweekly-catchup');
+        if (advB == null) break;
+        cursor = advB;
+        guard++;
+      }
+      while (validMs(cursor) && cursor <= untilMs && guard < 200) {
         out.push(cursor);
-        cursor = addDays(cursor, 14);
+        var advB2 = stepDays(cursor, 14, 'biweekly-expand');
+        if (advB2 == null) break;
+        cursor = advB2;
         guard++;
       }
       return out;
     }
     if (schedule.scheduleType === 'weekly') {
       var c2 = startOfDay(schedule.anchorMs || schedule.lastTs);
-      while (c2 <= afterMs && guard < 200) { c2 = addDays(c2, 7); guard++; }
-      while (c2 <= untilMs && guard < 200) {
+      while (validMs(c2) && c2 <= afterMs && guard < 200) {
+        var advW = stepDays(c2, 7, 'weekly-catchup');
+        if (advW == null) break;
+        c2 = advW;
+        guard++;
+      }
+      while (validMs(c2) && c2 <= untilMs && guard < 200) {
         out.push(c2);
-        c2 = addDays(c2, 7);
+        var advW2 = stepDays(c2, 7, 'weekly-expand');
+        if (advW2 == null) break;
+        c2 = advW2;
         guard++;
       }
       return out;
@@ -775,6 +862,8 @@
 
   function simulateBalanceTimeline(input) {
     var nowMs = startOfDay(input.nowMs || Date.now());
+    if (!validMs(nowMs)) nowMs = startOfDay(Date.now());
+    if (!validMs(nowMs)) return { ok: false, reason: 'bad-date' };
     var startBal = input.startingBalance;
     if (startBal == null || isNaN(startBal)) {
       return { ok: false, reason: 'no-balance' };
@@ -801,10 +890,17 @@
     var bal = Math.round((startBal + todayDelta) * 100) / 100;
     var running = bal;
     var dayCursor = nowMs;
-    while (dayCursor >= histStart) {
+    var partialTimeline = false;
+    var histCap = Math.max(1, historyDays) + 10;
+    var histGuard = 0;
+    while (dayCursor >= histStart && histGuard < histCap) {
       histPoints.unshift({ ts: dayCursor, balance: running, actual: true });
       if (dayCursor === histStart) break;
-      var prevDay = addDays(dayCursor, -1);
+      var prevDay = stepDays(dayCursor, -1, 'history-back');
+      if (prevDay == null) {
+        partialTimeline = true;
+        break;
+      }
       var dayDelta = 0;
       (input.entries || []).forEach(function (e) {
         if (e.accountId !== input.checkingId) return;
@@ -813,6 +909,11 @@
       });
       running = Math.round((running - dayDelta) * 100) / 100;
       dayCursor = prevDay;
+      histGuard++;
+    }
+    if (dayCursor > histStart && histGuard >= histCap) {
+      forecastWarn('history iteration cap', { histGuard: histGuard, histStart: histStart });
+      partialTimeline = true;
     }
 
     var futurePoints = [{ ts: nowMs, balance: bal, today: true }];
@@ -834,7 +935,10 @@
     var dayEventOrder = { inflow: 0, 'transfer-other': 1, 'card-payment': 2, outflow: 3, daily: 4 };
     var lastSolventDay = bal >= 0 ? nowMs : null;
     var simDay = addDays(nowMs, 1);
-    while (simDay <= lookaheadEnd) {
+    var maxLook = input.maxLookaheadDays || 365;
+    var simCap = maxLook + 10;
+    var simGuard = 0;
+    while (validMs(simDay) && simDay <= lookaheadEnd && simGuard < simCap) {
       var list = (byDay[dayKey(simDay)] || []).slice().sort(function (a, b) {
         return (dayEventOrder[a.kind] || 9) - (dayEventOrder[b.kind] || 9);
       });
@@ -865,7 +969,17 @@
       if (eodBal < lowest.balance) lowest = { balance: eodBal, ts: simDay };
       if (simDay <= chartEnd && eodBal < lowestInWindow.balance) lowestInWindow = { balance: eodBal, ts: simDay };
       if (simDay <= chartEnd) futurePoints.push({ ts: simDay, balance: eodBal });
-      simDay = addDays(simDay, 1);
+      var nextSimDay = stepDays(simDay, 1, 'simulate-forward');
+      if (nextSimDay == null) {
+        partialTimeline = true;
+        break;
+      }
+      simDay = nextSimDay;
+      simGuard++;
+    }
+    if (validMs(simDay) && simDay <= lookaheadEnd && simGuard >= simCap) {
+      forecastWarn('simulate forward iteration cap', { simGuard: simGuard, maxLook: maxLook });
+      partialTimeline = true;
     }
     histPoints.forEach(function (p) {
       if (p.ts > chartEnd) return;
@@ -887,7 +1001,8 @@
       daysAway: daysAway,
       dailySpend: scheduled.dailySpend,
       cushion: cushion,
-      schedules: scheduled.schedules
+      schedules: scheduled.schedules,
+      partialTimeline: partialTimeline
     };
   }
 
@@ -972,9 +1087,10 @@
     return false;
   }
 
-  function runForecast(input) {
+  function runForecastCore(input) {
     input = input || {};
-    var nowMs = input.nowMs || Date.now();
+    var nowMs = startOfDay(input.nowMs || Date.now());
+    if (!validMs(nowMs)) nowMs = startOfDay(Date.now());
     var checkingId = input.checkingId;
     var startBal = projectedStartingBalance(
       input.balance,
@@ -1014,6 +1130,14 @@
       dailySpend: sim.dailySpend,
       schedules: sim.schedules
     };
+  }
+
+  function runForecast(input) {
+    try {
+      return runForecastCore(input);
+    } catch (err) {
+      return { ok: false, reason: 'forecast-error' };
+    }
   }
 
   return {

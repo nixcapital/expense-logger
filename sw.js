@@ -87,6 +87,23 @@ self.addEventListener('activate', (event) => {
   );
 });
 
+function shellOfflineFallback(request, cache) {
+  return cache.match(request).then((cached) => {
+    if (cached) return cached;
+    const url = new URL(request.url);
+    const path = url.pathname;
+    const isDoc = request.mode === 'navigate'
+      || path.endsWith('/') || path.endsWith('/index.html');
+    if (isDoc) {
+      return cache.match('./index.html').then((doc) => {
+        if (doc) return doc;
+        return new Response('Offline', { status: 503, statusText: 'Offline' });
+      });
+    }
+    return new Response('Offline', { status: 503, statusText: 'Offline' });
+  });
+}
+
 function networkFirstShell(request) {
   return fetchNoStore(request.url).then((res) => {
     if (res.ok) {
@@ -95,12 +112,7 @@ function networkFirstShell(request) {
     }
     return res;
   }).catch(() =>
-    caches.open(CACHE_VERSION).then((cache) =>
-      cache.match(request).then((cached) => {
-        if (cached) return cached;
-        return cache.match('./index.html');
-      })
-    )
+    caches.open(CACHE_VERSION).then((cache) => shellOfflineFallback(request, cache))
   );
 }
 

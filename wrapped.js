@@ -2,7 +2,6 @@
 (function (global) {
   'use strict';
 
-  var MS_DAY = 86400000;
   var COFFEE_KEYWORDS = /coffee|starbucks|espresso|latte|cappuccino|dunkin|peet|blue\s*bottle/i;
   var PROCESSOR_PREFIX = /^(SQ\s*\*|TST\*|PP\*|PAYPAL\s*\*|VENMO\s*\*)\s*/i;
 
@@ -834,7 +833,6 @@
   }
 
   var api = {
-    MS_DAY: MS_DAY,
     normalizeMerchantName: normalizeMerchantName,
     canonicalMerchantKey: canonicalMerchantKey,
     merchantKey: merchantKey,

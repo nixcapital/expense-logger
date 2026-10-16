@@ -25,6 +25,21 @@
   <p class="splash-title">Expense Logger</p>
   <p class="splash-tag">Quick entries, saved on this device</p>
 </div>
+<script>
+(function () {
+  'use strict';
+  function hideSplashEarly() {
+    var s = document.getElementById('splashScreen');
+    if (!s || s.classList.contains('hide')) return;
+    s.style.pointerEvents = 'none';
+    s.classList.add('hide');
+    setTimeout(function () { s.style.display = 'none'; }, 300);
+  }
+  setTimeout(hideSplashEarly, 600);
+  setTimeout(hideSplashEarly, 2000);
+  setTimeout(hideSplashEarly, 5000);
+})();
+</script>
 
 <!-- LOCK SCREEN -->
 <div id="lockScreen" class="lock-screen" hidden>
@@ -72,6 +87,16 @@
       </div>
       <p class="hero-budget-meta" id="heroBudgetMeta"></p>
     </div>
+  </div>
+
+  <div class="card home-section-error" id="homeBootError" hidden role="alert">
+    <p class="home-section-error-title">Couldn&apos;t load some home data</p>
+    <p class="home-section-error-text" id="homeBootErrorText">Your entries and settings on this device are unchanged. Try closing and reopening the app.</p>
+  </div>
+
+  <div class="card home-section-error" id="homeForecastError" hidden role="alert">
+    <p class="home-section-error-title">Forecast unavailable</p>
+    <p class="home-section-error-text" id="homeForecastErrorText">Your saved balance and transactions are safe. Tap to open Forecast and try again.</p>
   </div>
 
   <button type="button" class="card forecast-home-card" id="homeForecastCard" hidden>
@@ -646,28 +671,33 @@
 <div class="modal-overlay sheet modal-front" id="balanceSheet">
   <div class="modal sheet-modal balance-sheet-modal">
     <div class="sheet-grabber" aria-hidden="true"></div>
-    <div class="balance-sheet-header">
-      <h3>Set current balance</h3>
-      <button type="button" class="balance-sheet-close" id="balanceSheetClose" aria-label="Close">✕</button>
+    <div class="balance-sheet-scroll">
+      <div class="balance-sheet-header">
+        <h3>Set current balance</h3>
+        <button type="button" class="balance-sheet-close" id="balanceSheetClose" aria-label="Close">✕</button>
+      </div>
+      <div class="balance-sheet-account" id="balanceSheetAccount"></div>
+      <label class="balance-input-wrap">
+        <span class="balance-input-label">Current balance</span>
+        <input type="text" id="balanceAmountInput" inputmode="decimal" autocomplete="off" enterkeyhint="done" aria-label="Current balance" aria-describedby="balanceAmountError">
+      </label>
+      <p class="balance-input-error" id="balanceAmountError" hidden role="alert"></p>
+      <button type="button" class="grouped-row balance-asof-row" id="balanceAsOfRow">
+        <span class="row-icon" data-ui-icon="ui-calendar" data-ui-icon-size="row" aria-hidden="true"></span>
+        <span class="row-label">As of</span>
+        <span class="row-value" id="balanceAsOfPreview">Today</span>
+        <span class="chevron">›</span>
+      </button>
+      <input type="date" id="balanceAsOfInput" class="visually-hidden-input" tabindex="-1">
+      <div class="balance-info-callout" id="balanceInfoCallout">
+        <span class="account-mini-icon" style="background:#20C99722;color:#20C997" aria-hidden="true"><svg viewBox="0 0 16 16" fill="none"><path d="M2.5 6.5V12a1 1 0 001 1h9a1 1 0 001-1V6.5" stroke="currentColor" stroke-width="1.25"/><path d="M1.5 5.5h13v2H1.5v-2z" stroke="currentColor" stroke-width="1.25"/></svg></span>
+        <p>Use the balance in your bank app. Bank CSV exports don't always include a balance, so this is where your forecast starts.</p>
+      </div>
+      <p class="balance-sheet-foot" id="balanceSheetFoot"></p>
     </div>
-    <div class="balance-sheet-account" id="balanceSheetAccount"></div>
-    <label class="balance-input-wrap">
-      <span class="balance-input-label">Current balance</span>
-      <input type="text" id="balanceAmountInput" inputmode="decimal" autocomplete="off" aria-label="Current balance">
-    </label>
-    <button type="button" class="grouped-row balance-asof-row" id="balanceAsOfRow">
-      <span class="row-icon" data-ui-icon="ui-calendar" data-ui-icon-size="row" aria-hidden="true"></span>
-      <span class="row-label">As of</span>
-      <span class="row-value" id="balanceAsOfPreview">Today</span>
-      <span class="chevron">›</span>
-    </button>
-    <input type="date" id="balanceAsOfInput" class="visually-hidden-input" tabindex="-1">
-    <div class="balance-info-callout" id="balanceInfoCallout">
-      <span class="account-mini-icon" style="background:#20C99722;color:#20C997" aria-hidden="true"><svg viewBox="0 0 16 16" fill="none"><path d="M2.5 6.5V12a1 1 0 001 1h9a1 1 0 001-1V6.5" stroke="currentColor" stroke-width="1.25"/><path d="M1.5 5.5h13v2H1.5v-2z" stroke="currentColor" stroke-width="1.25"/></svg></span>
-      <p>Use the balance in your bank app. Bank CSV exports don't always include a balance, so this is where your forecast starts.</p>
+    <div class="balance-sheet-actions">
+      <button type="button" class="save-btn" id="balanceSaveBtn">Save balance</button>
     </div>
-    <p class="balance-sheet-foot" id="balanceSheetFoot"></p>
-    <button type="button" class="save-btn" id="balanceSaveBtn">Save balance</button>
   </div>
 </div>
 
@@ -799,5 +829,34 @@
 <script src="forecast.js?v=1.7.0"></script>
 <script src="wrapped.js?v=1.7.0"></script>
 <script src="app.js?v=1.7.0"></script>
+<script>
+(function () {
+  'use strict';
+  var MAX_MS = 5000;
+  function dismissSplashFailsafe() {
+    var splash = document.getElementById('splashScreen');
+    if (!splash || splash.classList.contains('hide')) return;
+    splash.style.pointerEvents = 'none';
+    splash.classList.add('hide');
+    setTimeout(function () { splash.style.display = 'none'; }, 350);
+    if (!window.__elBootCompleted) {
+      var err = document.getElementById('homeBootError');
+      var txt = document.getElementById('homeBootErrorText');
+      var app = document.getElementById('app');
+      var lock = document.getElementById('lockScreen');
+      if (app) app.hidden = false;
+      if (lock) lock.hidden = true;
+      if (err) err.hidden = false;
+      if (txt) {
+        txt.textContent = 'The app did not finish starting (often a cached update). Force-quit and reopen, or refresh once on a connection.';
+      }
+      var summary = document.getElementById('tab-summary');
+      if (summary) summary.hidden = false;
+    }
+  }
+  window.__elDismissSplashFailsafe = dismissSplashFailsafe;
+  setTimeout(dismissSplashFailsafe, MAX_MS);
+})();
+</script>
 </body>
 </html>

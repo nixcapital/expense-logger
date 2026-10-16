@@ -5,6 +5,37 @@
 (function () {
   'use strict';
 
+  // ---------- Splash dismiss (visual layer only until boot completes) ----------
+  function splashEl() {
+    try { return document.getElementById('splashScreen'); } catch (e) { return null; }
+  }
+  function hideSplashVisualOnly() {
+    try {
+      var splash = splashEl();
+      if (!splash || splash.classList.contains('hide')) return;
+      splash.style.pointerEvents = 'none';
+      splash.classList.add('hide');
+      setTimeout(function () {
+        try { splash.style.display = 'none'; } catch (e2) {}
+      }, 350);
+    } catch (e) {}
+  }
+  function markBootCompleted() {
+    window.__elBootCompleted = true;
+    if (typeof window.__elFlushPendingSkipWaiting === 'function') {
+      window.__elFlushPendingSkipWaiting();
+    }
+  }
+  function armSplashDismissTimers() {
+    if (window.__elSplashDismissArmed) return;
+    window.__elSplashDismissArmed = true;
+    setTimeout(hideSplashVisualOnly, 450);
+    setTimeout(hideSplashVisualOnly, 1800);
+    setTimeout(hideSplashVisualOnly, 4500);
+  }
+  armSplashDismissTimers();
+  window.__elHideSplashVisualOnly = hideSplashVisualOnly;
+
   // ---------- Storage keys (DO NOT RENAME) ----------
   var STORAGE_KEY   = 'expenseLogger.entries.v1';
   var CATS_KEY      = 'expenseLogger.categories.v1';
@@ -739,7 +770,7 @@
       var raw = localStorage.getItem(FORECAST_OVERRIDES_KEY);
       if (raw) {
         var p = JSON.parse(raw);
-        if (p && typeof p === 'object') return p;
+        if (p && typeof p === 'object' && !Array.isArray(p)) return p;
       }
     } catch (e) {}
     return {};
@@ -784,6 +815,28 @@
     saveMetaObj(meta);
   }
 
+  function safeParseDateMs(raw, fallbackMs) {
+    if (raw == null || raw === '') return fallbackMs;
+    if (typeof raw === 'number' && isFinite(raw)) return raw;
+    var s = String(raw).trim();
+    if (!s) return fallbackMs;
+    if (/^\d{11,}$/.test(s)) {
+      var n = parseInt(s, 10);
+      return isFinite(n) ? n : fallbackMs;
+    }
+    var datePart = s.match(/^(\d{4}-\d{2}-\d{2})/);
+    if (datePart) {
+      var iso = datePart[1] + 'T12:00:00';
+      var d1 = new Date(iso);
+      var t1 = d1.getTime();
+      if (!isNaN(t1)) return t1;
+    }
+    var normalized = s.indexOf('T') === -1 ? s.replace(' ', 'T') : s;
+    var d2 = new Date(normalized);
+    var t2 = d2.getTime();
+    return isNaN(t2) ? fallbackMs : t2;
+  }
+
   function accountBalanceAsOfMs(acct) {
     if (!acct || !acct.balanceAsOf) return null;
     var parts = String(acct.balanceAsOf).split('-');
@@ -792,7 +845,8 @@
     var m = parseInt(parts[1], 10) - 1;
     var d = parseInt(parts[2], 10);
     if (isNaN(y) || isNaN(m) || isNaN(d)) return null;
-    return new Date(y, m, d).getTime();
+    var t = new Date(y, m, d).getTime();
+    return isNaN(t) ? null : t;
   }
 
   function formatBalanceAsOfLabel(asOfStr) {
@@ -805,10 +859,93 @@
   }
 
   function parseMoneyInput(raw) {
-    var s = String(raw || '').replace(/[^0-9.\-]/g, '');
+    var s = String(raw || '').trim();
+    if (!s) return NaN;
+    var neg = false;
+    if (/^\(.+\)$/.test(s)) {
+      neg = true;
+      s = s.slice(1, -1).trim();
+    } else if (/^-/.test(s)) {
+      neg = true;
+      s = s.replace(/^-+/, '');
+    }
+    s = s.replace(/\$/g, '').replace(/\u00a0/g, ' ').replace(/\s/g, '');
+    var hasComma = s.indexOf(',') !== -1;
+    var hasDot = s.indexOf('.') !== -1;
+    if (hasComma && hasDot) {
+      s = s.replace(/,/g, '');
+    } else if (hasComma && !hasDot) {
+      s = s.replace(',', '.');
+    } else if (hasComma) {
+      s = s.replace(/,/g, '');
+    }
+    s = s.replace(/[^0-9.]/g, '');
+    if (!s || s === '.') return NaN;
+    if ((s.match(/\./g) || []).length > 1) return NaN;
     var v = parseFloat(s);
     if (isNaN(v)) return NaN;
+    if (neg) v = -v;
     return Math.round(v * 100) / 100;
+  }
+
+  function normalizeBalanceAsOfDate(raw) {
+    if (!raw) return localDateStamp();
+    var s = String(raw).trim();
+    var m = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+    if (!m) return localDateStamp();
+    return m[1] + '-' + m[2] + '-' + m[3];
+  }
+
+  function setBalanceAmountError(msg) {
+    var el = $('balanceAmountError');
+    if (!el) return;
+    el.textContent = msg || '';
+    el.hidden = !msg;
+  }
+
+  var balanceSheetViewportBound = false;
+  function resetBalanceSheetViewportPadding() {
+    var sheet = $('balanceSheet');
+    if (!sheet) return;
+    var modal = sheet.querySelector('.modal');
+    if (modal) modal.style.paddingBottom = '';
+  }
+
+  function bindBalanceSheetViewport() {
+    if (balanceSheetViewportBound || !window.visualViewport) return;
+    var vv = window.visualViewport;
+    if (!vv || typeof vv.addEventListener !== 'function') return;
+    balanceSheetViewportBound = true;
+    var adjust = function () {
+      try {
+        var sheet = $('balanceSheet');
+        if (!sheet || !sheet.classList.contains('show')) return;
+        var modal = sheet.querySelector('.modal');
+        if (!modal) return;
+        var viewport = window.visualViewport;
+        if (!viewport) return;
+        var gap = Math.max(0, window.innerHeight - viewport.height - (viewport.offsetTop || 0));
+        var kb = gap > 40 ? gap : 0;
+        modal.style.paddingBottom = kb
+          ? 'calc(var(--sp-4) + env(safe-area-inset-bottom, 0px) + ' + kb + 'px)'
+          : '';
+        var btn = $('balanceSaveBtn');
+        if (btn && kb > 0 && btn.scrollIntoView) {
+          try { btn.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); } catch (e) {
+            btn.scrollIntoView(false);
+          }
+        }
+      } catch (err) {
+        logBootSectionError('balance sheet viewport', err);
+      }
+    };
+    try {
+      vv.addEventListener('resize', adjust);
+      vv.addEventListener('scroll', adjust);
+    } catch (err) {
+      balanceSheetViewportBound = false;
+      logBootSectionError('balance sheet viewport bind', err);
+    }
   }
 
   function loadTransferPairs() {
@@ -2395,7 +2532,7 @@
     pendingDelete = null;
     pendingRestoreUndo = null;
   }
-  $undoBtn.addEventListener('click', function () {
+  if ($undoBtn) $undoBtn.addEventListener('click', function () {
     if (pendingRestoreUndo) {
       applyStorageSnapshot(pendingRestoreUndo.storage);
       reloadAllStateFromStorage();
@@ -4371,12 +4508,44 @@
   }
 
   function dismissSplash() {
-    if (!$splashScreen) return;
-    $splashScreen.style.pointerEvents = 'none';
-    $splashScreen.classList.add('hide');
-    setTimeout(function () {
-      $splashScreen.style.display = 'none';
-    }, prefersReducedMotion() ? 50 : 350);
+    markBootCompleted();
+    hideSplashVisualOnly();
+    if (window.__elPendingSwReload && !swReloading) {
+      window.__elPendingSwReload = false;
+      try {
+        if (sessionStorage.getItem(SW_RELOAD_GUARD) === '1') return;
+      } catch (e) {}
+      swReloading = true;
+      try { sessionStorage.setItem(SW_RELOAD_GUARD, '1'); } catch (e2) {}
+      window.location.reload();
+    }
+  }
+
+  function clearHomeForecastError() {
+    var el = $('homeForecastError');
+    if (el) el.hidden = true;
+  }
+
+  function showHomeForecastError(msg) {
+    var card = $('homeForecastCard');
+    if (card) card.hidden = true;
+    var el = $('homeForecastError');
+    var txt = $('homeForecastErrorText');
+    if (txt && msg) txt.textContent = msg;
+    if (el) el.hidden = false;
+  }
+
+  function showHomeBootError(msg) {
+    var el = $('homeBootError');
+    var txt = $('homeBootErrorText');
+    if (txt && msg) txt.textContent = msg;
+    if (el) el.hidden = false;
+  }
+
+  function logBootSectionError(section, err) {
+    try {
+      console.error('[ExpenseLogger] ' + section, err && err.message ? err.message : err);
+    } catch (e) {}
   }
 
   function updateActivityStickyTop() {
@@ -6408,35 +6577,44 @@
   }
 
   function renderHomeForecastCard() {
-    var card = $('homeForecastCard');
-    if (!card) return;
-    var checking = getCheckingAccount();
-    if (!checking || typeof checking.currentBalance !== 'number') {
-      card.hidden = true;
-      return;
-    }
-    var payload = buildForecastPayload(60);
-    var result = payload && FC ? FC.runForecast(payload) : null;
-    if (!result || !result.ok) {
-      card.hidden = true;
-      return;
-    }
-    card.hidden = false;
-    var dateEl = $('homeForecastDate');
-    var daysEl = $('homeForecastDays');
-    var balEl = $('homeForecastBalanceVal');
-    if (result.neverRunsOut) {
-      if (dateEl) {
-        dateEl.textContent = 'Stays positive for a year+';
-        dateEl.classList.add('is-long');
+    clearHomeForecastError();
+    try {
+      if (typeof window !== 'undefined' && window.__elTestThrowForecastBoot) {
+        throw new Error('__elTestThrowForecastBoot');
       }
-      if (daysEl) daysEl.textContent = '';
-    } else {
-      if (dateEl) dateEl.classList.remove('is-long');
-      if (dateEl) dateEl.textContent = formatForecastDate(result.lastsUntil);
-      if (daysEl) daysEl.textContent = result.daysAway + ' days away';
+      var card = $('homeForecastCard');
+      if (!card) return;
+      var checking = getCheckingAccount();
+      if (!checking || typeof checking.currentBalance !== 'number') {
+        card.hidden = true;
+        return;
+      }
+      var payload = buildForecastPayload(60);
+      var result = payload && FC ? FC.runForecast(payload) : null;
+      if (!result || !result.ok) {
+        card.hidden = true;
+        return;
+      }
+      card.hidden = false;
+      var dateEl = $('homeForecastDate');
+      var daysEl = $('homeForecastDays');
+      var balEl = $('homeForecastBalanceVal');
+      if (result.neverRunsOut) {
+        if (dateEl) {
+          dateEl.textContent = 'Stays positive for a year+';
+          dateEl.classList.add('is-long');
+        }
+        if (daysEl) daysEl.textContent = '';
+      } else {
+        if (dateEl) dateEl.classList.remove('is-long');
+        if (dateEl) dateEl.textContent = formatForecastDate(result.lastsUntil);
+        if (daysEl) daysEl.textContent = result.daysAway + ' days away';
+      }
+      if (balEl) balEl.textContent = fmtMoneyDisplay(result.startingBalance);
+    } catch (err) {
+      logBootSectionError('home forecast card', err);
+      showHomeForecastError('Forecast could not be shown. Your balance and entries on this device are unchanged.');
     }
-    if (balEl) balEl.textContent = fmtMoneyDisplay(result.startingBalance);
   }
 
   function closeForecastScreen() {
@@ -6456,6 +6634,7 @@
   }
 
   function renderForecastScreen() {
+    try {
     var checking = getCheckingAccount();
     var empty = $('forecastEmptyState');
     var main = $('forecastMain');
@@ -6476,6 +6655,16 @@
     }
     if (empty) empty.hidden = true;
     if (main) main.hidden = false;
+
+    if (!FC) {
+      if (empty) {
+        empty.hidden = false;
+        if ($('forecastEmptyTitle')) $('forecastEmptyTitle').textContent = 'Forecast unavailable';
+        if ($('forecastEmptyText')) $('forecastEmptyText').textContent = 'Close the app completely and reopen on a connection to load the latest version.';
+      }
+      if (main) main.hidden = true;
+      return;
+    }
 
     var payload = buildForecastPayload(forecastChartDays);
     var result = FC.runForecast(payload);
@@ -6521,10 +6710,23 @@
     lastForecastSim = sim;
     if (sim.ok && $('forecastLowestSub')) {
       var lowPt = sim.lowestInWindow || sim.lowest;
-      $('forecastLowestSub').textContent = 'Lowest ' + fmtMoneyDisplay(lowPt.balance) + ' on ' + formatForecastShortDate(lowPt.ts);
+      if (lowPt) {
+        $('forecastLowestSub').textContent = 'Lowest ' + fmtMoneyDisplay(lowPt.balance) + ' on ' + formatForecastShortDate(lowPt.ts);
+      }
     }
     drawForecastChart(sim, getForecastCushion());
     renderForecastUpcoming(sim, getForecastCushion());
+    } catch (err) {
+      logBootSectionError('forecast screen', err);
+      var emptySt = $('forecastEmptyState');
+      var mainSt = $('forecastMain');
+      if (mainSt) mainSt.hidden = true;
+      if (emptySt) {
+        emptySt.hidden = false;
+        if ($('forecastEmptyTitle')) $('forecastEmptyTitle').textContent = 'Forecast unavailable';
+        if ($('forecastEmptyText')) $('forecastEmptyText').textContent = 'Something went wrong reading saved forecast data. Your entries and balance are unchanged.';
+      }
+    }
   }
 
   function drawForecastChart(sim, cushion) {
@@ -6837,10 +7039,20 @@
     el.innerHTML = html;
   }
 
+  function closeBalanceSheet() {
+    resetBalanceSheetViewportPadding();
+    setBalanceAmountError('');
+    var sheet = $('balanceSheet');
+    if (sheet) sheet.classList.remove('show');
+  }
+
   function openBalanceSheet(accountId) {
     var acct = getAccount(accountId) || getCheckingAccount();
     if (!acct) return;
     balanceSheetAccountId = acct.id;
+    setBalanceAmountError('');
+    resetBalanceSheetViewportPadding();
+    bindBalanceSheetViewport();
     var sheet = $('balanceSheet');
     var acctRow = $('balanceSheetAccount');
     if (acctRow) {
@@ -6848,37 +7060,53 @@
     }
     var inp = $('balanceAmountInput');
     if (inp) inp.value = typeof acct.currentBalance === 'number' ? fmtMoneyDisplay(acct.currentBalance) : '';
-    var asOf = acct.balanceAsOf || localDateStamp();
+    var asOf = normalizeBalanceAsOfDate(acct.balanceAsOf || localDateStamp());
     if ($('balanceAsOfInput')) $('balanceAsOfInput').value = asOf;
     if ($('balanceAsOfPreview')) $('balanceAsOfPreview').textContent = formatBalanceAsOfLabel(asOf);
     var foot = $('balanceSheetFoot');
     if (foot) {
       var hist = acct.balanceHistory;
-      if (hist && hist.amount != null && hist.asOf) {
+      var histAsOf = hist && hist.asOf ? normalizeBalanceAsOfDate(hist.asOf) : null;
+      if (hist && typeof hist.amount === 'number' && histAsOf) {
         foot.textContent = acct.name + ' transactions dated after ' + formatBalanceAsOfLabel(asOf).split(',')[0].replace('Today', 'today')
-          + ' adjust it automatically. Last set: ' + fmtMoneyDisplay(hist.amount) + ' on ' + formatForecastShortDate(new Date(hist.asOf + 'T12:00:00').getTime()) + '.';
+          + ' adjust it automatically. Last set: ' + fmtMoneyDisplay(hist.amount) + ' on ' + formatForecastShortDate(new Date(histAsOf + 'T12:00:00').getTime()) + '.';
       } else {
         foot.textContent = acct.name + ' transactions dated after ' + formatBalanceAsOfLabel(asOf).split(',')[0].replace('Today', 'today') + ' adjust it automatically.';
       }
     }
     if (sheet) sheet.classList.add('show');
     if (EI && EI.hydrateUiIcons) EI.hydrateUiIcons(sheet);
+    requestAnimationFrame(function () {
+      var btn = $('balanceSaveBtn');
+      if (btn && btn.scrollIntoView) {
+        try { btn.scrollIntoView({ block: 'nearest' }); } catch (e) { btn.scrollIntoView(false); }
+      }
+    });
   }
 
   function saveBalanceSheet() {
-    var acct = getAccount(balanceSheetAccountId);
-    if (!acct) return;
-    var val = parseMoneyInput($('balanceAmountInput') && $('balanceAmountInput').value);
-    if (isNaN(val)) { toast('Enter a valid balance'); return; }
-    var asOf = ($('balanceAsOfInput') && $('balanceAsOfInput').value) || localDateStamp();
+    setBalanceAmountError('');
+    var acct = getAccount(balanceSheetAccountId) || getCheckingAccount();
+    if (!acct) {
+      setBalanceAmountError('Could not find this account. Close and try again.');
+      return;
+    }
+    balanceSheetAccountId = acct.id;
+    var inp = $('balanceAmountInput');
+    if (inp && inp.blur) inp.blur();
+    var val = parseMoneyInput(inp && inp.value);
+    if (isNaN(val)) {
+      setBalanceAmountError('Enter a valid balance (e.g. 2378.42, 2,378.42, or -50).');
+      return;
+    }
+    var asOf = normalizeBalanceAsOfDate(($('balanceAsOfInput') && $('balanceAsOfInput').value) || '');
     if (typeof acct.currentBalance === 'number' && acct.balanceAsOf) {
       acct.balanceHistory = { amount: acct.currentBalance, asOf: acct.balanceAsOf };
     }
     acct.currentBalance = val;
     acct.balanceAsOf = asOf;
     saveAccounts();
-    var sheet = $('balanceSheet');
-    if (sheet) sheet.classList.remove('show');
+    closeBalanceSheet();
     renderHomeForecastCard();
     if (forecastScreenOpen) renderForecastScreen();
     renderSettingsAccounts();
@@ -7008,10 +7236,19 @@
       b.setAttribute('aria-selected', on ? 'true' : 'false');
     });
     if ($('tab-add')) $('tab-add').hidden = true;
-    $('tab-summary').hidden = tab !== 'summary';
-    $('tab-report').hidden = tab !== 'report';
-    $('tab-history').hidden = tab !== 'history';
-    $('tab-settings').hidden = tab !== 'settings';
+    var tabSummary = $('tab-summary');
+    var tabReport = $('tab-report');
+    var tabHistory = $('tab-history');
+    var tabSettings = $('tab-settings');
+    if (tabSummary) tabSummary.hidden = tab !== 'summary';
+    if (tabReport) tabReport.hidden = tab !== 'report';
+    if (tabHistory) tabHistory.hidden = tab !== 'history';
+    if (tabSettings) tabSettings.hidden = tab !== 'settings';
+    if (tab !== 'summary' && tab !== 'report' && tab !== 'history' && tab !== 'settings') {
+      tab = 'summary';
+      currentTab = tab;
+      if (tabSummary) tabSummary.hidden = false;
+    }
     if (tab === 'summary') {
       renderTotals(); renderMonthlySummary(); renderRecent(); renderBackupReminder();
       renderHomeForecastCard();
@@ -7134,11 +7371,17 @@
       if (forecastScreenOpen) renderForecastScreen();
     });
   });
-  if ($('balanceSheetClose')) $('balanceSheetClose').addEventListener('click', function () {
-    var s = $('balanceSheet');
-    if (s) s.classList.remove('show');
-  });
+  if ($('balanceSheetClose')) $('balanceSheetClose').addEventListener('click', closeBalanceSheet);
   if ($('balanceSaveBtn')) $('balanceSaveBtn').addEventListener('click', saveBalanceSheet);
+  if ($('balanceAmountInput')) {
+    $('balanceAmountInput').addEventListener('input', function () { setBalanceAmountError(''); });
+    $('balanceAmountInput').addEventListener('keydown', function (ev) {
+      if (ev.key === 'Enter') {
+        ev.preventDefault();
+        saveBalanceSheet();
+      }
+    });
+  }
   if ($('balanceAsOfRow')) $('balanceAsOfRow').addEventListener('click', function () {
     var inp = $('balanceAsOfInput');
     if (inp && inp.showPicker) try { inp.showPicker(); } catch (e) { inp.focus(); }
@@ -7482,17 +7725,44 @@
   var swReloading = false;
   var SW_RELOAD_GUARD = 'expenseLogger.swReloadGuard';
 
+  function postSkipWaiting(worker) {
+    if (!worker || !worker.postMessage) return;
+    try { worker.postMessage('SKIP_WAITING'); } catch (e) {}
+  }
+
+  function flushPendingSkipWaiting() {
+    if (!window.__elPendingSkipWaitingWorker) return;
+    if (!window.__elBootCompleted) return;
+    var w = window.__elPendingSkipWaitingWorker;
+    window.__elPendingSkipWaitingWorker = null;
+    postSkipWaiting(w);
+  }
+  window.__elFlushPendingSkipWaiting = flushPendingSkipWaiting;
+
+  function flushPendingSwReload() {
+    if (!window.__elPendingSwReload || swReloading) return;
+    if (!window.__elBootCompleted) return;
+    dismissSplash();
+  }
+  window.__elFlushPendingSwReload = flushPendingSwReload;
+
   function registerSW() {
     if (!('serviceWorker' in navigator)) return;
 
     navigator.serviceWorker.addEventListener('controllerchange', function () {
       if (!navigator.serviceWorker.controller || swReloading) return;
-      if (sessionStorage.getItem(SW_RELOAD_GUARD) === '1') {
-        sessionStorage.removeItem(SW_RELOAD_GUARD);
+      if (!window.__elBootCompleted) {
+        window.__elPendingSwReload = true;
         return;
       }
+      try {
+        if (sessionStorage.getItem(SW_RELOAD_GUARD) === '1') {
+          sessionStorage.removeItem(SW_RELOAD_GUARD);
+          return;
+        }
+      } catch (e) {}
       swReloading = true;
-      sessionStorage.setItem(SW_RELOAD_GUARD, '1');
+      try { sessionStorage.setItem(SW_RELOAD_GUARD, '1'); } catch (e2) {}
       window.location.reload();
     });
 
@@ -7502,87 +7772,119 @@
         var nw = reg.installing;
         if (!nw) return;
         nw.addEventListener('statechange', function () {
-          if (nw.state === 'installed' && navigator.serviceWorker.controller) {
-            nw.postMessage('SKIP_WAITING');
+          if (nw.state !== 'installed' || !navigator.serviceWorker.controller) return;
+          if (!window.__elBootCompleted) {
+            window.__elPendingSkipWaitingWorker = nw;
+            return;
           }
+          postSkipWaiting(nw);
         });
       });
       if (reg.waiting && navigator.serviceWorker.controller) {
-        reg.waiting.postMessage('SKIP_WAITING');
+        if (!window.__elBootCompleted) window.__elPendingSkipWaitingWorker = reg.waiting;
+        else postSkipWaiting(reg.waiting);
       }
     }).catch(function () {});
   }
 
-  registerSW();
-
   function bootApp() {
-  // ---------- Boot ----------
-  initPersistentStorage();
-  categories = loadCategories();
-  budgets = loadBudgets();
-  recurringItems = loadRecurring();
-  importRules = loadImportRules();
-  importSettings = loadImportSettings();
-  accounts = loadAccounts();
-  transferPairs = loadTransferPairs();
-  transferUnlinkKeys = loadTransferUnlinkKeys();
-  importAccountPrefs = loadImportAccountPrefs();
-  transferPatterns = loadTransferPatterns();
-  forecastOverrides = loadForecastOverrides();
-  ensureDefaultAccounts();
-  ensureIncomeCategory();
-  if ($countCardPayments) $countCardPayments.checked = importSettings.countCardPayments;
-  entries = loadEntries();
+    var bootFailed = false;
+    try {
+      // ---------- Boot ----------
+      initPersistentStorage();
+      categories = loadCategories();
+      budgets = loadBudgets();
+      recurringItems = loadRecurring();
+      importRules = loadImportRules();
+      importSettings = loadImportSettings();
+      accounts = loadAccounts();
+      transferPairs = loadTransferPairs();
+      transferUnlinkKeys = loadTransferUnlinkKeys();
+      importAccountPrefs = loadImportAccountPrefs();
+      transferPatterns = loadTransferPatterns();
+      forecastOverrides = loadForecastOverrides();
+      ensureDefaultAccounts();
+      ensureIncomeCategory();
+      if ($countCardPayments) $countCardPayments.checked = importSettings.countCardPayments;
+      entries = loadEntries();
 
-  var ui = loadUI();
-  currentTab = ui.tab || 'summary';
-  if (currentTab === 'add') currentTab = 'summary';
-  tabBeforeAdd = currentTab;
+      var ui = loadUI();
+      currentTab = ui.tab || 'summary';
+      if (currentTab === 'add') currentTab = 'summary';
+      tabBeforeAdd = currentTab;
 
-  (function () {
-    var now = new Date();
-    var v = now.getFullYear() + '-' + pad2(now.getMonth() + 1);
-    $summaryMonth.value = v;
-    $reportMonth.value = v;
-  })();
+      (function () {
+        var now = new Date();
+        var v = now.getFullYear() + '-' + pad2(now.getMonth() + 1);
+        if ($summaryMonth) $summaryMonth.value = v;
+        if ($reportMonth) $reportMonth.value = v;
+      })();
 
-  migrate();
-  buildCategoryButtons();
-  rebuildFilterDropdowns();
-  renderAll();
-  renderCategoryList();
-  renderBudgetSettings();
-  renderRecurringList();
-  buildYearSelect(true);
-  renderReport();
-  updateSaveState();
-  renderRecent();
-  $versionLine.textContent = 'Version ' + APP_VERSION;
-  renderDataMetaLines();
-  renderBackupReminder();
+      migrate();
+      buildCategoryButtons();
+      rebuildFilterDropdowns();
+      renderAll();
+      renderCategoryList();
+      renderBudgetSettings();
+      renderRecurringList();
+      buildYearSelect(true);
+      renderReport();
+      updateSaveState();
+      renderRecent();
+      if ($versionLine) $versionLine.textContent = 'Version ' + APP_VERSION;
+      renderDataMetaLines();
+      renderBackupReminder();
 
-  // Passcode label derived from stored state
-  $togglePinBtn.textContent = getStoredPin() ? 'On' : 'Off';
+      if ($togglePinBtn) $togglePinBtn.textContent = getStoredPin() ? 'On' : 'Off';
 
-  if (getStoredPin()) showLock();
-  else showApp();
+      if (getStoredPin()) showLock();
+      else showApp();
 
-  initScreenTitleObservers();
-  wireActivityFilters();
-  syncActivityRangeChips();
-  updateMonthPillLabels();
-  addEntryDate = localDateStamp();
-  if ($addDate) $addDate.value = addEntryDate;
-  updateAddDatePreview();
+      initScreenTitleObservers();
+      wireActivityFilters();
+      syncActivityRangeChips();
+      updateMonthPillLabels();
+      addEntryDate = localDateStamp();
+      if ($addDate) $addDate.value = addEntryDate;
+      updateAddDatePreview();
 
-  switchTab(currentTab);
+      switchTab(currentTab);
 
-  if (EI && EI.hydrateUiIcons) EI.hydrateUiIcons(document);
-  refreshIconObservers(document);
-  setTimeout(dismissSplash, prefersReducedMotion() ? 80 : 400);
+      if (EI && EI.hydrateUiIcons) EI.hydrateUiIcons(document);
+      refreshIconObservers(document);
+    } catch (err) {
+      bootFailed = true;
+      logBootSectionError('boot', err);
+      showHomeBootError('Something went wrong while opening the app. Your saved entries and settings on this device were not changed.');
+      try {
+        if (getStoredPin()) showLock();
+        else showApp();
+      } catch (e2) {
+        if ($app) $app.hidden = false;
+        if ($lockScreen) $lockScreen.hidden = true;
+      }
+      try {
+        if ($('tab-summary')) $('tab-summary').hidden = false;
+      } catch (e3) {}
+    } finally {
+      setTimeout(dismissSplash, prefersReducedMotion() ? 80 : 400);
+    }
+    return !bootFailed;
   }
 
-  bootApp();
+  try {
+    bootApp();
+  } catch (bootErr) {
+    logBootSectionError('boot-outer', bootErr);
+    showHomeBootError('Something went wrong while opening the app. Your saved entries and settings on this device were not changed.');
+    try {
+      if ($app) $app.hidden = false;
+      if ($lockScreen) $lockScreen.hidden = true;
+      if ($('tab-summary')) $('tab-summary').hidden = false;
+    } catch (e2) {}
+    hideSplashVisualOnly();
+  }
+  registerSW();
   if (EI && EI.preloadIcons) {
     EI.preloadIcons(function () {
       refreshCategorySurfacesAfterIcons();
@@ -7629,6 +7931,11 @@
     ensureDefaultAccounts: ensureDefaultAccounts,
     DEFAULT_ACCOUNT_CHECKING: DEFAULT_ACCOUNT_CHECKING,
     DEFAULT_ACCOUNT_CHASE: DEFAULT_ACCOUNT_CHASE,
+    parseMoneyInput: parseMoneyInput,
+    normalizeBalanceAsOfDate: normalizeBalanceAsOfDate,
+    openBalanceSheet: openBalanceSheet,
+    saveBalanceSheet: saveBalanceSheet,
+    closeBalanceSheet: closeBalanceSheet,
     getState: function () {
       return {
         entries: entries,
