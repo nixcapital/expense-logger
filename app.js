@@ -6179,8 +6179,12 @@
 
   function fmtForecastMoneyShort(n) {
     var v = Math.round(n);
-    if (Math.abs(v) >= 1000) return '$' + (v / 1000).toFixed(v % 1000 === 0 ? 0 : 1).replace(/\.0$/, '') + 'k';
-    return '$' + v;
+    var sign = v < 0 ? '-' : '';
+    var abs = Math.abs(v);
+    if (abs >= 1000) {
+      return sign + '$' + (abs / 1000).toFixed(abs % 1000 === 0 ? 0 : 1).replace(/\.0$/, '') + 'k';
+    }
+    return sign + '$' + abs;
   }
 
   function renderHomeForecastCard() {
@@ -6369,17 +6373,11 @@
       if (p.balance < dataMin) dataMin = p.balance;
       if (p.balance > dataMax) dataMax = p.balance;
     });
-    var span = Math.max(80, dataMax - dataMin);
-    var cushionNear = cushion >= dataMin - span * 0.25 && cushion <= dataMax + span * 0.2;
-    if (cushionNear) {
-      dataMin = Math.min(dataMin, cushion);
-      dataMax = Math.max(dataMax, cushion);
-    }
-    var step = FC.forecastChartAxisStep(dataMax - dataMin);
-    var minBal = Math.floor((dataMin - step * 0.35) / step) * step;
-    var maxBal = Math.ceil((dataMax + step * 0.35) / step) * step;
-    if (maxBal - minBal < step * 2) maxBal = minBal + step * 2;
-    if (minBal < 0 && dataMin >= 0) minBal = 0;
+    var yScale = FC.computeForecastChartYScale(dataMin, dataMax, { cushion: cushion });
+    var minBal = yScale.minBal;
+    var maxBal = yScale.maxBal;
+    var step = yScale.step;
+    var cushionNear = yScale.cushionNear;
     var t0 = points[0].ts;
     var t1 = points[points.length - 1].ts;
     function xAt(ts) { return padL + ((ts - t0) / (t1 - t0 || 1)) * w; }
@@ -6452,6 +6450,7 @@
       step: step,
       cushion: cushion,
       cushionNear: cushionNear,
+      crossesZero: yScale.crossesZero,
       padT: padT,
       innerH: h,
       baselineNudge: 4

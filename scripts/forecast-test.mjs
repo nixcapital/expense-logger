@@ -222,18 +222,20 @@ assert.ok(chartBal, 'chart point on rent day exists');
 assert.strictEqual(rentRow.balanceAfter, chartBal.balance);
 
 console.log('forecast-test: y-axis hides tick near $600 cushion');
+var yScaleCush = FC.computeForecastChartYScale(200, 2400, { cushion: 600 });
 var axisPlan = FC.planForecastChartYAxisLabels({
-  minBal: 0,
-  maxBal: 2500,
-  step: 500,
+  minBal: yScaleCush.minBal,
+  maxBal: yScaleCush.maxBal,
+  step: yScaleCush.step,
   cushion: 600,
-  cushionNear: true,
+  cushionNear: yScaleCush.cushionNear,
+  crossesZero: yScaleCush.crossesZero,
   padT: 12,
   innerH: 162,
   baselineNudge: 4
 });
 assert.strictEqual(FC.yAxisLabelsCollide(axisPlan), false);
-assert.ok(axisPlan.hidden.some(function (h) { return h.bal === 500; }), '500 tick hidden near 600 cushion');
+assert.ok(axisPlan.labels.length <= 6, 'at most 6 y labels with cushion');
 assert.ok(axisPlan.labels.some(function (l) { return l.isCushion && l.bal === 600; }));
 
 console.log('forecast-test: y-axis plan across chart windows');
@@ -260,16 +262,41 @@ console.log('forecast-test: y-axis plan across chart windows');
   var spanW = Math.max(80, dMax - dMin);
   var near = 600 >= dMin - spanW * 0.25 && 600 <= dMax + spanW * 0.2;
   if (near) {
-    var dMinA = Math.min(dMin, 600);
-    var dMaxA = Math.max(dMax, 600);
-    var stepW = FC.forecastChartAxisStep(dMaxA - dMinA);
-    var minB = Math.floor((dMinA - stepW * 0.35) / stepW) * stepW;
-    var maxB = Math.ceil((dMaxA + stepW * 0.35) / stepW) * stepW;
+    var scaleW = FC.computeForecastChartYScale(dMin, dMax, { cushion: 600 });
     var planW = FC.planForecastChartYAxisLabels({
-      minBal: minB, maxBal: maxB, step: stepW, cushion: 600, cushionNear: true, padT: 12, innerH: 162
+      minBal: scaleW.minBal,
+      maxBal: scaleW.maxBal,
+      step: scaleW.step,
+      cushion: 600,
+      cushionNear: scaleW.cushionNear,
+      crossesZero: scaleW.crossesZero,
+      padT: 12,
+      innerH: 162
     });
     assert.strictEqual(FC.yAxisLabelsCollide(planW), false, 'window ' + days + 'd');
+    assert.ok(planW.labels.length <= 6, 'label count window ' + days + 'd');
   }
+});
+
+console.log('forecast-test: y-axis large ranges crossing zero');
+[
+  { min: -10000, max: 9000, label: '9k-to--10k' },
+  { min: -34000, max: 3500, label: '3.5k-to--34k' }
+].forEach(function (case_) {
+  var sc = FC.computeForecastChartYScale(case_.min, case_.max, { cushion: 600 });
+  var planL = FC.planForecastChartYAxisLabels({
+    minBal: sc.minBal,
+    maxBal: sc.maxBal,
+    step: sc.step,
+    cushion: 600,
+    cushionNear: sc.cushionNear,
+    crossesZero: sc.crossesZero,
+    padT: 12,
+    innerH: 162
+  });
+  assert.ok(planL.labels.length <= 6, case_.label + ' label count');
+  assert.strictEqual(FC.yAxisLabelsCollide(planL), false, case_.label + ' collisions');
+  assert.ok(planL.labels.some(function (l) { return l.bal === 0; }), case_.label + ' includes zero');
 });
 
 console.log('forecast-test: projected balance ignores future-dated entries');

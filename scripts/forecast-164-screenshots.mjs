@@ -94,6 +94,10 @@ async function run() {
     await page.waitForTimeout(400);
     await capture(page, `forecast-top-${scheme}.png`, 0);
     await capture(page, `forecast-upcoming-${scheme}.png`, 900);
+    const chart = await page.$('#forecastChartCard');
+    if (chart) {
+      await chart.screenshot({ path: join(OUT, `forecast-chart-${scheme}.png`) });
+    }
     await context.close();
   }
   await browser.close();

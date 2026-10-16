@@ -1230,14 +1230,113 @@
     };
   }
 
-  var CHART_Y_LABEL_MIN_GAP_PX = 20;
+  var CHART_Y_LABEL_MIN_GAP_PX = 18;
+  var CHART_Y_CUSHION_TICK_GAP_PX = 14;
+  var CHART_Y_MAX_TICKS = 5;
+
+  function pickNiceStep(rough) {
+    if (!isFinite(rough) || rough <= 0) return 1;
+    var mag = Math.pow(10, Math.floor(Math.log10(rough)));
+    var f = rough / mag;
+    var nf;
+    if (f <= 1) nf = 1;
+    else if (f <= 2) nf = 2;
+    else if (f <= 2.5) nf = 2.5;
+    else if (f <= 5) nf = 5;
+    else nf = 10;
+    return nf * mag;
+  }
+
+  function niceStepUp(step) {
+    var mag = Math.pow(10, Math.floor(Math.log10(step)));
+    var n = step / mag;
+    if (n < 2) return 2 * mag;
+    if (n < 2.5) return 2.5 * mag;
+    if (n < 5) return 5 * mag;
+    if (n < 10) return 10 * mag;
+    return step * 2;
+  }
+
+  function axisTickCount(minBal, maxBal, step) {
+    if (step <= 0) return 1;
+    return Math.round((maxBal - minBal) / step) + 1;
+  }
 
   function forecastChartAxisStep(span) {
-    if (span <= 400) return 100;
-    if (span <= 900) return 200;
-    if (span <= 1800) return 250;
-    if (span <= 3500) return 500;
-    return 1000;
+    return pickNiceStep(span / Math.max(1, CHART_Y_MAX_TICKS - 1));
+  }
+
+  function forecastChartNiceStep(range, maxLabels) {
+    maxLabels = maxLabels || CHART_Y_MAX_TICKS;
+    return pickNiceStep(range / Math.max(1, maxLabels - 1));
+  }
+
+  function computeForecastChartYScale(dataMin, dataMax, opts) {
+    opts = opts || {};
+    var cushion = opts.cushion != null ? opts.cushion : 600;
+    var span = Math.max(80, dataMax - dataMin);
+    var cushionNear = cushion >= dataMin - span * 0.25 && cushion <= dataMax + span * 0.2;
+    var dMin = dataMin;
+    var dMax = dataMax;
+    if (cushionNear) {
+      dMin = Math.min(dMin, cushion);
+      dMax = Math.max(dMax, cushion);
+    }
+    var pad = Math.max(80, dMax - dMin) * 0.08;
+    var step = forecastChartNiceStep(dMax - dMin + pad * 2, CHART_Y_MAX_TICKS);
+    var minBal = Math.floor((dMin - pad) / step) * step;
+    var maxBal = Math.ceil((dMax + pad) / step) * step;
+    if (maxBal - minBal < step * 2) maxBal = minBal + step * 2;
+    var crossesZero = dataMin < 0 && dataMax > 0;
+    if (!crossesZero && dataMin >= 0 && minBal < 0) minBal = 0;
+    if (crossesZero) {
+      minBal = Math.min(minBal, 0);
+      maxBal = Math.max(maxBal, 0);
+    }
+    while (axisTickCount(minBal, maxBal, step) > CHART_Y_MAX_TICKS) {
+      step = niceStepUp(step);
+    }
+    return {
+      minBal: minBal,
+      maxBal: maxBal,
+      step: step,
+      cushionNear: cushionNear,
+      crossesZero: crossesZero
+    };
+  }
+
+  function buildAxisTickValues(minBal, maxBal, step, crossesZero) {
+    var ticks = [];
+    var guard = 0;
+    for (var t = minBal; t <= maxBal + step * 0.001 && guard < 32; t += step) {
+      ticks.push(Math.round(t * 100) / 100);
+      guard++;
+    }
+    if (crossesZero && ticks.indexOf(0) === -1) {
+      ticks.push(0);
+      ticks.sort(function (a, b) { return a - b; });
+      if (ticks.length > CHART_Y_MAX_TICKS) {
+        var bestIdx = 1;
+        var bestDist = Infinity;
+        for (var i = 0; i < ticks.length; i++) {
+          if (ticks[i] === 0) continue;
+          var d = Math.abs(ticks[i]);
+          if (d < bestDist) { bestDist = d; bestIdx = i; }
+        }
+        ticks.splice(bestIdx, 1);
+      }
+    }
+    while (ticks.length > CHART_Y_MAX_TICKS) {
+      var drop = 0;
+      var dropScore = -1;
+      for (var j = 0; j < ticks.length; j++) {
+        if (ticks[j] === 0 && crossesZero) continue;
+        var score = Math.min(Math.abs(ticks[j] - minBal), Math.abs(ticks[j] - maxBal));
+        if (score > dropScore) { dropScore = score; drop = j; }
+      }
+      ticks.splice(drop, 1);
+    }
+    return ticks;
   }
 
   function forecastChartYAt(bal, minBal, maxBal, padT, innerH) {
@@ -1251,6 +1350,7 @@
     var step = opts.step;
     var cushion = opts.cushion;
     var cushionNear = !!opts.cushionNear;
+    var crossesZero = !!opts.crossesZero;
     var padT = opts.padT != null ? opts.padT : 12;
     var innerH = opts.innerH != null ? opts.innerH : 162;
     var baselineNudge = opts.baselineNudge != null ? opts.baselineNudge : 4;
@@ -1259,53 +1359,72 @@
       return forecastChartYAt(bal, minBal, maxBal, padT, innerH) + baselineNudge;
     }
 
-    var yTicks = [];
-    for (var tick = minBal; tick <= maxBal; tick += step) yTicks.push(tick);
-    if (cushionNear && yTicks.indexOf(cushion) === -1) yTicks.push(cushion);
-    yTicks.sort(function (a, b) { return a - b; });
-
+    var tickVals = buildAxisTickValues(minBal, maxBal, step, crossesZero);
     var cushionLabelY = cushionNear ? yAt(cushion) : padT + 10;
+    var zeroY = crossesZero ? yAt(0) : null;
+    var cushionOnAxis = cushionNear;
+    if (cushionNear && crossesZero && zeroY != null
+      && Math.abs(cushionLabelY - zeroY) < CHART_Y_LABEL_MIN_GAP_PX) {
+      cushionOnAxis = false;
+    }
     var labels = [];
     var hidden = [];
 
-    yTicks.forEach(function (bal) {
-      var isCushion = cushionNear && bal === cushion;
+    tickVals.forEach(function (bal) {
+      if (cushionOnAxis && bal === cushion) return;
       var y = yAt(bal);
-      if (!isCushion) {
-        if (cushionNear && Math.abs(bal - cushion) < step * 0.5) {
-          hidden.push({ bal: bal, reason: 'near-cushion-value' });
-          return;
-        }
-        if (Math.abs(y - cushionLabelY) < CHART_Y_LABEL_MIN_GAP_PX) {
-          hidden.push({ bal: bal, reason: 'near-cushion-y' });
-          return;
-        }
+      if (cushionOnAxis && Math.abs(y - cushionLabelY) < CHART_Y_CUSHION_TICK_GAP_PX) {
+        hidden.push({ bal: bal, reason: 'near-cushion-y' });
+        return;
       }
-      labels.push({ bal: bal, isCushion: isCushion, y: y });
+      labels.push({ bal: bal, isCushion: false, y: y });
     });
+
+    if (crossesZero && !labels.some(function (l) { return l.bal === 0; })) {
+      labels.push({ bal: 0, isCushion: false, y: zeroY });
+    }
+
+    if (cushionOnAxis) {
+      labels.push({ bal: cushion, isCushion: true, y: cushionLabelY });
+    }
+
+    labels.sort(function (a, b) { return a.y - b.y; });
+    var priority = labels.filter(function (lb) {
+      return lb.isCushion || (crossesZero && lb.bal === 0);
+    });
+    var rest = labels.filter(function (lb) {
+      return !lb.isCushion && !(crossesZero && lb.bal === 0);
+    });
+    var filtered = priority.slice();
+    rest.forEach(function (lb) {
+      var clash = filtered.some(function (f) {
+        return Math.abs(f.y - lb.y) < CHART_Y_LABEL_MIN_GAP_PX;
+      });
+      if (!clash) filtered.push(lb);
+      else hidden.push({ bal: lb.bal, reason: 'label-spacing' });
+    });
+    labels = filtered.sort(function (a, b) { return a.y - b.y; });
 
     return {
       labels: labels,
       hidden: hidden,
       cushionLabelY: cushionLabelY,
       cushionNear: cushionNear,
-      showCushionNote: !cushionNear,
-      minGapPx: CHART_Y_LABEL_MIN_GAP_PX
+      showCushionNote: !cushionNear || !cushionOnAxis,
+      minGapPx: CHART_Y_LABEL_MIN_GAP_PX,
+      cushionGapPx: CHART_Y_CUSHION_TICK_GAP_PX,
+      tickValues: tickVals,
+      step: step,
+      cushionOnAxis: cushionOnAxis
     };
   }
 
   function yAxisLabelsCollide(plan) {
     if (!plan || !plan.labels) return false;
-    var cushionYs = [];
-    plan.labels.forEach(function (lb) {
-      if (lb.isCushion) cushionYs.push(lb.y);
-    });
-    if (plan.showCushionNote) cushionYs.push(plan.cushionLabelY);
-    for (var i = 0; i < plan.labels.length; i++) {
-      var lb = plan.labels[i];
-      if (lb.isCushion) continue;
-      for (var c = 0; c < cushionYs.length; c++) {
-        if (Math.abs(lb.y - cushionYs[c]) < plan.minGapPx) return true;
+    var ys = plan.labels.map(function (lb) { return lb.y; });
+    for (var i = 0; i < ys.length; i++) {
+      for (var j = i + 1; j < ys.length; j++) {
+        if (Math.abs(ys[i] - ys[j]) < plan.minGapPx) return true;
       }
     }
     return false;
@@ -1398,9 +1517,12 @@
     runForecast: runForecast,
     bankHolidayKeysForYear: bankHolidayKeysForYear,
     forecastChartAxisStep: forecastChartAxisStep,
+    forecastChartNiceStep: forecastChartNiceStep,
+    computeForecastChartYScale: computeForecastChartYScale,
     forecastChartYAt: forecastChartYAt,
     planForecastChartYAxisLabels: planForecastChartYAxisLabels,
     yAxisLabelsCollide: yAxisLabelsCollide,
-    CHART_Y_LABEL_MIN_GAP_PX: CHART_Y_LABEL_MIN_GAP_PX
+    CHART_Y_LABEL_MIN_GAP_PX: CHART_Y_LABEL_MIN_GAP_PX,
+    CHART_Y_CUSHION_TICK_GAP_PX: CHART_Y_CUSHION_TICK_GAP_PX
   };
 });
