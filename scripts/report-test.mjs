@@ -125,11 +125,22 @@ assert.strictEqual(series[2].byCat.other, 30);
 assert.strictEqual(series[1].total, 20);
 assert.strictEqual(series[0].total, 0);
 
+function splitRecurringGroups(groups) {
+  const multi = groups.filter((g) => g.count >= 2);
+  const oneTime = groups.filter((g) => g.count < 2);
+  return { multi, oneTime };
+}
+
 const groups = groupRecurringEntries(getSummaryData(entries, 2026, 8, 1).entries);
 assert.strictEqual(groups.length, 2, 'target merged + cafe');
 assert.strictEqual(groups[0].count, 2, 'target appears twice');
 assert.strictEqual(groups[0].total, 80);
 assert.ok(groups[0].label.toLowerCase().includes('target'));
+
+const split = splitRecurringGroups(groups);
+assert.strictEqual(split.multi.length, 1);
+assert.strictEqual(split.oneTime.length, 1);
+assert.strictEqual(split.oneTime[0].label, 'Cafe');
 
 const solo = groupRecurringEntries([{ id: 'x', amount: 5, ts: sep, note: '' }]);
 assert.strictEqual(solo.length, 1);

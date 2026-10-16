@@ -1152,8 +1152,15 @@ button.legend-row.legend-btn.active { background: color-mix(in srgb, var(--accen
 .report-section-head { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-2); flex-wrap: wrap; margin-bottom: var(--sp-2); }
 .report-section-head h3 { margin: 0; }
 .report-table { width: 100%; border-collapse: collapse; font-size: 13px; }
-.report-table th, .report-table td { padding: var(--sp-2); border-bottom: 1px solid var(--sep); text-align: left; }
+.report-table th, .report-table td { padding: var(--sp-2); border-bottom: 1px solid var(--sep); text-align: left; vertical-align: middle; }
 .report-table td:last-child, .report-table th:last-child { text-align: right; font-variant-numeric: tabular-nums; }
+.report-tx-table { table-layout: fixed; }
+.report-tx-table th:first-child, .report-tx-table td.report-tx-date { width: 54px; max-width: 54px; white-space: nowrap; padding-right: var(--sp-1); font-size: 12px; }
+.report-tx-table th:nth-child(2), .report-tx-table .report-cat-cell { overflow: hidden; }
+.report-tx-table th:last-child, .report-tx-table td.report-tx-amt { width: 72px; max-width: 72px; white-space: nowrap; }
+.report-tx-label { display: flex; align-items: center; gap: 4px; min-width: 0; max-width: 100%; }
+.report-tx-label .cat-badge { flex-shrink: 0; }
+.report-tx-label-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; flex: 1; }
 
 .seg-control {
   display: inline-flex;
@@ -1194,7 +1201,8 @@ button.legend-row.legend-btn.active { background: color-mix(in srgb, var(--accen
   scrollbar-width: none;
 }
 .report-chart-scroll::-webkit-scrollbar { display: none; }
-.report-chart-svg { display: block; height: 196px; width: auto; min-width: 100%; }
+.report-chart-svg { display: block; height: 196px; width: auto; max-width: none; }
+.report-chart-svg--fit { width: 100%; max-width: 100%; }
 .report-bar-track { fill: var(--raised); }
 .report-bar-outline { stroke: var(--accent); stroke-width: 2; pointer-events: none; }
 .report-bar-label { fill: var(--text-dim); font-size: 10px; font-weight: 600; font-family: -apple-system, BlinkMacSystemFont, sans-serif; }
@@ -1228,6 +1236,27 @@ button.legend-row.legend-btn.active { background: color-mix(in srgb, var(--accen
 .report-recur-total { font-weight: 700; }
 .report-recur-table { margin: 0; }
 .report-recur-table td { font-size: 12px; }
+.report-recur-onetime {
+  border: 1px dashed var(--sep);
+  border-radius: var(--radius-input);
+  background: transparent;
+  margin-top: var(--sp-1);
+}
+.report-recur-onetime-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-3);
+  padding: var(--sp-3);
+  cursor: pointer;
+  list-style: none;
+  font-size: 13px;
+  color: var(--text-dim);
+}
+.report-recur-onetime-summary::-webkit-details-marker { display: none; }
+.report-recur-onetime-label { font-weight: 600; }
+.report-recur-onetime-meta { font-weight: 500; font-size: 12px; }
+.report-recur-onetime[open] { background: var(--raised); border-style: solid; }
 
 .lock-screen {
   position: fixed; inset: 0;

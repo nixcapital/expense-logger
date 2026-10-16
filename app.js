@@ -1447,17 +1447,48 @@
 
   var reportChartAnimGen = 0;
 
-  function buildReportChartSvg(months, selY, selM, progress) {
-    var n = months.length;
-    if (!n) return '';
-    var barUnit = 40;
-    var chartW = Math.max(300, n * barUnit + 16);
-    var chartH = 196;
-    var padT = 10;
-    var padB = 28;
+  function reportChartLayout(monthCount, containerW) {
     var padL = 10;
     var padR = 10;
-    var plotW = chartW - padL - padR;
+    var padT = 10;
+    var padB = 28;
+    var chartH = 196;
+    var barGap = monthCount > 6 ? 4 : 6;
+    var cw = Math.max(260, containerW || 300);
+    var barW = Math.floor((cw - padL - padR - barGap * (monthCount - 1)) / monthCount);
+    barW = Math.max(22, barW);
+    if (monthCount <= 6) barW = Math.min(40, barW);
+    var chartW = padL + padR + monthCount * barW + barGap * (monthCount - 1);
+    var fits = chartW <= cw + 1;
+    if (fits && chartW < cw) chartW = cw;
+    return { padL: padL, padR: padR, padT: padT, padB: padB, chartH: chartH, barGap: barGap, barW: barW, chartW: chartW, fits: fits };
+  }
+
+  function scrollReportChartToSelection(scrollEl, layout, monthKey) {
+    if (!scrollEl || !layout || !monthKey) return;
+    requestAnimationFrame(function () {
+      var hit = scrollEl.querySelector('[data-report-month="' + monthKey + '"]');
+      if (!hit) return;
+      if (layout.fits) {
+        scrollEl.scrollLeft = 0;
+        return;
+      }
+      var barX = parseFloat(hit.getAttribute('x') || '0');
+      var barW = parseFloat(hit.getAttribute('width') || '0');
+      var target = barX + barW - scrollEl.clientWidth + layout.padR + 8;
+      scrollEl.scrollLeft = Math.max(0, Math.min(target, scrollEl.scrollWidth - scrollEl.clientWidth));
+    });
+  }
+
+  function buildReportChartSvg(months, selY, selM, progress, layout) {
+    var n = months.length;
+    if (!n || !layout) return '';
+    var chartW = layout.chartW;
+    var chartH = layout.chartH;
+    var padT = layout.padT;
+    var padB = layout.padB;
+    var padL = layout.padL;
+    var padR = layout.padR;
     var plotH = chartH - padT - padB;
     var max = Math.max.apply(null, months.map(function (mo) { return mo.total; }));
     if (!max || max <= 0) max = 1;
@@ -1465,10 +1496,11 @@
     var avg = withSpend.length
       ? withSpend.reduce(function (s, mo) { return s + mo.total; }, 0) / withSpend.length
       : 0;
-    var barGap = 6;
-    var barW = (plotW - barGap * (n - 1)) / n;
+    var barGap = layout.barGap;
+    var barW = layout.barW;
     var p = Math.max(0, Math.min(1, progress));
-    var svg = '<svg class="report-chart-svg" viewBox="0 0 ' + chartW + ' ' + chartH
+    var svgClass = 'report-chart-svg' + (layout.fits ? ' report-chart-svg--fit' : '');
+    var svg = '<svg class="' + svgClass + '" viewBox="0 0 ' + chartW + ' ' + chartH
       + '" role="img" aria-label="Monthly spending by category" preserveAspectRatio="xMinYMid meet">';
     if (avg > 0) {
       var avgY = padT + plotH - (avg / max) * plotH;
@@ -1502,15 +1534,21 @@
     return svg;
   }
 
-  function animateReportChart(months, selY, selM) {
+  function animateReportChart(months, selY, selM, scrollEl) {
     var wrap = document.getElementById('reportChartSvgWrap');
     if (!wrap) return;
+    var containerW = scrollEl ? scrollEl.clientWidth : 300;
+    var layout = reportChartLayout(months.length, containerW);
+    var selKey = reportMonthKey(selY, selM);
     reportChartAnimGen += 1;
     var gen = reportChartAnimGen;
+    function afterDraw() {
+      scrollReportChartToSelection(scrollEl, layout, selKey);
+    }
     runChartAnim(420, function (t) {
       if (gen !== reportChartAnimGen) return;
-      wrap.innerHTML = buildReportChartSvg(months, selY, selM, t);
-    });
+      wrap.innerHTML = buildReportChartSvg(months, selY, selM, t, layout);
+    }, afterDraw);
   }
 
   function sortReportTransactions(list, sort) {
@@ -1564,12 +1602,65 @@
     });
   }
 
+  function splitRecurringGroups(groups) {
+    var multi = [];
+    var oneTime = [];
+    groups.forEach(function (g) {
+      if (g.count >= 2) multi.push(g);
+      else oneTime.push(g);
+    });
+    return { multi: multi, oneTime: oneTime };
+  }
+
   function renderReportTxRow(e) {
     var d = new Date(e.ts);
     var cat = getCat(e.categoryId);
     var day = d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
-    var label = iconBadge(cat, 'xs') + ' ' + escHtml(cat.name) + (e.note ? ' — ' + escHtml(e.note) : '');
-    return '<tr><td>' + day + '</td><td class="report-cat-cell">' + label + '</td><td>' + fmtMoneyDisplay(e.amount) + '</td></tr>';
+    var text = escHtml(cat.name) + (e.note ? ' — ' + escHtml(e.note) : '');
+    return '<tr><td class="report-tx-date">' + day + '</td><td class="report-cat-cell">'
+      + '<span class="report-tx-label">' + iconBadge(cat, 'xs')
+      + '<span class="report-tx-label-text">' + text + '</span></span></td>'
+      + '<td class="report-tx-amt">' + fmtMoneyDisplay(e.amount) + '</td></tr>';
+  }
+
+  function renderRecurringGroupsHtml(groups) {
+    var split = splitRecurringGroups(groups);
+    var html = '<div class="report-recur-list">';
+    split.multi.forEach(function (g) {
+      html += '<details class="report-recur-group">';
+      html += '<summary class="report-recur-summary">';
+      html += '<span class="report-recur-title">' + escHtml(g.label) + '</span>';
+      html += '<span class="report-recur-meta">';
+      html += '<span class="report-recur-count">' + g.count + '×</span>';
+      html += '<span class="report-recur-total">' + fmtMoneyDisplay(g.total) + '</span>';
+      html += '</span></summary>';
+      html += '<table class="report-table report-tx-table report-recur-table"><tbody>';
+      g.entries.forEach(function (e) { html += renderReportTxRow(e); });
+      html += '</tbody></table></details>';
+    });
+    if (split.oneTime.length) {
+      var otEntries = [];
+      var otTotal = 0;
+      split.oneTime.forEach(function (g) {
+        g.entries.forEach(function (e) {
+          otEntries.push(e);
+          otTotal += e.amount;
+        });
+      });
+      otEntries.sort(function (a, b) { return b.ts - a.ts; });
+      html += '<details class="report-recur-onetime">';
+      html += '<summary class="report-recur-onetime-summary">';
+      html += '<span class="report-recur-onetime-label">One-time</span>';
+      html += '<span class="report-recur-meta report-recur-onetime-meta">';
+      html += otEntries.length + ' charge' + (otEntries.length === 1 ? '' : 's');
+      html += ' · ' + fmtMoneyDisplay(otTotal);
+      html += '</span></summary>';
+      html += '<table class="report-table report-tx-table report-recur-table"><tbody>';
+      otEntries.forEach(function (e) { html += renderReportTxRow(e); });
+      html += '</tbody></table></details>';
+    }
+    html += '</div>';
+    return html;
   }
 
   function segButton(dataAttr, value, label, active) {
@@ -2859,28 +2950,10 @@
 
     if (data.entries.length > 0) {
       if (txSort === 'recurring') {
-        var groups = groupRecurringEntries(data.entries);
-        html += '<div class="report-recur-list">';
-        groups.forEach(function (g) {
-          var open = g.count > 1;
-          html += '<details class="report-recur-group"' + (open ? ' open' : '') + '>';
-          html += '<summary class="report-recur-summary">';
-          html += '<span class="report-recur-title">' + escHtml(g.label) + '</span>';
-          html += '<span class="report-recur-meta">';
-          if (g.count > 1) html += '<span class="report-recur-count">' + g.count + '×</span>';
-          html += '<span class="report-recur-total">' + fmtMoneyDisplay(g.total) + '</span>';
-          html += '</span></summary>';
-          if (g.count > 1) {
-            html += '<table class="report-table report-recur-table"><tbody>';
-            g.entries.forEach(function (e) { html += renderReportTxRow(e); });
-            html += '</tbody></table>';
-          }
-          html += '</details>';
-        });
-        html += '</div>';
+        html += renderRecurringGroupsHtml(groupRecurringEntries(data.entries));
       } else {
         var sortedEntries = sortReportTransactions(data.entries, txSort);
-        html += '<table class="report-table"><thead><tr><th>Date</th><th>Category / Note</th><th>Amount</th></tr></thead><tbody>';
+        html += '<table class="report-table report-tx-table"><thead><tr><th>Date</th><th>Category / Note</th><th>Amount</th></tr></thead><tbody>';
         sortedEntries.forEach(function (e) { html += renderReportTxRow(e); });
         html += '</tbody></table>';
       }
@@ -2891,21 +2964,8 @@
 
     html += '</div>';
     $reportBody.innerHTML = html;
-    animateReportChart(series, y, m);
     var scrollEl = document.getElementById('reportChartScroll');
-    if (scrollEl && rangeMonths === 12) {
-      var sel = scrollEl.querySelector('.report-bar-outline');
-      if (sel && sel.parentNode) {
-        var parentSvg = sel.closest('svg');
-        if (parentSvg) {
-          var rect = sel.getBoundingClientRect();
-          var wrapRect = scrollEl.getBoundingClientRect();
-          if (rect.right > wrapRect.right || rect.left < wrapRect.left) {
-            scrollEl.scrollLeft += rect.left - wrapRect.left - (wrapRect.width / 2 - rect.width / 2);
-          }
-        }
-      }
-    }
+    animateReportChart(series, y, m, scrollEl);
     refreshIconObservers($reportBody);
   }
 
