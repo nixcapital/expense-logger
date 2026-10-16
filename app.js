@@ -16,7 +16,7 @@
   var IMPORT_SETTINGS_KEY = 'expenseLogger.importSettings.v1';
   var META_KEY            = 'expenseLogger.meta.v1';
 
-  var APP_VERSION = '1.4.0';
+  var APP_VERSION = '1.4.1';
   var BACKUP_FORMAT = 1;
   var MS_DAY = 86400000;
   var BACKUP_NUDGE_AFTER_DAYS = 30;
@@ -1378,24 +1378,93 @@
     return y + '-' + pad2(m + 1);
   }
 
-  function getReportMonthSeries(endY, endM, count) {
-    var list = [];
-    var y = endY;
-    var m = endM;
+  function ymToIndex(y, m) {
+    return y * 12 + m;
+  }
+
+  function indexToYm(idx) {
+    var y = Math.floor(idx / 12);
+    var m = idx - y * 12;
+    if (m < 0) { m += 12; y -= 1; }
+    return { y: y, m: m };
+  }
+
+  function addMonthsYM(y, m, delta) {
+    return indexToYm(ymToIndex(y, m) + delta);
+  }
+
+  function compareYM(y1, m1, y2, m2) {
+    return ymToIndex(y1, m1) - ymToIndex(y2, m2);
+  }
+
+  function earliestMonthWithData() {
+    var minIdx = null;
+    entries.forEach(function (e) {
+      var d = new Date(e.ts);
+      var idx = ymToIndex(d.getFullYear(), d.getMonth());
+      if (minIdx === null || idx < minIdx) minIdx = idx;
+    });
+    return minIdx === null ? null : indexToYm(minIdx);
+  }
+
+  function computeReportChartWindow(selY, selM, count, now) {
+    var curY = now.getFullYear();
+    var curM = now.getMonth();
+    if (compareYM(selY, selM, curY, curM) > 0) {
+      selY = curY;
+      selM = curM;
+    }
+    var before = count === 6 ? 3 : 6;
+    var after = count === 6 ? 2 : 5;
+    var selIdx = ymToIndex(selY, selM);
+    var curIdx = ymToIndex(curY, curM);
+    var monthsAfterSel = curIdx - selIdx;
+    var startIdx;
+    var endIdx;
+
+    if (monthsAfterSel <= after) {
+      endIdx = curIdx;
+      startIdx = endIdx - (count - 1);
+    } else {
+      startIdx = selIdx - before;
+      endIdx = selIdx + after;
+      if (endIdx > curIdx) {
+        endIdx = curIdx;
+        startIdx = endIdx - (count - 1);
+      }
+    }
+
+    var earliest = earliestMonthWithData();
+    if (earliest) {
+      var minStart = ymToIndex(earliest.y, earliest.m) - 2;
+      if (startIdx < minStart) startIdx = minStart;
+      endIdx = startIdx + (count - 1);
+      if (endIdx > curIdx) {
+        endIdx = curIdx;
+        startIdx = endIdx - (count - 1);
+      }
+    }
+
+    var slots = [];
     for (var i = 0; i < count; i++) {
-      var data = getSummaryData(y, m);
-      list.unshift({
-        y: y,
-        m: m,
-        key: reportMonthKey(y, m),
+      var ym = indexToYm(startIdx + i);
+      slots.push({ y: ym.y, m: ym.m });
+    }
+    return slots;
+  }
+
+  function buildReportMonthSeries(selY, selM, count, now) {
+    return computeReportChartWindow(selY, selM, count, now).map(function (slot) {
+      var data = getSummaryData(slot.y, slot.m);
+      return {
+        y: slot.y,
+        m: slot.m,
+        key: reportMonthKey(slot.y, slot.m),
         total: data.total,
         byCat: data.byCat,
         entries: data.entries
-      });
-      m -= 1;
-      if (m < 0) { m = 11; y -= 1; }
-    }
-    return list;
+      };
+    });
   }
 
   function reportStackSegments(byCat) {
@@ -1446,6 +1515,11 @@
   }
 
   var reportChartAnimGen = 0;
+  var lastReportChartWindowStart = null;
+  var reportChartPickLockUntil = 0;
+  var reportChartLastPickAt = 0;
+  var reportChartLastPickKey = '';
+  var reportChartBlockClickUntil = 0;
 
   function reportChartLayout(monthCount, containerW) {
     var padL = 10;
@@ -1462,22 +1536,6 @@
     var fits = chartW <= cw + 1;
     if (fits && chartW < cw) chartW = cw;
     return { padL: padL, padR: padR, padT: padT, padB: padB, chartH: chartH, barGap: barGap, barW: barW, chartW: chartW, fits: fits };
-  }
-
-  function scrollReportChartToSelection(scrollEl, layout, monthKey) {
-    if (!scrollEl || !layout || !monthKey) return;
-    requestAnimationFrame(function () {
-      var hit = scrollEl.querySelector('[data-report-month="' + monthKey + '"]');
-      if (!hit) return;
-      if (layout.fits) {
-        scrollEl.scrollLeft = 0;
-        return;
-      }
-      var barX = parseFloat(hit.getAttribute('x') || '0');
-      var barW = parseFloat(hit.getAttribute('width') || '0');
-      var target = barX + barW - scrollEl.clientWidth + layout.padR + 8;
-      scrollEl.scrollLeft = Math.max(0, Math.min(target, scrollEl.scrollWidth - scrollEl.clientWidth));
-    });
   }
 
   function buildReportChartSvg(months, selY, selM, progress, layout) {
@@ -1534,21 +1592,44 @@
     return svg;
   }
 
-  function animateReportChart(months, selY, selM, scrollEl) {
+  function runReportChartWindowAnim(wrap, dir) {
+    if (!wrap || !dir || prefersReducedMotion()) return;
+    wrap.classList.remove('report-chart-window-anim', 'report-chart-window-left', 'report-chart-window-right');
+    wrap.classList.add('report-chart-window-anim', dir > 0 ? 'report-chart-window-right' : 'report-chart-window-left');
+    window.setTimeout(function () {
+      wrap.classList.remove('report-chart-window-anim', 'report-chart-window-left', 'report-chart-window-right');
+    }, 180);
+  }
+
+  function animateReportChart(months, selY, selM, scrollEl, windowAnimDir) {
     var wrap = document.getElementById('reportChartSvgWrap');
     if (!wrap) return;
     var containerW = scrollEl ? scrollEl.clientWidth : 300;
     var layout = reportChartLayout(months.length, containerW);
-    var selKey = reportMonthKey(selY, selM);
     reportChartAnimGen += 1;
     var gen = reportChartAnimGen;
+    runReportChartWindowAnim(wrap, windowAnimDir);
     function afterDraw() {
-      scrollReportChartToSelection(scrollEl, layout, selKey);
+      if (scrollEl) scrollEl.scrollLeft = 0;
     }
     runChartAnim(420, function (t) {
       if (gen !== reportChartAnimGen) return;
       wrap.innerHTML = buildReportChartSvg(months, selY, selM, t, layout);
     }, afterDraw);
+  }
+
+  function selectReportMonthFromChart(monthKey) {
+    var now = Date.now();
+    if (now < reportChartPickLockUntil) return;
+    if (monthKey === reportChartLastPickKey && now - reportChartLastPickAt < 450) return;
+    if ($reportMonth.value === monthKey) return;
+    reportChartPickLockUntil = now + 450;
+    reportChartBlockClickUntil = now + 650;
+    reportChartLastPickKey = monthKey;
+    reportChartLastPickAt = now;
+    $reportMonth.value = monthKey;
+    updateMonthPillLabels();
+    renderReport();
   }
 
   function sortReportTransactions(list, sort) {
@@ -1671,12 +1752,18 @@
   function wireReportBody() {
     if (reportBodyWired || !$reportBody) return;
     reportBodyWired = true;
-    $reportBody.addEventListener('click', function (e) {
+    $reportBody.addEventListener('pointerup', function (e) {
+      if (e.pointerType === 'mouse' && e.button !== 0) return;
       var monthHit = e.target.closest('[data-report-month]');
-      if (monthHit && monthHit.dataset.reportMonth) {
-        $reportMonth.value = monthHit.dataset.reportMonth;
-        updateMonthPillLabels();
-        renderReport();
+      if (!monthHit || !monthHit.dataset.reportMonth) return;
+      e.preventDefault();
+      e.stopPropagation();
+      selectReportMonthFromChart(monthHit.dataset.reportMonth);
+    }, true);
+    $reportBody.addEventListener('click', function (e) {
+      if (Date.now() < reportChartBlockClickUntil && e.target.closest('[data-report-month]')) {
+        e.preventDefault();
+        e.stopPropagation();
         return;
       }
       var rangeBtn = e.target.closest('[data-report-range]');
@@ -2887,8 +2974,15 @@
     else { var now = new Date(); y = now.getFullYear(); m = now.getMonth(); }
     var data = getSummaryData(y, m);
     var rangeMonths = uiState.reportChartMonths === 12 ? 12 : 6;
-    var series = getReportMonthSeries(y, m, rangeMonths);
+    var nowDt = new Date();
+    var series = buildReportMonthSeries(y, m, rangeMonths, nowDt);
     var txSort = uiState.reportTxSort || 'latest';
+    var windowStartIdx = series.length ? ymToIndex(series[0].y, series[0].m) : null;
+    var windowAnimDir = 0;
+    if (lastReportChartWindowStart !== null && windowStartIdx !== null && lastReportChartWindowStart !== windowStartIdx) {
+      windowAnimDir = windowStartIdx > lastReportChartWindowStart ? 1 : -1;
+    }
+    if (windowStartIdx !== null) lastReportChartWindowStart = windowStartIdx;
 
     var html = '';
     html += '<div class="card report-chart-card">';
@@ -2965,7 +3059,7 @@
     html += '</div>';
     $reportBody.innerHTML = html;
     var scrollEl = document.getElementById('reportChartScroll');
-    animateReportChart(series, y, m, scrollEl);
+    animateReportChart(series, y, m, scrollEl, windowAnimDir);
     refreshIconObservers($reportBody);
   }
 
@@ -4809,6 +4903,16 @@
 
   $summaryMonth.addEventListener('change', function () { renderTotals(); renderMonthlySummary(); });
   $reportMonth.addEventListener('change', renderReport);
+  (function () {
+    var backdrop = $('reportMonthBackdrop');
+    if (!$reportMonth || !backdrop) return;
+    function showBackdrop() { backdrop.hidden = false; }
+    function hideBackdrop() {
+      window.setTimeout(function () { backdrop.hidden = true; }, 200);
+    }
+    $reportMonth.addEventListener('focus', showBackdrop);
+    $reportMonth.addEventListener('blur', hideBackdrop);
+  })();
   $reportExportPdfBtn.addEventListener('click', function () { window.print(); });
 
   $yearSelect.addEventListener('change', function () {
