@@ -120,15 +120,7 @@
     if (!entry || entry.accountId !== checkingId) return 0;
     var amt = typeof entry.amount === 'number' ? entry.amount : 0;
     if (amt <= 0) return 0;
-    if (isOtherAccountTransfer(entry)) {
-      return isDepositEntry(entry) ? amt : -amt;
-    }
-    if (entry.isTransfer) {
-      if (pairedIds[entry.id]) return -amt;
-      return 0;
-    }
-    if (isDepositEntry(entry)) return amt;
-    return -amt;
+    return isDepositEntry(entry) ? amt : -amt;
   }
 
   function projectedStartingBalance(balance, balanceAsOfMs, entries, checkingId, transferPairs, nowMs) {

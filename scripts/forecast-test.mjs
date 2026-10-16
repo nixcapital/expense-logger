@@ -164,6 +164,78 @@ console.log('forecast-test: other-account transfer delta');
 var xferOut = entry('x1', 200, 'Transfer to savings', ts(2026, 9, 1), { isTransfer: true, transferKind: 'other' });
 assert.strictEqual(FC.entryCheckingDelta(xferOut, CHECKING, {}), -200);
 
+console.log('forecast-test: checking cash math by entry sign (not pair status)');
+var discoverUnpaired = entry('disc1', 412.5, 'DISCOVER E-PAYMENT', ts(2026, 9, 10), { isTransfer: true, categoryId: 'transfer' });
+assert.strictEqual(FC.entryCheckingDelta(discoverUnpaired, CHECKING, {}), -412.5, 'unpaired card autopay debit moves checking');
+var asOfDiscover = FC.startOfDay(ts(2026, 9, 1));
+var rolledDiscover = FC.projectedStartingBalance(
+  5000,
+  asOfDiscover,
+  [discoverUnpaired],
+  CHECKING,
+  [],
+  FC.startOfDay(ts(2026, 9, 16))
+);
+assert.strictEqual(rolledDiscover, 5000 - 412.5, 'unpaired discover reduces rolled-forward balance');
+
+var chasePayChecking = entry('chpay-b', 800, 'CHASE CREDIT CRD AUTOPAY', ts(2026, 9, 8), { isTransfer: true, categoryId: 'transfer' });
+var chasePayCard = {
+  id: 'chpay-c',
+  amount: 800,
+  note: 'Payment Thank You',
+  ts: ts(2026, 9, 7),
+  accountId: CHASE,
+  categoryId: 'transfer',
+  isTransfer: true,
+  isDeposit: true
+};
+var chasePairs = [{ id: 'pair-ch', entryIds: ['chpay-b', 'chpay-c'], unlinked: false }];
+var chasePairedMap = { 'chpay-b': true, 'chpay-c': true };
+assert.strictEqual(FC.entryCheckingDelta(chasePayChecking, CHECKING, chasePairedMap), -800);
+assert.strictEqual(FC.entryCheckingDelta(chasePayCard, CHECKING, chasePairedMap), 0, 'card leg does not move checking');
+var rolledChase = FC.projectedStartingBalance(
+  5000,
+  asOfDiscover,
+  [chasePayChecking, chasePayCard],
+  CHECKING,
+  chasePairs,
+  FC.startOfDay(ts(2026, 9, 16))
+);
+assert.strictEqual(rolledChase, 4200, 'paired chase payment deducted once from checking');
+
+var chasePurchase = {
+  id: 'ch-pur',
+  amount: 120,
+  note: 'AMAZON',
+  ts: ts(2026, 9, 5),
+  accountId: CHASE,
+  categoryId: 'shopping',
+  isTransfer: false
+};
+assert.strictEqual(FC.entryCheckingDelta(chasePurchase, CHECKING, {}), 0, 'card purchase has no checking effect');
+
+var xferInChecking = entry('xfer-in-b', 350, 'Transfer from savings', ts(2026, 9, 4), {
+  isTransfer: true,
+  isDeposit: true,
+  categoryId: 'transfer'
+});
+var xferInOther = {
+  id: 'xfer-in-o',
+  amount: 350,
+  note: 'Transfer to checking',
+  ts: ts(2026, 9, 4),
+  accountId: 'acct-savings',
+  isTransfer: true,
+  transferKind: 'other',
+  categoryId: 'transfer'
+};
+var xferInPairs = [{ id: 'pair-in', entryIds: ['xfer-in-b', 'xfer-in-o'], unlinked: false }];
+assert.strictEqual(
+  FC.entryCheckingDelta(xferInChecking, CHECKING, { 'xfer-in-b': true, 'xfer-in-o': true }),
+  350,
+  'paired deposit into checking adds'
+);
+
 console.log('forecast-test: override targets tapped occurrence');
 var nowFix = ts(2026, 9, 16);
 var itemKey = 'dukeenergy';
