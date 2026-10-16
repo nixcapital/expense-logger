@@ -53,7 +53,7 @@
   var TRANSFER_PATTERNS_KEY = 'expenseLogger.transferPatterns.v1';
   var FORECAST_OVERRIDES_KEY = 'expenseLogger.forecastOverrides.v1';
 
-  var APP_VERSION = '1.6.3';
+  var APP_VERSION = '1.6.4';
   var BACKUP_FORMAT = 2;
   var BACKUP_FORMAT_LEGACY = 1;
   var DEFAULT_ACCOUNT_CHECKING = 'acct-checking';
@@ -6179,8 +6179,12 @@
 
   function fmtForecastMoneyShort(n) {
     var v = Math.round(n);
-    if (Math.abs(v) >= 1000) return '$' + (v / 1000).toFixed(v % 1000 === 0 ? 0 : 1).replace(/\.0$/, '') + 'k';
-    return '$' + v;
+    var sign = v < 0 ? '-' : '';
+    var abs = Math.abs(v);
+    if (abs >= 1000) {
+      return sign + '$' + (abs / 1000).toFixed(abs % 1000 === 0 ? 0 : 1).replace(/\.0$/, '') + 'k';
+    }
+    return sign + '$' + abs;
   }
 
   function renderHomeForecastCard() {
@@ -6235,9 +6239,13 @@
     forecastScreenOpen = true;
     if ($('tab-summary')) $('tab-summary').hidden = true;
     var fs = $('tab-forecast');
-    if (fs) fs.hidden = false;
+    if (fs) {
+      fs.hidden = false;
+      fs.scrollTop = 0;
+    }
     renderForecastScreen();
-    window.scrollTo(0, 0);
+    if (fs) fs.scrollTop = 0;
+    try { window.scrollTo(0, 0); } catch (e) {}
   }
 
   function renderForecastScreen() {
@@ -6299,6 +6307,8 @@
     }
     if ($('forecastUpcomingWindow')) $('forecastUpcomingWindow').textContent = 'Next ' + forecastChartDays + ' days';
     if ($('forecastUpcomingLabel')) $('forecastUpcomingLabel').textContent = 'Upcoming \u00B7 ' + accountShortName(checking);
+    var noIncEl = $('forecastNoIncome');
+    if (noIncEl) noIncEl.hidden = !result.noIncomeDetected;
 
     var sim = FC.simulateBalanceTimeline({
       nowMs: payload.nowMs,
@@ -6363,17 +6373,11 @@
       if (p.balance < dataMin) dataMin = p.balance;
       if (p.balance > dataMax) dataMax = p.balance;
     });
-    var span = Math.max(80, dataMax - dataMin);
-    var cushionNear = cushion >= dataMin - span * 0.25 && cushion <= dataMax + span * 0.2;
-    if (cushionNear) {
-      dataMin = Math.min(dataMin, cushion);
-      dataMax = Math.max(dataMax, cushion);
-    }
-    var step = FC.forecastChartAxisStep(dataMax - dataMin);
-    var minBal = Math.floor((dataMin - step * 0.35) / step) * step;
-    var maxBal = Math.ceil((dataMax + step * 0.35) / step) * step;
-    if (maxBal - minBal < step * 2) maxBal = minBal + step * 2;
-    if (minBal < 0 && dataMin >= 0) minBal = 0;
+    var yScale = FC.computeForecastChartYScale(dataMin, dataMax, { cushion: cushion });
+    var minBal = yScale.minBal;
+    var maxBal = yScale.maxBal;
+    var step = yScale.step;
+    var cushionNear = yScale.cushionNear;
     var t0 = points[0].ts;
     var t1 = points[points.length - 1].ts;
     function xAt(ts) { return padL + ((ts - t0) / (t1 - t0 || 1)) * w; }
@@ -6446,6 +6450,7 @@
       step: step,
       cushion: cushion,
       cushionNear: cushionNear,
+      crossesZero: yScale.crossesZero,
       padT: padT,
       innerH: h,
       baselineNudge: 4
@@ -6549,6 +6554,17 @@
     var list = $('forecastUpcomingList');
     if (!list || !sim) return;
     var html = '';
+    var daily = sim.dailySpend || 0;
+    var chartDays = sim.chartDays || forecastChartDays;
+    if (daily > 0) {
+      var dailyTotal = Math.round(daily * chartDays * 100) / 100;
+      html += '<div class="forecast-up-row forecast-up-row--summary">';
+      html += '<div class="forecast-up-icon" style="background:var(--raised);color:var(--text-dim)">';
+      html += '<svg width="18" height="18" viewBox="0 0 18 18" fill="none"><path d="M3 9h12M9 4v10" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg></div>';
+      html += '<div><p class="forecast-up-title">Everyday spending</p>';
+      html += '<p class="forecast-up-sub">~' + fmtMoneyDisplay(daily) + '/day \u00B7 -' + fmtMoneyDisplay(dailyTotal) + ' over this view</p></div>';
+      html += '<div class="forecast-up-amt-col"><div class="forecast-up-amt">-' + fmtMoneyDisplay(dailyTotal) + '</div></div></div>';
+    }
     var items = sim.upcoming.slice().sort(function (a, b) {
       if (b.amount !== a.amount) return b.amount - a.amount;
       return a.ts - b.ts;
@@ -6616,6 +6632,15 @@
       }
       html += '</div></button>';
     });
+    var peek = sim.peekPastWindow;
+    if (peek) {
+      html += '<div class="forecast-up-row forecast-up-row--past">';
+      html += '<div class="forecast-up-icon" style="background:var(--raised);color:var(--text-secondary)">';
+      html += '<svg width="18" height="18" viewBox="0 0 18 18" fill="none"><path d="M4 9h10M11 5l3 4-3 4" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg></div>';
+      html += '<div><p class="forecast-up-title">' + escHtml(peek.label) + '</p>';
+      html += '<p class="forecast-up-sub is-muted">' + escHtml(formatForecastShortDate(peek.ts)) + ' \u00B7 just past this view</p></div>';
+      html += '<div class="forecast-up-amt-col"><div class="forecast-up-amt">-' + fmtMoneyDisplay(peek.amount) + '</div></div></div>';
+    }
     list.innerHTML = html;
     Array.prototype.forEach.call(list.querySelectorAll('[data-forecast-item]'), function (btn) {
       btn.addEventListener('click', function () {

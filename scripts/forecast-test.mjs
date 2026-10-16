@@ -4,6 +4,7 @@
  */
 import { createRequire } from 'module';
 import assert from 'assert';
+import { buildForecastFixture164, FIXTURE_NOW } from './forecast-fixture-164.mjs';
 
 const require = createRequire(import.meta.url);
 const FC = require('../forecast.js');
@@ -221,18 +222,20 @@ assert.ok(chartBal, 'chart point on rent day exists');
 assert.strictEqual(rentRow.balanceAfter, chartBal.balance);
 
 console.log('forecast-test: y-axis hides tick near $600 cushion');
+var yScaleCush = FC.computeForecastChartYScale(200, 2400, { cushion: 600 });
 var axisPlan = FC.planForecastChartYAxisLabels({
-  minBal: 0,
-  maxBal: 2500,
-  step: 500,
+  minBal: yScaleCush.minBal,
+  maxBal: yScaleCush.maxBal,
+  step: yScaleCush.step,
   cushion: 600,
-  cushionNear: true,
+  cushionNear: yScaleCush.cushionNear,
+  crossesZero: yScaleCush.crossesZero,
   padT: 12,
   innerH: 162,
   baselineNudge: 4
 });
 assert.strictEqual(FC.yAxisLabelsCollide(axisPlan), false);
-assert.ok(axisPlan.hidden.some(function (h) { return h.bal === 500; }), '500 tick hidden near 600 cushion');
+assert.ok(axisPlan.labels.length <= 6, 'at most 6 y labels with cushion');
 assert.ok(axisPlan.labels.some(function (l) { return l.isCushion && l.bal === 600; }));
 
 console.log('forecast-test: y-axis plan across chart windows');
@@ -259,16 +262,41 @@ console.log('forecast-test: y-axis plan across chart windows');
   var spanW = Math.max(80, dMax - dMin);
   var near = 600 >= dMin - spanW * 0.25 && 600 <= dMax + spanW * 0.2;
   if (near) {
-    var dMinA = Math.min(dMin, 600);
-    var dMaxA = Math.max(dMax, 600);
-    var stepW = FC.forecastChartAxisStep(dMaxA - dMinA);
-    var minB = Math.floor((dMinA - stepW * 0.35) / stepW) * stepW;
-    var maxB = Math.ceil((dMaxA + stepW * 0.35) / stepW) * stepW;
+    var scaleW = FC.computeForecastChartYScale(dMin, dMax, { cushion: 600 });
     var planW = FC.planForecastChartYAxisLabels({
-      minBal: minB, maxBal: maxB, step: stepW, cushion: 600, cushionNear: true, padT: 12, innerH: 162
+      minBal: scaleW.minBal,
+      maxBal: scaleW.maxBal,
+      step: scaleW.step,
+      cushion: 600,
+      cushionNear: scaleW.cushionNear,
+      crossesZero: scaleW.crossesZero,
+      padT: 12,
+      innerH: 162
     });
     assert.strictEqual(FC.yAxisLabelsCollide(planW), false, 'window ' + days + 'd');
+    assert.ok(planW.labels.length <= 6, 'label count window ' + days + 'd');
   }
+});
+
+console.log('forecast-test: y-axis large ranges crossing zero');
+[
+  { min: -10000, max: 9000, label: '9k-to--10k' },
+  { min: -34000, max: 3500, label: '3.5k-to--34k' }
+].forEach(function (case_) {
+  var sc = FC.computeForecastChartYScale(case_.min, case_.max, { cushion: 600 });
+  var planL = FC.planForecastChartYAxisLabels({
+    minBal: sc.minBal,
+    maxBal: sc.maxBal,
+    step: sc.step,
+    cushion: 600,
+    cushionNear: sc.cushionNear,
+    crossesZero: sc.crossesZero,
+    padT: 12,
+    innerH: 162
+  });
+  assert.ok(planL.labels.length <= 6, case_.label + ' label count');
+  assert.strictEqual(FC.yAxisLabelsCollide(planL), false, case_.label + ' collisions');
+  assert.ok(planL.labels.some(function (l) { return l.bal === 0; }), case_.label + ' includes zero');
 });
 
 console.log('forecast-test: projected balance ignores future-dated entries');
@@ -306,5 +334,86 @@ var badForecast = FC.runForecast({
 });
 assert.ok(badForecast && typeof badForecast.ok === 'boolean', 'invalid ts must not throw');
 assert.ok(!FC.isBankHoliday(NaN), 'NaN ts is not a bank holiday');
+
+console.log('forecast-test: 1.6.4 owner-shaped fake fixture');
+const fx = buildForecastFixture164();
+const fxRun = FC.runForecast({
+  nowMs: fx.nowMs,
+  checkingId: fx.checkingId,
+  chaseId: fx.chaseId,
+  balance: fx.balance,
+  balanceAsOfMs: fx.nowMs,
+  entries: fx.entries,
+  transferPairs: fx.transferPairs,
+  chartDays: 30,
+  maxLookaheadDays: 365,
+  cushion: 600
+});
+assert.ok(fxRun.ok, 'fixture forecast ok');
+assert.ok(fxRun.dailySpend < 20, 'daily spend ~small, got ' + fxRun.dailySpend);
+assert.strictEqual(fxRun.noIncomeDetected, true, 'no income flag');
+
+function schedAmt(labelRe) {
+  const s = (fxRun.schedules || []).find((x) => labelRe.test(x.label));
+  return s;
+}
+function nextOccurrence(sched) {
+  return FC.expandSchedule(sched, FIXTURE_NOW, FC.addDays(FIXTURE_NOW, 120))[0];
+}
+
+const mort = schedAmt(/MORTGAGE/i);
+assert.ok(mort && mort.amount === 1117, 'mortgage latest amount');
+const mortNext = nextOccurrence(mort);
+assert.ok(mortNext && mortNext.amount === 1117);
+assert.ok(new Date(mortNext.ts).getDate() <= 3, 'mortgage near 1st with weekend shift');
+
+assert.ok(schedAmt(/TOYOTA/i).amount === 385);
+assert.ok(schedAmt(/TUITION/i).amount === 450);
+assert.ok(schedAmt(/NELNET/i).amount === 220);
+assert.ok(schedAmt(/STATE FARM/i).scheduleType === 'semiannual');
+assert.ok(schedAmt(/VERIZON/i).amount === 166);
+assert.ok(!schedAmt(/PLANET FITNESS/i), 'stale gym not projected');
+assert.ok(schedAmt(/DISCOVER/i), 'discover e-payment projected');
+
+const chase = schedAmt(/Chase card/i);
+assert.ok(chase && chase.amount >= 3500);
+
+const fxSim = FC.simulateBalanceTimeline({
+  nowMs: fx.nowMs,
+  startingBalance: fxRun.startingBalance,
+  entries: fx.entries,
+  checkingId: fx.checkingId,
+  chaseId: fx.chaseId,
+  transferPairs: fx.transferPairs,
+  chartDays: 30,
+  cushion: 600
+});
+assert.ok(fxSim.lowestInWindow.balance > -25000 && fxSim.lowestInWindow.balance < 5000, '30d low sane');
+
+console.log('forecast-test: fixture with biweekly paychecks stays positive');
+const fxPay = buildForecastFixture164({ withIncome: true, balance: 12000 });
+const payRun = FC.runForecast({
+  nowMs: fxPay.nowMs,
+  checkingId: fxPay.checkingId,
+  chaseId: fxPay.chaseId,
+  balance: fxPay.balance,
+  balanceAsOfMs: fxPay.nowMs,
+  entries: fxPay.entries,
+  transferPairs: fxPay.transferPairs,
+  chartDays: 60,
+  cushion: 600
+});
+assert.strictEqual(payRun.noIncomeDetected, false);
+const paySim = FC.simulateBalanceTimeline({
+  nowMs: fxPay.nowMs,
+  startingBalance: payRun.startingBalance,
+  entries: fxPay.entries,
+  checkingId: fxPay.checkingId,
+  chaseId: fxPay.chaseId,
+  transferPairs: fxPay.transferPairs,
+  chartDays: 60,
+  cushion: 600
+});
+assert.ok(paySim.lowestInWindow.balance >= 0, 'with paychecks 60d window stays positive');
 
 console.log('PASS');

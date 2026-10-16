@@ -187,6 +187,282 @@
     return sum / slice.length;
   }
 
+  function amountTolerance(amt, wide) {
+    return amountToleranceFrac(amt, wide ? 0.15 : 0.10);
+  }
+
+  function amountToleranceFrac(amt, frac) {
+    return Math.max(5, amt * frac);
+  }
+
+  function isP2PNote(note) {
+    var n = normText(note || '');
+    return /\bvenmo\b/.test(n) || /\bzelle\b/.test(n) || /\bcash app\b/.test(n) || /\bpaypal\b/.test(n);
+  }
+
+  function p2pScheduleAllowed(list) {
+    var bills = (list || []).filter(function (e) { return e.categoryId === 'bills'; });
+    if (bills.length < 3) return false;
+    var amounts = bills.map(function (e) { return e.amount; });
+    var med = median(amounts);
+    var same = bills.filter(function (e) {
+      return Math.abs(e.amount - med) <= amountToleranceFrac(med, 0.10);
+    });
+    return same.length >= 3;
+  }
+
+  function projectedClusterAmount(cluster) {
+    var sorted = cluster.slice().sort(function (a, b) { return a.ts - b.ts; });
+    var recent = sorted.slice(-Math.min(3, sorted.length));
+    return median(recent.map(function (e) { return e.amount; }));
+  }
+
+  function clusterRowKey(e) {
+    return e.id != null ? String(e.id) : String(e.ts) + ':' + e.amount;
+  }
+
+  function clusterRowKeys(cluster) {
+    return cluster.map(clusterRowKey);
+  }
+
+  function clusterIsSubset(smaller, larger) {
+    var set = {};
+    larger.forEach(function (e) { set[clusterRowKey(e)] = true; });
+    return smaller.every(function (e) { return set[clusterRowKey(e)]; });
+  }
+
+  function clusterOverlapRatio(a, b) {
+    var setB = {};
+    b.forEach(function (e) { setB[clusterRowKey(e)] = true; });
+    var shared = 0;
+    a.forEach(function (e) {
+      if (setB[clusterRowKey(e)]) shared++;
+    });
+    return shared / Math.min(a.length, b.length);
+  }
+
+  function clusterLatestTs(cluster) {
+    var max = cluster[0].ts;
+    cluster.forEach(function (e) { if (e.ts > max) max = e.ts; });
+    return max;
+  }
+
+  function dedupeOverlappingClusters(candidates) {
+    var sorted = candidates.slice().sort(function (a, b) {
+      if (b.cluster.length !== a.cluster.length) return b.cluster.length - a.cluster.length;
+      return clusterLatestTs(b.cluster) - clusterLatestTs(a.cluster);
+    });
+    var kept = [];
+    sorted.forEach(function (c) {
+      var drop = kept.some(function (k) {
+        return clusterIsSubset(c.cluster, k.cluster)
+          || clusterOverlapRatio(c.cluster, k.cluster) >= 0.66;
+      });
+      if (drop) return;
+      kept = kept.filter(function (k) {
+        return !clusterIsSubset(k.cluster, c.cluster);
+      });
+      kept.push(c);
+    });
+    return kept;
+  }
+
+  function fitTwoPaymentMonthly(ts, isInflow) {
+    if (!ts || ts.length !== 2) return null;
+    var sorted = ts.map(startOfDay).sort(function (a, b) { return a - b; });
+    var gapOnly = Math.round((sorted[1] - sorted[0]) / MS_DAY);
+    if (gapOnly < 27 || gapOnly > 35) return null;
+    var domOnly = Math.round(median(sorted.map(function (t) { return new Date(t).getDate(); })));
+    var shiftOnly = learnShiftRule(sorted, function (y, m) {
+      var dim = new Date(y, m + 1, 0).getDate();
+      return dateMs(y, m, Math.min(domOnly, dim));
+    });
+    return {
+      scheduleType: 'monthly_dom',
+      dayOfMonth: domOnly,
+      shiftRule: shiftOnly || (isInflow ? 'prev' : 'next'),
+      inferenceDetail: 'Usually around the ' + ordinal(domOnly) + ' (2 posts — lower confidence)' + shiftHint(shiftOnly || (isInflow ? 'prev' : 'next')),
+      lastTs: sorted[1],
+      confidence: 'low'
+    };
+  }
+
+  function buildAmountClusters(sorted, tolFn) {
+    var clusters = [];
+    sorted.forEach(function (e) {
+      var placed = false;
+      for (var i = 0; i < clusters.length; i++) {
+        var cent = median(clusters[i].map(function (x) { return x.amount; }));
+        if (Math.abs(e.amount - cent) <= tolFn(cent)) {
+          clusters[i].push(e);
+          placed = true;
+          break;
+        }
+      }
+      if (!placed) clusters.push([e]);
+    });
+    return clusters.filter(function (c) { return c.length >= 2; });
+  }
+
+  function clusterCadenceScore(fit) {
+    if (!fit) return 0;
+    if (fit.scheduleType === 'monthly_dom' || fit.scheduleType === 'semimonthly') return 3;
+    if (fit.scheduleType === 'biweekly' || fit.scheduleType === 'weekly') return 2;
+    if (fit.scheduleType === 'quarterly' || fit.scheduleType === 'semiannual' || fit.scheduleType === 'annual') return 2;
+    return 1;
+  }
+
+  function pickScheduleClusters(list, isInflow) {
+    if (!list || list.length < 2) return [];
+    var sorted = list.slice().sort(function (a, b) { return a.ts - b.ts; });
+    var seenKeys = {};
+    var raw = [];
+    function addClusters(tolFn) {
+      buildAmountClusters(sorted, tolFn).forEach(function (cluster) {
+        cluster.sort(function (a, b) { return a.ts - b.ts; });
+        var rowSig = clusterRowKeys(cluster).sort().join(',');
+        if (seenKeys[rowSig]) return;
+        seenKeys[rowSig] = true;
+        var fit = fitSchedule(cluster.map(function (e) { return e.ts; }), isInflow);
+        if (!fit && cluster.length === 2) {
+          var amts = cluster.map(function (e) { return e.amount; });
+          if (Math.abs(amts[0] - amts[1]) <= 0.01) {
+            fit = fitTwoPaymentMonthly(cluster.map(function (e) { return e.ts; }), isInflow);
+          }
+        }
+        if (!fit) return;
+        var proj = Math.round(projectedClusterAmount(cluster) * 100) / 100;
+        raw.push({
+          cluster: cluster,
+          projectedAmount: proj,
+          fit: fit,
+          score: clusterCadenceScore(fit) * 1000 + cluster.length * 10 + cluster.reduce(function (s, e) { return s + e.amount; }, 0),
+          latestTs: clusterLatestTs(cluster)
+        });
+      });
+    }
+    addClusters(function (a) { return amountToleranceFrac(a, 0.10); });
+    addClusters(function (a) { return amountToleranceFrac(a, 0.15); });
+    addClusters(function (a) { return amountToleranceFrac(a, 0.30); });
+    var deduped = dedupeOverlappingClusters(raw);
+    deduped.sort(function (a, b) {
+      if (b.latestTs !== a.latestTs) return b.latestTs - a.latestTs;
+      return b.score - a.score;
+    });
+    var usedRows = {};
+    var out = [];
+    var hasLargeCluster = deduped.some(function (c) { return c.cluster.length >= 3; });
+    deduped.forEach(function (c) {
+      if (c.cluster.some(function (e) { return usedRows[clusterRowKey(e)]; })) return;
+      if (c.fit.scheduleType === 'monthly_dom' && c.cluster.length === 2) {
+        var a0 = c.cluster[0].amount;
+        var a1 = c.cluster[1].amount;
+        if (Math.abs(a0 - a1) > 0.01) return;
+        if (hasLargeCluster) return;
+      }
+      c.cluster.forEach(function (e) { usedRows[clusterRowKey(e)] = true; });
+      out.push(c);
+    });
+    return out;
+  }
+
+  function pickScheduleCluster(list) {
+    var multi = pickScheduleClusters(list, false);
+    return multi.length ? { cluster: multi[0].cluster, projectedAmount: multi[0].projectedAmount } : null;
+  }
+
+  function scheduleItemKey(merchantKey, amount) {
+    return merchantKey + '|a' + Math.round(amount * 100);
+  }
+
+  function entryMatchesScheduleRow(e, schedule) {
+    var mk = descriptionKey(e.note || '');
+    if (schedule.merchantKey && mk !== schedule.merchantKey) return false;
+    var tol = amountToleranceFrac(schedule.amount,
+      schedule.scheduleType === 'semiannual' || schedule.scheduleType === 'annual' ? 0.15 : 0.10);
+    return Math.abs(e.amount - schedule.amount) <= tol;
+  }
+
+  function schedulePeriodMs(scheduleType) {
+    if (scheduleType === 'weekly') return 7 * MS_DAY;
+    if (scheduleType === 'biweekly') return 14 * MS_DAY;
+    if (scheduleType === 'semimonthly') return 15 * MS_DAY;
+    if (scheduleType === 'quarterly') return 91 * MS_DAY;
+    if (scheduleType === 'semiannual') return 182 * MS_DAY;
+    if (scheduleType === 'annual') return 365 * MS_DAY;
+    return 30 * MS_DAY;
+  }
+
+  function paymentPostedInCycle(entries, checkingId, schedule, projectedTs) {
+    if (!entries || !schedule) return false;
+    var period = schedulePeriodMs(schedule.scheduleType);
+    var windowStart = addDays(projectedTs, -Math.round(period / MS_DAY / 2));
+    var projDay = startOfDay(projectedTs);
+    var tol = amountToleranceFrac(schedule.amount,
+      schedule.scheduleType === 'semiannual' || schedule.scheduleType === 'annual' ? 0.15 : 0.10);
+    var found = false;
+    (entries || []).forEach(function (e) {
+      if (found) return;
+      if (e.accountId !== checkingId) return;
+      var ets = startOfDay(e.ts);
+      if (ets < windowStart || ets > projDay) return;
+      if (!entryMatchesScheduleRow(e, schedule)) return;
+      found = true;
+    });
+    return found;
+  }
+
+  function domDaySpread(doms) {
+    if (!doms.length) return 99;
+    var min = doms[0];
+    var max = doms[0];
+    doms.forEach(function (d) {
+      if (d < min) min = d;
+      if (d > max) max = d;
+    });
+    return max - min;
+  }
+
+  function scheduleStale(lastTs, nowMs, scheduleType) {
+    if (!validMs(lastTs) || !validMs(nowMs)) return true;
+    var gap = nowMs - startOfDay(lastTs);
+    var maxGap;
+    if (scheduleType === 'weekly') maxGap = 14 * MS_DAY;
+    else if (scheduleType === 'biweekly') maxGap = 28 * MS_DAY;
+    else if (scheduleType === 'semimonthly') maxGap = 35 * MS_DAY;
+    else if (scheduleType === 'quarterly') maxGap = 200 * MS_DAY;
+    else if (scheduleType === 'semiannual') maxGap = 400 * MS_DAY;
+    else if (scheduleType === 'annual') maxGap = 760 * MS_DAY;
+    else maxGap = 62 * MS_DAY;
+    return gap > maxGap;
+  }
+
+  function addCalendarMonths(y, m, add) {
+    var total = y * 12 + m + add;
+    return { y: Math.floor(total / 12), m: ((total % 12) + 12) % 12 };
+  }
+
+  function isUnpairedCheckingTransfer(entry, paired) {
+    if (!entry || entry.isTransfer === false) return false;
+    if (isDepositEntry(entry)) return false;
+    if (isOtherAccountTransfer(entry)) return false;
+    if (paired && paired[entry.id]) return false;
+    return true;
+  }
+
+  function hasCheckingIncome(entries, checkingId, sinceMs, nowMs) {
+    var found = false;
+    (entries || []).forEach(function (e) {
+      if (found) return;
+      if (e.accountId !== checkingId) return;
+      if (!isDepositEntry(e) || e.isTransfer) return;
+      if (sinceMs != null && e.ts < sinceMs) return;
+      if (nowMs != null && startOfDay(e.ts) > nowMs) return;
+      found = true;
+    });
+    return found;
+  }
+
   function ordinal(n) {
     var s = ['th', 'st', 'nd', 'rd'];
     var v = n % 100;
@@ -339,21 +615,6 @@
     var ts = timestamps.map(startOfDay).sort(function (a, b) { return a - b; });
     if (ts.length === 2) {
       var gapOnly = Math.round((ts[1] - ts[0]) / MS_DAY);
-      if (gapOnly >= 27 && gapOnly <= 35) {
-        var domOnly = Math.round(median(ts.map(function (t) { return new Date(t).getDate(); })));
-        var shiftOnly = learnShiftRule(ts, function (y, m) {
-          var dim = new Date(y, m + 1, 0).getDate();
-          return dateMs(y, m, Math.min(domOnly, dim));
-        });
-        return {
-          scheduleType: 'monthly_dom',
-          dayOfMonth: domOnly,
-          shiftRule: shiftOnly || (isInflow ? 'prev' : 'next'),
-          inferenceDetail: 'Usually around the ' + ordinal(domOnly) + ' (2 posts — lower confidence)' + shiftHint(shiftOnly || (isInflow ? 'prev' : 'next')),
-          lastTs: ts[1],
-          confidence: 'low'
-        };
-      }
       if (gapOnly >= 12 && gapOnly <= 18) {
         return {
           scheduleType: 'biweekly',
@@ -361,6 +622,42 @@
           shiftRule: isInflow ? 'prev' : 'next',
           inferenceDetail: 'Every 2 weeks (2 posts — lower confidence)' + shiftHint(isInflow ? 'prev' : 'next'),
           lastTs: ts[1],
+          confidence: 'low'
+        };
+      }
+      if (gapOnly >= 165 && gapOnly <= 200) {
+        var dom2s = Math.round(median(ts.map(function (t) { return new Date(t).getDate(); })));
+        var shift2s = learnShiftRule(ts, function (y, m) {
+          var dim = new Date(y, m + 1, 0).getDate();
+          return dateMs(y, m, Math.min(dom2s, dim));
+        });
+        var last2s = ts[1];
+        var domLast2s = new Date(last2s).getDate();
+        return {
+          scheduleType: 'semiannual',
+          dayOfMonth: domLast2s,
+          anchorMs: last2s,
+          shiftRule: shift2s || 'next',
+          inferenceDetail: 'About every 6 months on the ' + ordinal(domLast2s) + ' (2 posts — lower confidence)' + shiftHint(shift2s || 'next'),
+          lastTs: last2s,
+          confidence: 'low'
+        };
+      }
+      if (gapOnly >= 350 && gapOnly <= 380) {
+        var shift2a = learnShiftRule(ts, function (y, m) {
+          var dim = new Date(y, m + 1, 0).getDate();
+          var dom2a = new Date(ts[1]).getDate();
+          return dateMs(y, m, Math.min(dom2a, dim));
+        });
+        var last2a = ts[1];
+        var domLast2a = new Date(last2a).getDate();
+        return {
+          scheduleType: 'annual',
+          dayOfMonth: domLast2a,
+          anchorMs: last2a,
+          shiftRule: shift2a || 'next',
+          inferenceDetail: 'About once a year on the ' + ordinal(domLast2a) + ' (2 posts — lower confidence)' + shiftHint(shift2a || 'next'),
+          lastTs: last2a,
           confidence: 'low'
         };
       }
@@ -436,20 +733,38 @@
       };
     }
 
+    if (medGap >= 27 && medGap <= 33 && domDaySpread(doms) <= 3) {
+      var domT = Math.round(median(doms));
+      var shiftT = learnShiftRule(ts, function (y, m) {
+        var dim = new Date(y, m + 1, 0).getDate();
+        return dateMs(y, m, Math.min(domT, dim));
+      });
+      return {
+        scheduleType: 'monthly_dom',
+        dayOfMonth: domT,
+        shiftRule: shiftT,
+        inferenceDetail: 'Usually on the ' + ordinal(domT) + shiftHint(shiftT),
+        lastTs: ts[ts.length - 1]
+      };
+    }
+
     var dows = ts.map(function (t) { return new Date(t).getDay(); });
     var woms = ts.map(weekOfMonth);
-    if (mode(dows) === dows[0] && mode(woms) === woms[0] && medGap >= 25 && medGap <= 35) {
-      var n = mode(woms);
-      var wd = mode(dows);
+    var wdMode = mode(dows);
+    var womMode = mode(woms);
+    var nthWeekdayOk = medGap >= 25 && medGap <= 35 && domDaySpread(doms) > 3
+      && dows.every(function (d) { return d === wdMode; })
+      && woms.every(function (w) { return w === womMode; });
+    if (nthWeekdayOk) {
       var shiftN = learnShiftRule(ts, function (y, m) {
-        return nthWeekdayOfMonth(y, m, wd, n);
+        return nthWeekdayOfMonth(y, m, wdMode, womMode);
       });
       return {
         scheduleType: 'monthly_nth_weekday',
-        weekday: wd,
-        nth: n,
+        weekday: wdMode,
+        nth: womMode,
         shiftRule: shiftN,
-        inferenceDetail: ordinal(n) + ' ' + weekdayName(wd) + ' of the month' + shiftHint(shiftN),
+        inferenceDetail: ordinal(womMode) + ' ' + weekdayName(wdMode) + ' of the month' + shiftHint(shiftN),
         lastTs: ts[ts.length - 1]
       };
     }
@@ -466,6 +781,57 @@
         shiftRule: shiftM,
         inferenceDetail: 'Usually on the ' + ordinal(dom) + shiftHint(shiftM),
         lastTs: ts[ts.length - 1]
+      };
+    }
+
+    if (medGap >= 80 && medGap <= 100) {
+      var lastQ = ts[ts.length - 1];
+      var domQ = new Date(lastQ).getDate();
+      var shiftQ = learnShiftRule(ts, function (y, m) {
+        var dim = new Date(y, m + 1, 0).getDate();
+        return dateMs(y, m, Math.min(domQ, dim));
+      });
+      return {
+        scheduleType: 'quarterly',
+        dayOfMonth: domQ,
+        anchorMs: lastQ,
+        shiftRule: shiftQ,
+        inferenceDetail: 'About every 3 months on the ' + ordinal(domQ) + shiftHint(shiftQ),
+        lastTs: lastQ
+      };
+    }
+
+    if (medGap >= 165 && medGap <= 200) {
+      var lastS = ts[ts.length - 1];
+      var domS = new Date(lastS).getDate();
+      var shiftS = learnShiftRule(ts, function (y, m) {
+        var dim = new Date(y, m + 1, 0).getDate();
+        return dateMs(y, m, Math.min(domS, dim));
+      });
+      return {
+        scheduleType: 'semiannual',
+        dayOfMonth: domS,
+        anchorMs: lastS,
+        shiftRule: shiftS,
+        inferenceDetail: 'About every 6 months on the ' + ordinal(domS) + shiftHint(shiftS),
+        lastTs: lastS
+      };
+    }
+
+    if (medGap >= 350 && medGap <= 380) {
+      var lastA = ts[ts.length - 1];
+      var domA = new Date(lastA).getDate();
+      var shiftA = learnShiftRule(ts, function (y, m) {
+        var dim = new Date(y, m + 1, 0).getDate();
+        return dateMs(y, m, Math.min(domA, dim));
+      });
+      return {
+        scheduleType: 'annual',
+        dayOfMonth: domA,
+        anchorMs: lastA,
+        shiftRule: shiftA,
+        inferenceDetail: 'About once a year on the ' + ordinal(domA) + shiftHint(shiftA),
+        lastTs: lastA
       };
     }
 
@@ -506,42 +872,93 @@
     Object.keys(groups).forEach(function (key) {
       var list = groups[key].sort(function (a, b) { return a.ts - b.ts; });
       if (list.length < 2) return;
-      var amounts = list.map(function (e) { return e.amount; });
-      var medAmt = median(amounts);
-      var similar = list.filter(function (e) {
-        return Math.abs(e.amount - medAmt) <= Math.max(5, medAmt * 0.10);
+      if (isP2PNote(list[0].note) && !p2pScheduleAllowed(list)) return;
+      var isIn = isDepositEntry(list[list.length - 1]);
+      var pickedList = pickScheduleClusters(list, isIn);
+      pickedList.forEach(function (picked) {
+        var cluster = picked.cluster;
+        var sample = cluster[cluster.length - 1];
+        var projAmt = picked.projectedAmount;
+        var fit = picked.fit;
+        if (kind === 'inflow' && !isIn) return;
+        if (kind === 'outflow' && isIn) return;
+        if (kind === 'transfer-other' && !isOtherAccountTransfer(sample)) return;
+        if (kind === 'outflow' && projAmt < 25) return;
+        if (kind === 'transfer-other' && projAmt < 25) return;
+        if (nowMs != null && scheduleStale(fit.lastTs, nowMs, fit.scheduleType)) return;
+
+        out.push({
+          itemKey: scheduleItemKey(key, projAmt),
+          label: (sample.note || key).slice(0, 48),
+          amount: Math.round(projAmt * 100) / 100,
+          kind: isOtherAccountTransfer(sample) ? 'transfer-other' : (isIn ? 'inflow' : 'outflow'),
+          inflow: !!isIn,
+          categoryId: sample.categoryId,
+          scheduleType: fit.scheduleType,
+          dayOfMonth: fit.dayOfMonth,
+          daysOfMonth: fit.daysOfMonth,
+          anchorMs: fit.anchorMs,
+          weekday: fit.weekday,
+          nth: fit.nth,
+          shiftRule: fit.shiftRule,
+          inferenceDetail: fit.inferenceDetail,
+          lastTs: fit.lastTs,
+          confidence: fit.confidence || 'high',
+          merchantKey: key
+        });
       });
-      if (similar.length < 2) return;
-      var sample = similar[0];
-      var isIn = isDepositEntry(sample);
-      if (kind === 'inflow' && !isIn) return;
-      if (kind === 'outflow' && isIn) return;
-      if (kind === 'transfer-other' && !isOtherAccountTransfer(sample)) return;
-      if (kind === 'outflow' && medAmt < 25) return;
-      if (kind === 'transfer-other' && medAmt < 25) return;
-      var amtSpread = Math.max.apply(null, amounts) - Math.min.apply(null, amounts);
-      if ((kind === 'outflow' || kind === 'transfer-other') && amtSpread > Math.max(5, medAmt * 0.10)) return;
+    });
+    return out;
+  }
 
-      var fit = fitSchedule(similar.map(function (e) { return e.ts; }), isIn);
-      if (!fit) return;
+  function detectUnpairedTransferSchedules(entries, opts) {
+    opts = opts || {};
+    var checkingId = opts.checkingId;
+    var sinceMs = opts.sinceMs || 0;
+    var nowMs = opts.nowMs != null ? startOfDay(opts.nowMs) : null;
+    var paired = pairedEntryIds(opts.transferPairs);
+    var groups = {};
+    (entries || []).forEach(function (e) {
+      if (e.accountId !== checkingId) return;
+      if (e.ts < sinceMs) return;
+      if (nowMs != null && startOfDay(e.ts) > nowMs) return;
+      if (!isUnpairedCheckingTransfer(e, paired)) return;
+      var key = descriptionKey(e.note || '');
+      if (!key) return;
+      if (!groups[key]) groups[key] = [];
+      groups[key].push(e);
+    });
 
-      out.push({
-        itemKey: key,
-        label: (sample.note || key).slice(0, 48),
-        amount: Math.round(medAmt * 100) / 100,
-        kind: isOtherAccountTransfer(sample) ? 'transfer-other' : (isIn ? 'inflow' : 'outflow'),
-        inflow: !!isIn,
-        categoryId: sample.categoryId,
-        scheduleType: fit.scheduleType,
-        dayOfMonth: fit.dayOfMonth,
-        daysOfMonth: fit.daysOfMonth,
-        anchorMs: fit.anchorMs,
-        weekday: fit.weekday,
-        nth: fit.nth,
-        shiftRule: fit.shiftRule,
-        inferenceDetail: fit.inferenceDetail,
-        lastTs: fit.lastTs,
-        confidence: fit.confidence || 'high'
+    var out = [];
+    Object.keys(groups).forEach(function (key) {
+      var list = groups[key].sort(function (a, b) { return a.ts - b.ts; });
+      if (list.length < 2) return;
+      pickScheduleClusters(list, false).forEach(function (picked) {
+        var cluster = picked.cluster;
+        var sample = cluster[cluster.length - 1];
+        var projAmt = picked.projectedAmount;
+        var fit = picked.fit;
+        if (projAmt < 25) return;
+        if (nowMs != null && scheduleStale(fit.lastTs, nowMs, fit.scheduleType)) return;
+        out.push({
+          itemKey: scheduleItemKey(key, projAmt),
+          label: (sample.note || key).slice(0, 48),
+          amount: Math.round(projAmt * 100) / 100,
+          kind: 'outflow',
+          inflow: false,
+          categoryId: sample.categoryId,
+          scheduleType: fit.scheduleType,
+          dayOfMonth: fit.dayOfMonth,
+          daysOfMonth: fit.daysOfMonth,
+          anchorMs: fit.anchorMs,
+          weekday: fit.weekday,
+          nth: fit.nth,
+          shiftRule: fit.shiftRule,
+          inferenceDetail: (fit.inferenceDetail || 'Recurring payment') + ' (to another account)',
+          lastTs: fit.lastTs,
+          confidence: fit.confidence || 'high',
+          merchantKey: key
+        });
       });
     });
     return out;
@@ -605,6 +1022,9 @@
       }
       return out;
     }
+    if (schedule.scheduleType === 'quarterly' || schedule.scheduleType === 'semiannual' || schedule.scheduleType === 'annual') {
+      return generateQuarterlySemiannualDates(schedule, afterMs, untilMs);
+    }
 
     var start = new Date(afterMs);
     var y = start.getFullYear();
@@ -631,12 +1051,32 @@
     return out;
   }
 
-  function expandSchedule(schedule, afterMs, untilMs) {
+  function generateQuarterlySemiannualDates(schedule, afterMs, untilMs) {
+    var out = [];
+    var stepMo = schedule.scheduleType === 'annual' ? 12 : (schedule.scheduleType === 'semiannual' ? 6 : 3);
+    var last = startOfDay(schedule.lastTs || schedule.anchorMs);
+    if (!validMs(last)) return out;
+    var dom = schedule.dayOfMonth || new Date(last).getDate();
+    var cur = addCalendarMonths(new Date(last).getFullYear(), new Date(last).getMonth(), stepMo);
+    var guard = 0;
+    while (guard < 80) {
+      var dim = new Date(cur.y, cur.m + 1, 0).getDate();
+      var nom = dateMs(cur.y, cur.m, Math.min(dom, dim));
+      if (validMs(nom) && nom > afterMs && nom <= untilMs) out.push(nom);
+      if (validMs(nom) && nom > untilMs) break;
+      cur = addCalendarMonths(cur.y, cur.m, stepMo);
+      guard++;
+    }
+    return out;
+  }
+
+  function expandSchedule(schedule, afterMs, untilMs, entries, checkingId) {
     var nominals = generateNominalDates(schedule, afterMs, untilMs);
     var events = [];
     nominals.forEach(function (nom) {
       var ts = adjustToBusinessDay(nom, schedule.shiftRule || 'next');
       if (ts <= afterMs || ts > untilMs) return;
+      if (entries && checkingId && paymentPostedInCycle(entries, checkingId, schedule, ts)) return;
       events.push({
         ts: ts,
         amount: schedule.amount,
@@ -688,24 +1128,52 @@
     return out.sort(function (a, b) { return a.ts - b.ts; });
   }
 
+  function merchantKeysFromSchedules(scheduleList) {
+    var set = {};
+    (scheduleList || []).forEach(function (s) {
+      if (s && s.merchantKey) set[s.merchantKey] = true;
+    });
+    return set;
+  }
+
   function estimateDailySpend(entries, checkingId, transferPairs, nowMs, schedules) {
-    var since = addDays(nowMs, -75);
+    var windowDays = 75;
+    var since = addDays(nowMs, -windowDays);
     var paired = pairedEntryIds(transferPairs);
-    var recurringKeys = {};
-    (schedules || []).forEach(function (s) { recurringKeys[s.itemKey] = true; });
-    var byDay = {};
+    var scheduleList = schedules || [];
+    var scheduledMerchants = merchantKeysFromSchedules(scheduleList);
+    var eligible = [];
     (entries || []).forEach(function (e) {
       if (e.accountId !== checkingId) return;
       if (e.ts < since || e.ts > nowMs) return;
       if (isDepositEntry(e) || isOtherAccountTransfer(e)) return;
       if (e.isTransfer) return;
-      if (recurringKeys[descriptionKey(e.note || '')]) return;
-      var dk = dayKey(e.ts);
-      byDay[dk] = (byDay[dk] || 0) + e.amount;
+      var mk = descriptionKey(e.note || '');
+      var p2p = isP2PNote(e.note);
+      if (!p2p && mk && scheduledMerchants[mk]) return;
+      var matched = false;
+      for (var si = 0; si < scheduleList.length; si++) {
+        if (entryMatchesScheduleRow(e, scheduleList[si])) { matched = true; break; }
+      }
+      if (matched) return;
+      eligible.push(e);
     });
-    var days = Object.keys(byDay).map(function (k) { return byDay[k]; });
-    if (days.length < 7) return 0;
-    return Math.round(trimmedMean(days, 0.1) * 100) / 100;
+    if (!eligible.length) return 0;
+    var rowMed = median(eligible.map(function (e) { return e.amount; }));
+    var total = 0;
+    eligible.forEach(function (e) {
+      var thresh = Math.max(300, rowMed * 5);
+      if (e.amount > thresh) {
+        var repeats = 0;
+        for (var i = 0; i < eligible.length; i++) {
+          if (eligible[i] === e) continue;
+          if (Math.abs(eligible[i].amount - e.amount) <= Math.max(5, e.amount * 0.05)) repeats++;
+        }
+        if (repeats === 0) return;
+      }
+      total += e.amount;
+    });
+    return Math.round((total / windowDays) * 100) / 100;
   }
 
   function detectCardPaymentSchedule(entries, transferPairs, checkingId) {
@@ -728,10 +1196,11 @@
       })
       : 'next';
     var confNote = debits.length < 2 ? ' (1 post — lower confidence)' : '';
+    var recentAmt = median(debits.slice(-3).map(function (d) { return d.amount; }));
     return {
       itemKey: 'card-payment|chase',
       label: 'Chase card payment',
-      amount: Math.round(median(amounts) * 100) / 100,
+      amount: Math.round(recentAmt * 100) / 100,
       kind: 'card-payment',
       inflow: false,
       categoryId: null,
@@ -791,14 +1260,26 @@
         transferPairs: input.transferPairs
       }).forEach(function (s) {
         schedules.push(s);
-        events = events.concat(expandSchedule(s, nowMs, untilMs));
+        events = events.concat(expandSchedule(s, nowMs, untilMs, input.entries, checkingId));
       });
+    });
+
+    detectUnpairedTransferSchedules(input.entries, {
+      checkingId: checkingId,
+      sinceMs: addDays(nowMs, -400),
+      nowMs: nowMs,
+      transferPairs: input.transferPairs
+    }).forEach(function (s) {
+      var dup = schedules.some(function (x) { return x.itemKey === s.itemKey; });
+      if (dup) return;
+      schedules.push(s);
+      events = events.concat(expandSchedule(s, nowMs, untilMs, input.entries, checkingId));
     });
 
     var cardSched = detectCardPaymentSchedule(input.entries, input.transferPairs, checkingId);
     if (cardSched) {
       schedules.push(cardSched);
-      events = events.concat(expandSchedule(cardSched, nowMs, untilMs));
+      events = events.concat(expandSchedule(cardSched, nowMs, untilMs, input.entries, checkingId));
     } else {
       var cardEst = estimateCardPayment(input.entries, input.transferPairs, checkingId, input.chaseId, nowMs);
       if (cardEst && cardEst.amount > 0) {
@@ -814,7 +1295,7 @@
           lastTs: cardEst.lastTs
         };
         schedules.push(fallback);
-        events = events.concat(expandSchedule(fallback, nowMs, untilMs));
+        events = events.concat(expandSchedule(fallback, nowMs, untilMs, input.entries, checkingId));
       }
     }
 
@@ -835,7 +1316,7 @@
         lastTs: nowMs
       };
       schedules.push(s);
-      events = events.concat(expandSchedule(s, nowMs, untilMs));
+      events = events.concat(expandSchedule(s, nowMs, untilMs, input.entries, checkingId));
     });
 
     events = applyForecastOverrides(events, input.overrides, nowMs);
@@ -989,6 +1470,23 @@
     var neverRunsOut = lastsUntil == null;
     var daysAway = lastsUntil != null ? Math.round((lastsUntil - nowMs) / MS_DAY) : null;
 
+    var peekPastWindow = null;
+    events.forEach(function (ev) {
+      if (ev.daily || ev.kind === 'inflow') return;
+      if (ev.ts <= chartEnd || ev.ts > lookaheadEnd) return;
+      if (ev.amount < 500) return;
+      if (!peekPastWindow || ev.ts < peekPastWindow.ts) {
+        peekPastWindow = {
+          ts: ev.ts,
+          amount: ev.amount,
+          label: ev.label,
+          kind: ev.kind,
+          itemKey: ev.itemKey,
+          categoryId: ev.categoryId
+        };
+      }
+    });
+
     return {
       ok: true,
       startingBalance: startBal,
@@ -1002,18 +1500,119 @@
       dailySpend: scheduled.dailySpend,
       cushion: cushion,
       schedules: scheduled.schedules,
-      partialTimeline: partialTimeline
+      partialTimeline: partialTimeline,
+      peekPastWindow: peekPastWindow,
+      chartDays: horizon
     };
   }
 
-  var CHART_Y_LABEL_MIN_GAP_PX = 20;
+  var CHART_Y_LABEL_MIN_GAP_PX = 18;
+  var CHART_Y_CUSHION_TICK_GAP_PX = 14;
+  var CHART_Y_MAX_TICKS = 5;
+
+  function pickNiceStep(rough) {
+    if (!isFinite(rough) || rough <= 0) return 1;
+    var mag = Math.pow(10, Math.floor(Math.log10(rough)));
+    var f = rough / mag;
+    var nf;
+    if (f <= 1) nf = 1;
+    else if (f <= 2) nf = 2;
+    else if (f <= 2.5) nf = 2.5;
+    else if (f <= 5) nf = 5;
+    else nf = 10;
+    return nf * mag;
+  }
+
+  function niceStepUp(step) {
+    var mag = Math.pow(10, Math.floor(Math.log10(step)));
+    var n = step / mag;
+    if (n < 2) return 2 * mag;
+    if (n < 2.5) return 2.5 * mag;
+    if (n < 5) return 5 * mag;
+    if (n < 10) return 10 * mag;
+    return step * 2;
+  }
+
+  function axisTickCount(minBal, maxBal, step) {
+    if (step <= 0) return 1;
+    return Math.round((maxBal - minBal) / step) + 1;
+  }
 
   function forecastChartAxisStep(span) {
-    if (span <= 400) return 100;
-    if (span <= 900) return 200;
-    if (span <= 1800) return 250;
-    if (span <= 3500) return 500;
-    return 1000;
+    return pickNiceStep(span / Math.max(1, CHART_Y_MAX_TICKS - 1));
+  }
+
+  function forecastChartNiceStep(range, maxLabels) {
+    maxLabels = maxLabels || CHART_Y_MAX_TICKS;
+    return pickNiceStep(range / Math.max(1, maxLabels - 1));
+  }
+
+  function computeForecastChartYScale(dataMin, dataMax, opts) {
+    opts = opts || {};
+    var cushion = opts.cushion != null ? opts.cushion : 600;
+    var span = Math.max(80, dataMax - dataMin);
+    var cushionNear = cushion >= dataMin - span * 0.25 && cushion <= dataMax + span * 0.2;
+    var dMin = dataMin;
+    var dMax = dataMax;
+    if (cushionNear) {
+      dMin = Math.min(dMin, cushion);
+      dMax = Math.max(dMax, cushion);
+    }
+    var pad = Math.max(80, dMax - dMin) * 0.08;
+    var step = forecastChartNiceStep(dMax - dMin + pad * 2, CHART_Y_MAX_TICKS);
+    var minBal = Math.floor((dMin - pad) / step) * step;
+    var maxBal = Math.ceil((dMax + pad) / step) * step;
+    if (maxBal - minBal < step * 2) maxBal = minBal + step * 2;
+    var crossesZero = dataMin < 0 && dataMax > 0;
+    if (!crossesZero && dataMin >= 0 && minBal < 0) minBal = 0;
+    if (crossesZero) {
+      minBal = Math.min(minBal, 0);
+      maxBal = Math.max(maxBal, 0);
+    }
+    while (axisTickCount(minBal, maxBal, step) > CHART_Y_MAX_TICKS) {
+      step = niceStepUp(step);
+    }
+    return {
+      minBal: minBal,
+      maxBal: maxBal,
+      step: step,
+      cushionNear: cushionNear,
+      crossesZero: crossesZero
+    };
+  }
+
+  function buildAxisTickValues(minBal, maxBal, step, crossesZero) {
+    var ticks = [];
+    var guard = 0;
+    for (var t = minBal; t <= maxBal + step * 0.001 && guard < 32; t += step) {
+      ticks.push(Math.round(t * 100) / 100);
+      guard++;
+    }
+    if (crossesZero && ticks.indexOf(0) === -1) {
+      ticks.push(0);
+      ticks.sort(function (a, b) { return a - b; });
+      if (ticks.length > CHART_Y_MAX_TICKS) {
+        var bestIdx = 1;
+        var bestDist = Infinity;
+        for (var i = 0; i < ticks.length; i++) {
+          if (ticks[i] === 0) continue;
+          var d = Math.abs(ticks[i]);
+          if (d < bestDist) { bestDist = d; bestIdx = i; }
+        }
+        ticks.splice(bestIdx, 1);
+      }
+    }
+    while (ticks.length > CHART_Y_MAX_TICKS) {
+      var drop = 0;
+      var dropScore = -1;
+      for (var j = 0; j < ticks.length; j++) {
+        if (ticks[j] === 0 && crossesZero) continue;
+        var score = Math.min(Math.abs(ticks[j] - minBal), Math.abs(ticks[j] - maxBal));
+        if (score > dropScore) { dropScore = score; drop = j; }
+      }
+      ticks.splice(drop, 1);
+    }
+    return ticks;
   }
 
   function forecastChartYAt(bal, minBal, maxBal, padT, innerH) {
@@ -1027,6 +1626,7 @@
     var step = opts.step;
     var cushion = opts.cushion;
     var cushionNear = !!opts.cushionNear;
+    var crossesZero = !!opts.crossesZero;
     var padT = opts.padT != null ? opts.padT : 12;
     var innerH = opts.innerH != null ? opts.innerH : 162;
     var baselineNudge = opts.baselineNudge != null ? opts.baselineNudge : 4;
@@ -1035,53 +1635,72 @@
       return forecastChartYAt(bal, minBal, maxBal, padT, innerH) + baselineNudge;
     }
 
-    var yTicks = [];
-    for (var tick = minBal; tick <= maxBal; tick += step) yTicks.push(tick);
-    if (cushionNear && yTicks.indexOf(cushion) === -1) yTicks.push(cushion);
-    yTicks.sort(function (a, b) { return a - b; });
-
+    var tickVals = buildAxisTickValues(minBal, maxBal, step, crossesZero);
     var cushionLabelY = cushionNear ? yAt(cushion) : padT + 10;
+    var zeroY = crossesZero ? yAt(0) : null;
+    var cushionOnAxis = cushionNear;
+    if (cushionNear && crossesZero && zeroY != null
+      && Math.abs(cushionLabelY - zeroY) < CHART_Y_LABEL_MIN_GAP_PX) {
+      cushionOnAxis = false;
+    }
     var labels = [];
     var hidden = [];
 
-    yTicks.forEach(function (bal) {
-      var isCushion = cushionNear && bal === cushion;
+    tickVals.forEach(function (bal) {
+      if (cushionOnAxis && bal === cushion) return;
       var y = yAt(bal);
-      if (!isCushion) {
-        if (cushionNear && Math.abs(bal - cushion) < step * 0.5) {
-          hidden.push({ bal: bal, reason: 'near-cushion-value' });
-          return;
-        }
-        if (Math.abs(y - cushionLabelY) < CHART_Y_LABEL_MIN_GAP_PX) {
-          hidden.push({ bal: bal, reason: 'near-cushion-y' });
-          return;
-        }
+      if (cushionOnAxis && Math.abs(y - cushionLabelY) < CHART_Y_CUSHION_TICK_GAP_PX) {
+        hidden.push({ bal: bal, reason: 'near-cushion-y' });
+        return;
       }
-      labels.push({ bal: bal, isCushion: isCushion, y: y });
+      labels.push({ bal: bal, isCushion: false, y: y });
     });
+
+    if (crossesZero && !labels.some(function (l) { return l.bal === 0; })) {
+      labels.push({ bal: 0, isCushion: false, y: zeroY });
+    }
+
+    if (cushionOnAxis) {
+      labels.push({ bal: cushion, isCushion: true, y: cushionLabelY });
+    }
+
+    labels.sort(function (a, b) { return a.y - b.y; });
+    var priority = labels.filter(function (lb) {
+      return lb.isCushion || (crossesZero && lb.bal === 0);
+    });
+    var rest = labels.filter(function (lb) {
+      return !lb.isCushion && !(crossesZero && lb.bal === 0);
+    });
+    var filtered = priority.slice();
+    rest.forEach(function (lb) {
+      var clash = filtered.some(function (f) {
+        return Math.abs(f.y - lb.y) < CHART_Y_LABEL_MIN_GAP_PX;
+      });
+      if (!clash) filtered.push(lb);
+      else hidden.push({ bal: lb.bal, reason: 'label-spacing' });
+    });
+    labels = filtered.sort(function (a, b) { return a.y - b.y; });
 
     return {
       labels: labels,
       hidden: hidden,
       cushionLabelY: cushionLabelY,
       cushionNear: cushionNear,
-      showCushionNote: !cushionNear,
-      minGapPx: CHART_Y_LABEL_MIN_GAP_PX
+      showCushionNote: !cushionNear || !cushionOnAxis,
+      minGapPx: CHART_Y_LABEL_MIN_GAP_PX,
+      cushionGapPx: CHART_Y_CUSHION_TICK_GAP_PX,
+      tickValues: tickVals,
+      step: step,
+      cushionOnAxis: cushionOnAxis
     };
   }
 
   function yAxisLabelsCollide(plan) {
     if (!plan || !plan.labels) return false;
-    var cushionYs = [];
-    plan.labels.forEach(function (lb) {
-      if (lb.isCushion) cushionYs.push(lb.y);
-    });
-    if (plan.showCushionNote) cushionYs.push(plan.cushionLabelY);
-    for (var i = 0; i < plan.labels.length; i++) {
-      var lb = plan.labels[i];
-      if (lb.isCushion) continue;
-      for (var c = 0; c < cushionYs.length; c++) {
-        if (Math.abs(lb.y - cushionYs[c]) < plan.minGapPx) return true;
+    var ys = plan.labels.map(function (lb) { return lb.y; });
+    for (var i = 0; i < ys.length; i++) {
+      for (var j = i + 1; j < ys.length; j++) {
+        if (Math.abs(ys[i] - ys[j]) < plan.minGapPx) return true;
       }
     }
     return false;
@@ -1118,6 +1737,8 @@
       overrides: input.overrides
     });
     if (!sim.ok) return sim;
+    var incomeSince = addDays(nowMs, -400);
+    var noIncomeDetected = !hasCheckingIncome(input.entries, checkingId, incomeSince, nowMs);
     return {
       ok: true,
       startingBalance: startBal,
@@ -1128,7 +1749,9 @@
       neverRunsOut: sim.neverRunsOut,
       daysAway: sim.daysAway,
       dailySpend: sim.dailySpend,
-      schedules: sim.schedules
+      schedules: sim.schedules,
+      noIncomeDetected: noIncomeDetected,
+      peekPastWindow: sim.peekPastWindow
     };
   }
 
@@ -1155,6 +1778,11 @@
     detectRecurrences: detectRecurrences,
     detectRecurringSchedules: detectRecurringSchedules,
     detectCardPaymentSchedule: detectCardPaymentSchedule,
+    detectUnpairedTransferSchedules: detectUnpairedTransferSchedules,
+    pickScheduleClusters: pickScheduleClusters,
+    paymentPostedInCycle: paymentPostedInCycle,
+    scheduleItemKey: scheduleItemKey,
+    isP2PNote: isP2PNote,
     isBusinessDay: isBusinessDay,
     isBankHoliday: isBankHoliday,
     adjustToBusinessDay: adjustToBusinessDay,
@@ -1169,9 +1797,12 @@
     runForecast: runForecast,
     bankHolidayKeysForYear: bankHolidayKeysForYear,
     forecastChartAxisStep: forecastChartAxisStep,
+    forecastChartNiceStep: forecastChartNiceStep,
+    computeForecastChartYScale: computeForecastChartYScale,
     forecastChartYAt: forecastChartYAt,
     planForecastChartYAxisLabels: planForecastChartYAxisLabels,
     yAxisLabelsCollide: yAxisLabelsCollide,
-    CHART_Y_LABEL_MIN_GAP_PX: CHART_Y_LABEL_MIN_GAP_PX
+    CHART_Y_LABEL_MIN_GAP_PX: CHART_Y_LABEL_MIN_GAP_PX,
+    CHART_Y_CUSHION_TICK_GAP_PX: CHART_Y_CUSHION_TICK_GAP_PX
   };
 });

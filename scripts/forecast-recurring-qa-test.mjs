@@ -1,0 +1,265 @@
+/**
+ * Recurring-detection QA fixtures (fake merchants only).
+ * Run: node scripts/forecast-recurring-qa-test.mjs
+ */
+import { createRequire } from 'module';
+import assert from 'assert';
+
+const require = createRequire(import.meta.url);
+const FC = require('../forecast.js');
+
+const CHECKING = 'acct-checking';
+const CHASE = 'acct-chase';
+
+function ts(y, m, d) {
+  return new Date(y, m, d, 12, 0, 0).getTime();
+}
+
+function entry(id, amount, note, dayTs, extra) {
+  return Object.assign({
+    id: id,
+    amount: amount,
+    note: note,
+    ts: dayTs,
+    accountId: CHECKING,
+    categoryId: 'bills',
+    isTransfer: false
+  }, extra || {});
+}
+
+function detectOut(entries, nowMs) {
+  return FC.detectRecurringSchedules(entries, {
+    checkingId: CHECKING,
+    sinceMs: 0,
+    nowMs: nowMs,
+    kind: 'outflow',
+    transferPairs: []
+  });
+}
+
+console.log('recurring-qa: loan regular plus extra principal clusters');
+(function () {
+  const rows = [];
+  let id = 0;
+  for (let i = 0; i < 6; i++) {
+    rows.push(entry('ln' + id++, 850, 'FAKE AUTO LOAN CO', ts(2026, 3 + i, 12)));
+  }
+  rows.push(entry('lnx1', 320, 'FAKE AUTO LOAN CO', ts(2026, 5, 20)));
+  rows.push(entry('lnx2', 315, 'FAKE AUTO LOAN CO', ts(2026, 8, 18)));
+  const now = ts(2026, 9, 16);
+  const sched = detectOut(rows, now);
+  const main = sched.find((s) => s.amount === 850);
+  assert.ok(main, 'regular $850 schedule');
+  assert.strictEqual(main.scheduleType, 'monthly_dom');
+  assert.ok(!sched.some((s) => s.amount === 320), 'extra principal not scheduled');
+})();
+
+console.log('recurring-qa: twice-monthly card two amount clusters');
+(function () {
+  const rows = [];
+  let id = 0;
+  for (let i = 0; i < 6; i++) {
+    rows.push(entry('sm' + id++, 32, 'FAKE RIVER CARD PAYMENT', ts(2026, 3 + i, 3)));
+    rows.push(entry('lg' + id++, 300 + (i % 3) * 40, 'FAKE RIVER CARD PAYMENT', ts(2026, 3 + i, 18)));
+  }
+  const now = ts(2026, 9, 16);
+  const sched = detectOut(rows, now);
+  const small = sched.find((s) => s.amount <= 35);
+  const large = sched.find((s) => s.amount >= 280);
+  assert.ok(small && large, 'both small and large schedules');
+  assert.ok(large.amount >= 320 && large.amount <= 400, 'large at recent median');
+})();
+
+console.log('recurring-qa: P2P venmo noise not scheduled');
+(function () {
+  const rows = [];
+  for (let i = 0; i < 12; i++) {
+    rows.push(entry('v' + i, 8 + (i * 7) % 45, 'VENMO PAYMENT', ts(2026, 6, 1) + i * 3 * 86400000, { categoryId: 'dining' }));
+  }
+  const sched = detectOut(rows, ts(2026, 9, 16));
+  assert.strictEqual(sched.length, 0, 'venmo stays daily spend');
+})();
+
+console.log('recurring-qa: bill on 15th uses day-of-month not nth weekday');
+(function () {
+  const rows = [];
+  for (let i = 0; i < 6; i++) {
+    rows.push(entry('u' + i, 120, 'FAKE UTILITIES INC', ts(2026, 3 + i, 15)));
+  }
+  const sched = detectOut(rows, ts(2026, 9, 16));
+  assert.ok(sched.length >= 1);
+  assert.strictEqual(sched[0].scheduleType, 'monthly_dom');
+  assert.strictEqual(sched[0].dayOfMonth, 15);
+})();
+
+console.log('recurring-qa: skip duplicate occurrence same cycle');
+(function () {
+  const now = ts(2026, 9, 16);
+  const rows = [entry('t1', 120, 'FAKE UTILITIES INC', ts(2026, 9, 15))];
+  for (let i = 0; i < 5; i++) {
+    rows.push(entry('th' + i, 120, 'FAKE UTILITIES INC', ts(2026, 3 + i, 15)));
+  }
+  const sched = detectOut(rows, now);
+  assert.ok(sched.length >= 1);
+  const s = sched[0];
+  const events = FC.expandSchedule(s, now, FC.addDays(now, 45), rows, CHECKING);
+  const oct = events.filter((e) => {
+    const d = new Date(e.ts);
+    return d.getMonth() === 9 && d.getFullYear() === 2026;
+  });
+  assert.strictEqual(oct.length, 0, 'no second October bill after Oct 15 post');
+})();
+
+console.log('recurring-qa: daily spend with few rows and P2P not zeroed');
+(function () {
+  const rows = [
+    entry('a1', 14, 'VENMO PAYMENT', ts(2026, 9, 10), { categoryId: 'dining' }),
+    entry('a2', 9, 'VENMO PAYMENT', ts(2026, 9, 5), { categoryId: 'dining' }),
+    entry('a3', 11, 'COFFEE SHOP', ts(2026, 9, 8), { categoryId: 'dining' })
+  ];
+  const daily = FC.estimateDailySpend(rows, CHECKING, [], ts(2026, 9, 16), []);
+  assert.ok(daily > 0, 'daily spend with <7 rows');
+})();
+
+console.log('recurring-qa: semiannual insurance two payments wide band');
+(function () {
+  const rows = [
+    entry('i1', 640, 'FAKE MUTUAL INSURANCE', ts(2026, 3, 1)),
+    entry('i2', 668, 'FAKE MUTUAL INSURANCE', ts(2025, 9, 1))
+  ];
+  const now = ts(2026, 9, 16);
+  const sched = detectOut(rows, now);
+  assert.ok(sched.some((s) => s.scheduleType === 'semiannual'), 'semiannual detected');
+  const ins = sched.find((s) => /INSURANCE/i.test(s.label));
+  const next = FC.expandSchedule(ins, now, FC.addDays(now, 200), rows, CHECKING);
+  assert.ok(next.length >= 1, 'projects next semiannual payment');
+})();
+
+console.log('recurring-qa: semiannual triple payment deduped once');
+(function () {
+  const rows = [
+    entry('s1', 500, 'FAKE HARBOR INSURANCE', ts(2025, 8, 15)),
+    entry('s2', 510, 'FAKE HARBOR INSURANCE', ts(2026, 2, 15)),
+    entry('s3', 495, 'FAKE HARBOR INSURANCE', ts(2026, 8, 15))
+  ];
+  const now = ts(2026, 9, 16);
+  const sched = detectOut(rows, now);
+  const harbor = sched.filter((s) => /HARBOR/i.test(s.label));
+  assert.strictEqual(harbor.length, 1, 'one semiannual schedule not double-counted');
+  assert.strictEqual(harbor[0].scheduleType, 'semiannual');
+})();
+
+console.log('recurring-qa: semiannual next date from last payment');
+(function () {
+  const rows = [
+    entry('s1', 400, 'FAKE COAST INSURANCE', ts(2025, 8, 21)),
+    entry('s2', 400, 'FAKE COAST INSURANCE', ts(2026, 2, 21)),
+    entry('s3', 400, 'FAKE COAST INSURANCE', ts(2026, 8, 21))
+  ];
+  const now = ts(2026, 9, 16);
+  const sched = detectOut(rows, now);
+  const ins = sched.find((s) => /COAST/i.test(s.label));
+  assert.ok(ins);
+  const events = FC.expandSchedule(ins, now, FC.addDays(now, 220), rows, CHECKING);
+  assert.ok(events.length >= 1);
+  const next = events[0];
+  const d = new Date(next.ts);
+  assert.strictEqual(d.getFullYear(), 2027);
+  assert.ok(d.getMonth() === 1 || d.getMonth() === 2, 'next ~Feb/Mar 2027 from Sep 2026 last pay');
+  assert.ok(d.getDate() >= 18 && d.getDate() <= 24, 'near 21st after business-day shift');
+})();
+
+console.log('recurring-qa: two-payment extras not monthly beside real loan');
+(function () {
+  const rows = [];
+  let id = 0;
+  for (let i = 0; i < 7; i++) {
+    rows.push(entry('m' + id++, 720, 'FAKE LENDER LLC', ts(2026, 2 + i, 10)));
+  }
+  rows.push(entry('x1', 310, 'FAKE LENDER LLC', ts(2026, 6, 5)));
+  rows.push(entry('x2', 305, 'FAKE LENDER LLC', ts(2026, 7, 3)));
+  const sched = detectOut(rows, ts(2026, 9, 16));
+  assert.ok(sched.some((s) => s.amount === 720), 'monthly loan kept');
+  assert.ok(!sched.some((s) => s.amount < 400), 'irregular extras not monthly schedules');
+})();
+
+console.log('recurring-qa: cluster amount uses recent median');
+(function () {
+  const rows = [];
+  let id = 0;
+  for (let i = 0; i < 4; i++) {
+    rows.push(entry('o' + id++, 95, 'FAKE GYM MEMBERSHIP', ts(2026, 0 + i, 1)));
+  }
+  for (let i = 0; i < 4; i++) {
+    rows.push(entry('n' + id++, 120, 'FAKE GYM MEMBERSHIP', ts(2026, 5 + i, 1)));
+  }
+  const sched = detectOut(rows, ts(2026, 9, 16));
+  const gym = sched.find((s) => /GYM/i.test(s.label));
+  assert.ok(gym);
+  assert.strictEqual(gym.amount, 120, 'projects raised recent amount');
+})();
+
+console.log('recurring-qa: daily spend excludes merchant with any schedule');
+(function () {
+  const rows = [];
+  let id = 0;
+  for (let i = 0; i < 6; i++) {
+    rows.push(entry('ln' + id++, 850, 'FAKE AUTO LOAN CO', ts(2026, 3 + i, 12)));
+  }
+  rows.push(entry('lnx1', 320, 'FAKE AUTO LOAN CO', ts(2026, 5, 20)));
+  rows.push(entry('lnx2', 315, 'FAKE AUTO LOAN CO', ts(2026, 8, 18)));
+  for (let d = 0; d < 15; d++) {
+    rows.push(entry('c' + d, 12, 'COFFEE SHOP', ts(2026, 7, 1) + d * 3 * 86400000, { categoryId: 'dining' }));
+  }
+  const now = ts(2026, 9, 16);
+  const sched = detectOut(rows, now);
+  assert.ok(sched.some((s) => s.amount === 850), 'monthly loan schedule');
+  const loanOnly = rows.filter((r) => /AUTO LOAN/i.test(r.note));
+  const loanDaily = FC.estimateDailySpend(loanOnly, CHECKING, [], now, sched);
+  assert.strictEqual(loanDaily, 0, 'all rows at scheduled merchant excluded');
+  const daily = FC.estimateDailySpend(rows, CHECKING, [], now, sched);
+  const coffeeOnly = rows.filter((r) => /COFFEE/i.test(r.note));
+  const coffeeDaily = FC.estimateDailySpend(coffeeOnly, CHECKING, [], now, sched);
+  assert.ok(Math.abs(daily - coffeeDaily) < 0.02, 'daily spend ignores loan merchant extras');
+})();
+
+console.log('recurring-qa: drifting large card cluster median last three');
+(function () {
+  const rows = [];
+  const largeAmts = [356, 363, 434, 354, 292];
+  const months = [4, 5, 6, 7, 8];
+  largeAmts.forEach((amt, i) => {
+    rows.push(entry('L' + i, amt, 'FAKE DRIFT CARD PAYMENT', ts(2026, months[i], 18)));
+    rows.push(entry('S' + i, 30, 'FAKE DRIFT CARD PAYMENT', ts(2026, months[i], 3)));
+  });
+  const now = ts(2026, 9, 16);
+  const sched = detectOut(rows, now);
+  const large = sched.filter((s) => s.amount >= 200).sort((a, b) => b.lastTs - a.lastTs)[0];
+  assert.ok(large, 'large payment schedule');
+  assert.strictEqual(large.amount, 354, 'median of last three large payments');
+  const lastD = new Date(large.lastTs);
+  assert.strictEqual(lastD.getMonth(), 8, 'cluster anchored on most recent large payment');
+  assert.ok(sched.some((s) => s.amount <= 35), 'small payment cluster separate');
+})();
+
+console.log('recurring-qa: chase card median of last three');
+(function () {
+  const pairs = [];
+  const entries = [];
+  const amounts = [2800, 3100, 3600, 3400];
+  amounts.forEach((amt, i) => {
+    const bId = 'cb' + i;
+    const cId = 'cc' + i;
+    entries.push(entry(bId, amt, 'CHASE CARD PAYMENT', ts(2026, 4 + i, 14), { isTransfer: true, categoryId: 'transfer' }));
+    entries.push({
+      id: cId, amount: amt, note: 'Payment Thank You', ts: ts(2026, 4 + i, 13),
+      accountId: CHASE, isTransfer: true, isDeposit: true, categoryId: 'transfer'
+    });
+    pairs.push({ id: 'p' + i, entryIds: [bId, cId], unlinked: false });
+  });
+  const sched = FC.detectCardPaymentSchedule(entries, pairs, CHECKING);
+  assert.ok(sched);
+  assert.strictEqual(sched.amount, 3400, 'median of last 3 not spike 3600 alone');
+})();
+
+console.log('forecast-recurring-qa-test: PASS');
