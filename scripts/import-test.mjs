@@ -4,7 +4,7 @@
  */
 import { chromium } from 'playwright';
 import { createServer } from 'http';
-import { readFileSync, existsSync } from 'fs';
+import { readFileSync, existsSync, writeFileSync } from 'fs';
 import { join, extname } from 'path';
 
 const PORT = 8878;
@@ -69,57 +69,114 @@ async function run() {
       { id: 'groceries', name: 'Groceries', emoji: '🛒', color: '#4dabf7' },
       { id: 'dining', name: 'Dining', emoji: '🍽️', color: '#ff922b' },
       { id: 'gas', name: 'Gas', emoji: '⛽', color: '#51cf66' },
+      { id: 'bills', name: 'Bills', emoji: '📄', color: '#cc5de8' },
       { id: 'other', name: 'Other', emoji: '📦', color: '#adb5bd' }
     ]));
     localStorage.setItem('expenseLogger.entries.v1', '[]');
+    localStorage.setItem('expenseLogger.importRules.v1', '[]');
   });
   await page.reload({ waitUntil: 'networkidle' });
 
   const results = [];
 
-  // Card CSV
   await page.click('button[data-tab="settings"]');
   await importFile(page, 'sample-card.csv');
   await page.waitForSelector('#importModal.show');
-  const cardStats = await page.locator('#importSummary').innerText();
   await confirmImport(page);
-  let t1 = await toastText(page);
   let n1 = await page.evaluate(() => JSON.parse(localStorage.getItem('expenseLogger.entries.v1')).length);
-  results.push(['card first import', n1 === 5, 'entries=' + n1, t1]);
+  results.push(['card first import', n1 === 5, 'entries=' + n1]);
 
   await importFile(page, 'sample-card.csv');
   await page.waitForSelector('#importModal.show');
+  const dupSummary = await page.locator('#importSummary').innerText();
   await confirmImport(page);
   let t2 = await toastText(page);
   let n2 = await page.evaluate(() => JSON.parse(localStorage.getItem('expenseLogger.entries.v1')).length);
-  results.push(['card reimport dupes', n2 === 5 && /duplicate/i.test(t2), t2]);
+  results.push(['card reimport dupes', n2 === 5 && /duplicate/i.test(t2) && /5/.test(dupSummary), t2]);
 
-  // Bank xlsx
   await importFile(page, 'sample-bank.xlsx');
   await page.waitForSelector('#importModal.show');
-  const bankText = await page.locator('#importSummary').innerText();
   await confirmImport(page);
-  let t3 = await toastText(page);
   let entries = await page.evaluate(() => JSON.parse(localStorage.getItem('expenseLogger.entries.v1')));
   const venmo = entries.some((e) => (e.note || '').toUpperCase().indexOf('VENMO') !== -1);
-  const autopay = entries.some((e) => (e.note || '').indexOf('CHASE') !== -1);
-  results.push(['bank debits', venmo && !autopay, 'venmo=' + venmo + ' autopay=' + autopay, t3]);
-  results.push(['bank skips pending', /pending/i.test(bankText) || true, bankText.slice(0, 80)]);
+  const autopay = entries.some((e) => (e.note || '').indexOf('CRDAUTOPAY') !== -1);
+  const studentLoan = entries.some((e) => (e.note || '').indexOf('STUDENT LOAN') !== -1);
+  results.push(['bank venmo spending', venmo]);
+  results.push(['bank crdautopay transfer', !autopay]);
+  results.push(['bank student loan spending', studentLoan]);
 
-  // App export round-trip
+  const rulesAfterBank = await page.evaluate(() => JSON.parse(localStorage.getItem('expenseLogger.importRules.v1') || '[]').length);
+  results.push(['no auto rules on import', rulesAfterBank === 0, 'rules=' + rulesAfterBank]);
+
+  // Overlapping card exports
+  await page.evaluate(() => {
+    localStorage.setItem('expenseLogger.entries.v1', '[]');
+    localStorage.setItem('expenseLogger.importRules.v1', '[]');
+  });
+  await page.reload({ waitUntil: 'networkidle' });
+  await page.click('button[data-tab="settings"]');
+  await importFile(page, 'sample-card-period-a.csv');
+  await page.waitForSelector('#importModal.show');
+  await confirmImport(page);
+  const na = await page.evaluate(() => JSON.parse(localStorage.getItem('expenseLogger.entries.v1')).length);
+  await importFile(page, 'sample-card-period-b.csv');
+  await page.waitForSelector('#importModal.show');
+  const overlapText = await page.locator('#importSummary').innerText();
+  await confirmImport(page);
+  const nb = await page.evaluate(() => JSON.parse(localStorage.getItem('expenseLogger.entries.v1')).length);
+  const twinCoffee = await page.evaluate(() => {
+    const es = JSON.parse(localStorage.getItem('expenseLogger.entries.v1'));
+    const day = (ts) => {
+      const d = new Date(ts);
+      return d.getFullYear() + '-' + d.getMonth() + '-' + d.getDate();
+    };
+    return es.filter((e) => (e.note || '').indexOf('COFFEE CORNER') !== -1 && e.amount === 5 && day(e.ts) === '2025-3-3').length;
+  });
+  results.push(['overlap period A count', na === 5, 'n=' + na]);
+  results.push(['overlap only new in B', nb === 6, 'n=' + nb]);
+  results.push(['overlap dupes in summary', /duplicate/i.test(overlapText) && /4/.test(overlapText), overlapText.replace(/\s+/g, ' ').slice(0, 60)]);
+  results.push(['twin same-day coffees kept', twinCoffee === 2, 'coffee5=' + twinCoffee]);
+
+  // App export round-trip from full log
+  const exportPath = join(FIX, 'generated-roundtrip.csv');
+  const csvText = await page.evaluate(() => {
+    const entries = JSON.parse(localStorage.getItem('expenseLogger.entries.v1'));
+    const cats = JSON.parse(localStorage.getItem('expenseLogger.categories.v1'));
+    const catName = (id) => (cats.find((c) => c.id === id) || { name: id }).name;
+    const pad = (n) => (n < 10 ? '0' : '') + n;
+    const lines = [['Date', 'Time', 'Category', 'Amount', 'Note', 'Recurring', 'Receipt'].join(',')];
+    entries.forEach((e) => {
+      const d = new Date(e.ts);
+      lines.push([
+        d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()),
+        pad(d.getHours()) + ':' + pad(d.getMinutes()),
+        catName(e.categoryId),
+        e.amount.toFixed(2),
+        e.note || '',
+        'No',
+        'No'
+      ].join(','));
+    });
+    return lines.join('\r\n');
+  });
+  writeFileSync(exportPath, csvText, 'utf8');
+  const countBefore = await page.evaluate(() => JSON.parse(localStorage.getItem('expenseLogger.entries.v1')).length);
+  await importFile(page, 'generated-roundtrip.csv');
+  await page.waitForSelector('#importModal.show');
+  const rtSummary = await page.locator('#importSummary').innerText();
+  await confirmImport(page);
+  const rtToast = await toastText(page);
+  const countAfter = await page.evaluate(() => JSON.parse(localStorage.getItem('expenseLogger.entries.v1')).length);
+  const rtOk = countAfter === countBefore && (/0 new/.test(rtToast) || /duplicate/i.test(rtToast)) && /to import[\s\S]*\b0\b/.test(rtSummary);
+  results.push(['app export round-trip', rtOk, rtToast, rtSummary.replace(/\s+/g, ' ').slice(0, 50)]);
+
   await importFile(page, 'sample-app-export.csv');
   await page.waitForSelector('#importModal.show');
   await confirmImport(page);
   let hasNote = await page.evaluate(() => {
     return JSON.parse(localStorage.getItem('expenseLogger.entries.v1')).some((e) => e.note === 'Test import note');
   });
-  results.push(['app csv round-trip', hasNote]);
-
-  const rulesSaved = await page.evaluate(() => {
-    var rules = JSON.parse(localStorage.getItem('expenseLogger.importRules.v1') || '[]');
-    return rules.length > 0;
-  });
-  results.push(['import rules persist', rulesSaved]);
+  results.push(['app csv sample note', hasNote]);
 
   console.log('Page errors:', errors);
   let failed = false;

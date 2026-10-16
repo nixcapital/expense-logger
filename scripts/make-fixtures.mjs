@@ -22,6 +22,26 @@ const cardCsv = [
 ].join('\r\n');
 writeFileSync(join(OUT, 'sample-card.csv'), cardCsv, 'utf8');
 
+// Overlapping card exports (same account, different download)
+const cardPeriodA = [
+  'Transaction Date,Post Date,Description,Category,Type,Amount,Memo',
+  '04/01/2025,04/02/2025,COFFEE CORNER,Food & Drink,Sale,-5.00,',
+  '04/02/2025,04/03/2025,MARKET BASKET,Groceries,Sale,-22.10,',
+  '04/03/2025,04/04/2025,COFFEE CORNER,Food & Drink,Sale,-5.00,',
+  '04/03/2025,04/04/2025,COFFEE CORNER,Food & Drink,Sale,-5.00,',
+  '04/04/2025,04/05/2025,PHARMACY PLUS,Shopping,Sale,-18.75,',
+].join('\r\n');
+const cardPeriodB = [
+  'Transaction Date,Post Date,Description,Category,Type,Amount,Memo',
+  '04/01/2025,04/02/2025,COFFEE CORNER,Food & Drink,Sale,-5.00,',
+  '04/02/2025,04/03/2025,MARKET BASKET,Groceries,Sale,-22.10,',
+  '04/03/2025,04/04/2025,COFFEE CORNER,Food & Drink,Sale,-5.00,',
+  '04/03/2025,04/04/2025,COFFEE CORNER,Food & Drink,Sale,-5.00,',
+  '04/05/2025,04/06/2025,NEW CAFE EAST,Food & Drink,Sale,-9.25,',
+].join('\r\n');
+writeFileSync(join(OUT, 'sample-card-period-a.csv'), cardPeriodA, 'utf8');
+writeFileSync(join(OUT, 'sample-card-period-b.csv'), cardPeriodB, 'utf8');
+
 // --- App export round-trip sample ---
 const appCsv = [
   'Date,Time,Category,Amount,Note,Recurring,Receipt',
@@ -39,10 +59,11 @@ const bankRows = [
   ['Account Number', 'Post Date', 'Check', 'Description', 'Debit', 'Credit', 'Status', 'Balance'],
   ['', excelSerial(2025, 3, 15), '', 'VENMO           PAYMENT   WEB 1052548066311', 45, '', 'Posted', 1234.56],
   ['****1234', excelSerial(2025, 3, 14), '', 'PAYROLL DEP PPD', '', 2100, 'Posted', 1279.56],
-  ['', excelSerial(2025, 3, 13), '', 'CHASE CREDIT CRD AUTOPAY', 250, '', 'Posted', 1029.56],
-  ['', excelSerial(2025, 3, 12), '', 'Service Charge', 12, '', 'Posted', 1279.56],
-  ['', excelSerial(2025, 3, 11), '', 'COFFEE SHOP DOWNTOWN', 5.25, '', 'Pending', 1291.56],
-  ['', excelSerial(2025, 3, 10), '', 'WHOLE FOODS MARKET', 38.42, '', 'Posted', 1296.81],
+  ['', excelSerial(2025, 3, 13), '', 'XXXXX CREDIT CRDAUTOPAY   PPD', 250, '', 'Posted', 1029.56],
+  ['', excelSerial(2025, 3, 12), '', 'STUDENT LOAN PAYMENT', 180, '', 'Posted', 1279.56],
+  ['', excelSerial(2025, 3, 11), '', 'Service Charge', 12, '', 'Posted', 1279.56],
+  ['', excelSerial(2025, 3, 10), '', 'COFFEE SHOP DOWNTOWN', 5.25, '', 'Pending', 1291.56],
+  ['', excelSerial(2025, 3, 9), '', 'WHOLE FOODS MARKET', 38.42, '', 'Posted', 1296.81],
 ];
 
 function esc(s) {

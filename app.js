@@ -1969,11 +1969,8 @@
   if ($editDeleteBtn) $editDeleteBtn.addEventListener('click', deleteEntryFromEditor);
 
   // ---------- Bank / card import (CSV + XLSX) ----------
-  var TRANSFER_PATTERNS = [
-    /\bautopay\b/i, /\bcredit\s*crd\b/i, /\bcredit\s*card\b/i,
-    /\bcard\s*payment\b/i, /\bonline\s*payment\b/i, /\bpayment\s*thank\s*you\b/i,
-    /\btransfer\s*to\s*savings\b/i, /\bxfer\b/i
-  ];
+  var CARD_ISSUER_RE = /(chase|amex|americanexpress|discover|capital\s*one|citi|citibank|barclays|wells\s*fargo|bank\s*of\s*america|usbank|synchrony|apple\s*card)/i;
+  var LOAN_SPENDING_RE = /(mortgage|home\s*loan|heloc|student\s*loan|tuition|school\s*pay|nelnet|sallie|fedloan|loan\s*pymt|loan\s*payment|auto\s*loan|car\s*loan)/i;
   var CARD_PAYMENT_TYPES = { payment: true, 'online payment': true };
   var CARD_CREDIT_TYPES = { return: true, refund: true, 'credit': true };
   var CATEGORY_ALIASES = {
@@ -2227,8 +2224,19 @@
     return 'unknown';
   }
 
-  function mapExternalCategory(extName) {
-    if (!extName) return categories[0] ? categories[0].id : 'other';
+  function ensureCategoryId(id, name, emoji, color) {
+    for (var i = 0; i < categories.length; i++) {
+      if (categories[i].id === id) return id;
+    }
+    categories.push({ id: id, name: name, emoji: emoji || '📦', color: color || '#adb5bd' });
+    return id;
+  }
+  function defaultImportCategoryId(layout) {
+    ensureCategoryId('other', 'Other', '📦', '#adb5bd');
+    return 'other';
+  }
+  function mapExternalCategory(extName, layout) {
+    if (!extName) return defaultImportCategoryId(layout);
     var key = normText(extName);
     if (CATEGORY_ALIASES[key]) return CATEGORY_ALIASES[key];
     for (var i = 0; i < categories.length; i++) {
@@ -2237,7 +2245,71 @@
     for (var j = 0; j < categories.length; j++) {
       if (key.indexOf(normText(categories[j].name)) !== -1) return categories[j].id;
     }
-    return 'other';
+    return defaultImportCategoryId(layout);
+  }
+  function mapAppExportCategoryName(catName) {
+    if (!catName) return defaultImportCategoryId('app-export');
+    var key = normText(catName);
+    for (var i = 0; i < categories.length; i++) {
+      if (normText(categories[i].name) === key) return categories[i].id;
+    }
+    return mapExternalCategory(catName, 'app-export');
+  }
+  function guessCategoryFromBankDescription(note) {
+    var n = normText(note);
+    var compact = n.replace(/\s+/g, '');
+    if (/service\s*charge|overdraft|atm\s*fee|monthly\s*fee|maintenance\s*fee/.test(n)) return 'bills';
+    if (LOAN_SPENDING_RE.test(n) || LOAN_SPENDING_RE.test(compact)) return 'bills';
+    if (/mortgage|rent\b|hoa\b|property\s*tax/.test(n)) return 'bills';
+    if (/tuition|university|college|school/.test(n)) return 'bills';
+    if (/verizon|at&t|att|t-?mobile|comcast|xfinity|spectrum|utility|electric|water\s*bill|pg&e|coned/.test(n)) return 'bills';
+    if (/payroll|direct\s*dep|salary/.test(n)) return defaultImportCategoryId('bank');
+    return defaultImportCategoryId('bank');
+  }
+  function categoryForImportRow(layout, extCatName, note) {
+    if (layout === 'bank') {
+      var guess = guessCategoryFromBankDescription(note);
+      if (guess !== defaultImportCategoryId('bank') || !extCatName) return guess;
+      return defaultImportCategoryId('bank');
+    }
+    if (layout === 'card') return mapExternalCategory(extCatName, layout);
+    return mapExternalCategory(extCatName, layout);
+  }
+  function compactTransferText(desc) {
+    return normText(desc).replace(/\s+/g, '');
+  }
+  function isLoanOrMortgageSpending(desc) {
+    var n = normText(desc);
+    var c = compactTransferText(desc);
+    if (LOAN_SPENDING_RE.test(n)) return true;
+    if (/studentloan|mortgagepymt|homeloan|autoloan|carloan/.test(c)) return true;
+    return false;
+  }
+  function isCardBillAutopayTransfer(desc) {
+    if (!desc) return false;
+    if (isLoanOrMortgageSpending(desc)) return false;
+    var n = normText(desc);
+    var c = compactTransferText(desc);
+    if (/\bvenmo\b/.test(n)) return false;
+    if (/epayment|e-?payment/.test(c) && /(crd|card|credit|chase|amex|visa|discover|autopay)/.test(c)) return true;
+    if (/autopay/.test(c) && (/(crd|card|credit)/.test(c) || CARD_ISSUER_RE.test(n))) return true;
+    if (/crdautopay|creditautopay|creditcrd|cardpymt|cardpayment|cardpmt|ccpayment|ccpmt|creditcardpymt/.test(c)) return true;
+    if (/(crd|card).*(autopay|pymt|pmt|payment)/.test(c) || /(autopay|pymt|pmt).*(crd|card)/.test(c)) return true;
+    if (CARD_ISSUER_RE.test(n) && /(autopay|epayment|e-?payment|crdpymt|crdpmt|creditcrd)/.test(c)) return true;
+    if (/\bpayment\b/.test(n) && /\b(credit|crd|card)\b/.test(n) && CARD_ISSUER_RE.test(n)) return true;
+    return false;
+  }
+  function importSourceKind(layout) {
+    if (layout === 'card') return 'card';
+    if (layout === 'bank') return 'bank';
+    if (layout === 'app-export') return 'app';
+    return layout || 'generic';
+  }
+  function importContentKey(layout, ts, amount, note, categoryId) {
+    if (layout === 'app-export') {
+      return 'app|' + entryDedupeKey({ id: null, ts: ts, amount: amount, categoryId: categoryId, note: note || '' });
+    }
+    return importSourceKind(layout) + '|' + dayKey(ts) + '|' + fmtMoney(amount) + '|' + descriptionMatchKey(note);
   }
 
   function findImportRule(note) {
@@ -2255,30 +2327,28 @@
     if (layout === 'card') {
       if (CARD_PAYMENT_TYPES[t] && !importSettings.countCardPayments) return true;
     }
+    if (layout === 'bank' && isCardBillAutopayTransfer(desc)) return true;
     var note = normText(desc);
     if (!note) return false;
     if (/\bvenmo\b/.test(note)) return false;
-    for (var i = 0; i < TRANSFER_PATTERNS.length; i++) {
-      if (TRANSFER_PATTERNS[i].test(note)) return true;
-    }
-    if (layout === 'bank' && /\bpayment\b/.test(note) && /\b(credit|crd|card|chase|amex|visa|discover)\b/.test(note)) return true;
+    if (/\btransfer\s*to\s*savings\b/.test(note) || /\bxfer\b/.test(note)) return true;
+    if (/\bonline\s*payment\b/.test(note) && /\b(credit|card|crd)\b/.test(note)) return true;
+    if (/\bpayment\s*thank\s*you\b/.test(note)) return true;
     return false;
   }
 
-  function buildExistingImportIndex() {
-    var byBatchRow = {};
-    var byContent = {};
+  function buildExistingContentCounts(layout) {
+    var counts = {};
     entries.forEach(function (e) {
-      if (e.importBatchId && e.importRowKey) byBatchRow[e.importBatchId + '|' + e.importRowKey] = true;
-      var ck = dayKey(e.ts) + '|' + fmtMoney(e.amount) + '|' + descriptionMatchKey(e.note);
-      byContent[ck] = (byContent[ck] || 0) + 1;
+      var ck = importContentKey(layout, e.ts, e.amount, e.note || '', e.categoryId);
+      counts[ck] = (counts[ck] || 0) + 1;
     });
-    return { byBatchRow: byBatchRow, byContent: byContent };
+    return counts;
   }
 
   function rowsFromTable(dataRows, headerRow, layout, batchId) {
-    var idx = buildExistingImportIndex();
-    var batchSeen = {};
+    var contentCounts = buildExistingContentCounts(layout);
+    var fileRowCounts = {};
     var out = [];
     var dateIdx = findCol(headerRow, ['transaction date', 'post date', 'date']);
     var postIdx = findCol(headerRow, ['post date']);
@@ -2304,7 +2374,7 @@
       }
 
       var desc = descIdx !== -1 ? cols[descIdx] : '';
-      var note = cleanImportNote(desc);
+      var note = layout === 'app-export' ? String(desc || '').trim() : cleanImportNote(desc);
       var typeVal = typeIdx !== -1 ? cols[typeIdx] : '';
       var ts = null;
       var amount = NaN;
@@ -2334,7 +2404,9 @@
           if (!isNaN(payAmt) && payAmt > 0) {
             out.push({
               status: 'transfer', reason: 'Card bill payment', note: note, amount: payAmt, ts: ts,
-              categoryId: mapExternalCategory(catIdx !== -1 ? cols[catIdx] : ''), isTransfer: true, include: false
+              categoryId: categoryForImportRow('card', catIdx !== -1 ? cols[catIdx] : '', note),
+              isTransfer: true, include: false, layout: 'card',
+              initialIsTransfer: true, userSetCategory: false, userSetTransfer: false
             });
             continue;
           }
@@ -2369,6 +2441,11 @@
         }
       }
 
+      var appExportCatId = null;
+      if (layout === 'app-export' && catIdx !== -1) {
+        appExportCatId = mapAppExportCategoryName((cols[catIdx] || '').trim());
+      }
+
       if (!ts) {
         out.push({ status: 'unreadable', reason: 'Could not parse date', note: note });
         continue;
@@ -2390,23 +2467,29 @@
       var postDate = postIdx !== -1 && postIdx !== dateIdx ? String(cols[postIdx] || '') : '';
       var rowKey = importRowKey([layout, dayKey(ts), fmtMoney(amount), descriptionMatchKey(note), normText(typeVal), postDate, String(ri)]);
 
-      if (idx.byBatchRow[batchId + '|' + rowKey]) {
-        out.push({ status: 'duplicate', reason: 'Already imported from this file', note: note, amount: amount, ts: ts });
-        continue;
-      }
-      if (batchSeen[rowKey]) {
-        out.push({ status: 'duplicate', reason: 'Duplicate row in file', note: note, amount: amount, ts: ts });
-        continue;
-      }
-      batchSeen[rowKey] = true;
+      var catId = appExportCatId || categoryForImportRow(layout, catIdx !== -1 ? cols[catIdx] : '', note);
+      if (rule && rule.categoryId && !rule.isTransfer) catId = rule.categoryId;
 
-      var catId = mapExternalCategory(catIdx !== -1 ? cols[catIdx] : '');
-      if (rule && rule.categoryId) catId = rule.categoryId;
+      var contentKey = importContentKey(layout, ts, amount, note, catId);
+      fileRowCounts[contentKey] = (fileRowCounts[contentKey] || 0) + 1;
+      var occurrence = fileRowCounts[contentKey];
+      var existingN = contentCounts[contentKey] || 0;
+      if (occurrence <= existingN) {
+        out.push({
+          status: 'duplicate',
+          reason: 'Already in your log (overlapping statement)',
+          note: note, amount: amount, ts: ts, contentKey: contentKey
+        });
+        continue;
+      }
+      contentCounts[contentKey] = existingN + 1;
 
       if (isTransfer) {
         out.push({
           status: 'transfer', reason: 'Transfer between accounts', note: note, amount: amount, ts: ts,
-          categoryId: catId, importRowKey: rowKey, isTransfer: true, include: false
+          categoryId: catId, importRowKey: rowKey, isTransfer: true, include: false,
+          layout: layout, suggestedCategoryId: catId, initialCategoryId: catId,
+          initialIsTransfer: true, userSetCategory: false, userSetTransfer: false
         });
         continue;
       }
@@ -2414,7 +2497,9 @@
       out.push({
         status: 'import', note: note, amount: amount, ts: ts, categoryId: catId,
         importRowKey: rowKey, isTransfer: false, include: true,
-        typeVal: typeVal, layout: layout
+        typeVal: typeVal, layout: layout, contentKey: contentKey,
+        suggestedCategoryId: catId, initialCategoryId: catId, initialIsTransfer: false,
+        userSetCategory: false, userSetTransfer: false
       });
     }
     return out;
@@ -2466,7 +2551,9 @@
     Array.prototype.forEach.call($importRowList.querySelectorAll('.import-cat-select'), function (sel) {
       sel.addEventListener('change', function () {
         var idx = parseInt(sel.dataset.idx, 10);
-        pendingImport.rows[idx].categoryId = sel.value;
+        var row = pendingImport.rows[idx];
+        row.categoryId = sel.value;
+        row.userSetCategory = sel.value !== row.initialCategoryId;
       });
     });
     Array.prototype.forEach.call($importRowList.querySelectorAll('[data-transfer]'), function (cb) {
@@ -2476,6 +2563,7 @@
         row.isTransfer = cb.checked;
         row.status = cb.checked ? 'transfer' : 'import';
         row.include = !cb.checked;
+        row.userSetTransfer = cb.checked !== row.initialIsTransfer;
         cb.closest('.import-row').classList.toggle('is-transfer', cb.checked);
       });
     });
@@ -2483,6 +2571,7 @@
   }
 
   function learnFromImportRow(row) {
+    if (!row.userSetCategory && !row.userSetTransfer) return;
     if (!row.note) return;
     var pattern = descriptionMatchKey(row.note);
     if (!pattern || pattern.length < 4) return;
@@ -2515,11 +2604,11 @@
       if (r.status === 'unreadable') { skippedBad++; return; }
       if (r.status === 'transfer' || (r.isTransfer && !r.include)) {
         skippedTransfer++;
-        learnFromImportRow(r);
+        if (r.userSetTransfer || r.userSetCategory) learnFromImportRow(r);
         return;
       }
       if (r.status !== 'import' || !r.include) return;
-      learnFromImportRow(r);
+      if (r.userSetTransfer || r.userSetCategory) learnFromImportRow(r);
       entries.push({
         id: uid(),
         amount: r.amount,
@@ -2527,11 +2616,13 @@
         note: r.note || '',
         ts: r.ts,
         importBatchId: batchId,
-        importRowKey: r.importRowKey
+        importRowKey: r.importRowKey,
+        importSource: importSourceKind(r.layout)
       });
       added++;
     });
     saveEntries();
+    saveCategories();
     renderAll(); rebuildFilterDropdowns();
     renderCategoryList(); buildYearSelect(true); renderReport();
     $importModal.classList.remove('show');
