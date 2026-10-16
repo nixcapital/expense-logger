@@ -13,8 +13,8 @@
 <link rel="manifest" href="manifest.json">
 <link rel="icon" href="icon-192.png">
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
-<link rel="stylesheet" href="styles.css?v=1.7.0">
-<link rel="stylesheet" href="icon-animations.css?v=1.7.0">
+<link rel="stylesheet" href="styles.css?v=1.7.2">
+<link rel="stylesheet" href="icon-animations.css?v=1.7.2">
 <title>Expense Logger</title>
 </head>
 <body>
@@ -571,24 +571,28 @@
 
 <!-- Modal: category -->
 <div class="modal-overlay sheet" id="catModal">
-  <div class="modal sheet-modal">
+  <div class="modal sheet-modal cat-sheet-modal">
     <div class="sheet-grabber" aria-hidden="true"></div>
     <div class="sheet-header">
       <button class="btn-secondary sheet-cancel" id="catCancelBtn" type="button">Cancel</button>
       <h3 id="catModalTitle">Add Category</h3>
-      <button class="link-btn" id="catSaveBtn" type="button">Save</button>
+      <button class="link-btn sheet-header-trailing" id="catSaveBtn" type="button">Save</button>
     </div>
-    <div class="field">
+    <div class="field cat-name-field">
       <label for="catNameInput">Name</label>
-      <input type="text" id="catNameInput" placeholder="Category name" maxlength="20">
+      <div class="cat-name-input-wrap">
+        <span id="catNamePreview" class="cat-name-preview-host" aria-hidden="true"></span>
+        <input type="text" id="catNameInput" placeholder="Category name" maxlength="20" autocomplete="off">
+        <span class="cat-name-count" id="catNameCount" aria-live="polite">0/20</span>
+      </div>
     </div>
     <div class="field">
-      <label>Icon</label>
-      <div class="icon-picker" id="iconPicker"></div>
+      <label id="catIconLabel">Icon</label>
+      <div class="icon-picker" id="iconPicker" role="radiogroup" aria-labelledby="catIconLabel"></div>
     </div>
-    <div class="field">
-      <label>Color</label>
-      <div class="color-swatches" id="colorSwatches"></div>
+    <div class="field cat-color-field">
+      <label id="catColorLabel">Color</label>
+      <div class="color-swatches" id="colorSwatches" role="radiogroup" aria-labelledby="catColorLabel"></div>
     </div>
   </div>
 </div>
@@ -872,10 +876,10 @@
   <p class="hint wrapped-empty" id="wrappedEmpty" hidden>No spending data for this month.</p>
 </div>
 
-<script src="icon-system.js?v=1.7.0"></script>
-<script src="forecast.js?v=1.7.0"></script>
-<script src="wrapped.js?v=1.7.0"></script>
-<script src="app.js?v=1.7.0"></script>
+<script src="icon-system.js?v=1.7.2"></script>
+<script src="forecast.js?v=1.7.2"></script>
+<script src="wrapped.js?v=1.7.2"></script>
+<script src="app.js?v=1.7.2"></script>
 <script>
 (function () {
   'use strict';

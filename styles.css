@@ -1,4 +1,4 @@
-/* Expense Logger 1.7.0 — dark-first, iOS-style */
+/* Expense Logger 1.7.2 — dark-first, iOS-style */
 
 :root {
   --bg: #0B0C10;
@@ -555,20 +555,159 @@ input[type="number"] {
   justify-content: center;
   gap: 8px;
 }
-.icon-picker {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
+/* Category sheet — icon picker & name field */
+.cat-sheet-modal {
+  height: auto;
+  padding-bottom: 34px;
 }
-.icon-picker-option {
-  padding: 4px;
+.cat-name-input-wrap {
+  height: 52px;
   border-radius: var(--radius-input);
-  border: 2px solid transparent;
+  background: var(--raised);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 14px 0 10px;
+}
+.cat-name-input-wrap input[type="text"] {
+  flex: 1;
+  min-width: 0;
+  background: transparent;
+  padding: 0;
+  box-shadow: none;
+}
+.cat-name-input-wrap input[type="text"]:focus {
+  box-shadow: none;
+}
+.cat-name-preview-host {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.cat-badge--name-preview {
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+}
+.cat-badge--name-preview .icon-art {
+  width: 26px;
+  height: 26px;
+  margin: auto;
+}
+.cat-badge--name-preview .cat-badge-letter {
+  font-size: 18px;
+}
+.cat-name-count {
+  flex-shrink: 0;
+  font-size: 13px;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+.cat-color-field {
+  margin-bottom: 0;
+}
+#catModal .icon-picker {
+  display: grid;
+  grid-template-columns: repeat(5, 64px);
+  justify-content: space-between;
+  row-gap: 14px;
+  --picker-fg: var(--text);
+  --picker-ring: var(--accent);
+}
+#catModal .icon-picker-option {
+  width: 64px;
+  height: 64px;
+  padding: 0;
+  margin: 0;
+  border: none;
+  border-radius: var(--radius-card);
   background: var(--raised);
   cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: inherit;
+  -webkit-tap-highlight-color: transparent;
+  transition: transform 100ms ease-out, background 150ms ease, box-shadow 150ms ease;
 }
-.icon-picker-option.selected {
-  border-color: var(--accent);
+#catModal .icon-picker-option:active {
+  transform: scale(0.96);
+}
+#catModal .icon-picker-option.selected {
+  background: color-mix(in srgb, var(--picker-ring) 20%, var(--raised));
+  box-shadow: inset 0 0 0 2.5px var(--picker-ring);
+}
+@media (prefers-color-scheme: light) {
+  #catModal .icon-picker-option.selected {
+    background: color-mix(in srgb, var(--picker-ring) 16%, var(--raised));
+  }
+}
+#catModal .icon-picker .cat-badge--picker-tile {
+  width: 40px;
+  height: 40px;
+  border-radius: 0;
+  background: transparent !important;
+  overflow: visible;
+  color: var(--picker-fg);
+  transition: color 150ms ease;
+}
+#catModal .icon-picker .cat-badge--picker-tile .cat-badge-letter {
+  font-size: 26px;
+  font-weight: 700;
+  color: var(--picker-fg);
+  transition: color 150ms ease;
+}
+#catModal .icon-picker .cat-badge--picker-tile .icon-art {
+  width: 40px;
+  height: 40px;
+  color: var(--picker-fg);
+  transition: color 150ms ease;
+}
+#catModal .icon-picker .cat-badge--picker-tile .cat-badge-icon {
+  background: var(--picker-fg);
+  transition: background 150ms ease;
+}
+#catModal .cat-name-preview-host .cat-badge-icon {
+  background: var(--picker-fg);
+}
+#catModal .icon-picker .icon-art path,
+#catModal .icon-picker .icon-art circle {
+  stroke-width: 5;
+}
+#catModal .cat-name-preview-host .icon-art path,
+#catModal .cat-name-preview-host .icon-art circle {
+  stroke-width: 5;
+}
+#catModal .color-swatches {
+  display: grid;
+  grid-template-columns: repeat(6, 44px);
+  justify-content: space-between;
+  row-gap: 12px;
+}
+#catModal .color-swatch {
+  width: 44px;
+  height: 44px;
+  border: none;
+  padding: 0;
+  border-radius: 50%;
+  cursor: pointer;
+}
+#catModal .color-swatch.selected {
+  box-shadow: 0 0 0 3px var(--card), 0 0 0 5.5px var(--text);
+}
+@media (prefers-reduced-motion: reduce) {
+  #catModal .icon-picker-option {
+    transition: none;
+  }
+  #catModal .icon-picker-option:active {
+    transform: none;
+  }
+  #catModal .icon-picker .cat-badge--picker-tile,
+  #catModal .icon-picker .cat-badge--picker-tile .icon-art,
+  #catModal .icon-picker .cat-badge--picker-tile .cat-badge-letter {
+    transition: none;
+  }
 }
 
 .save-btn {
