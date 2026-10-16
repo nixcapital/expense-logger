@@ -2032,9 +2032,10 @@ button.legend-row.legend-btn.active { background: color-mix(in srgb, var(--accen
 .forecast-headline-date.is-all-days { font-size: 28px; }
 .forecast-days-away { font-size: 14px; color: var(--text-dim); margin: 0; white-space: nowrap; }
 .forecast-cause-line, .forecast-positive-line {
-  font-size: 14px; color: var(--text-secondary); margin: 10px 0 0; line-height: 1.4;
-  display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
+  font-size: 13px; color: var(--text-secondary); margin: 10px 0 0; line-height: 1.35;
+  display: flex; flex-wrap: wrap; align-items: center; gap: 5px;
 }
+.forecast-cause-when { white-space: nowrap; }
 .forecast-cause-line strong, .forecast-positive-line strong { color: var(--text); font-weight: 700; }
 .forecast-positive-line { color: var(--success); }
 .forecast-positive-line svg { flex-shrink: 0; }

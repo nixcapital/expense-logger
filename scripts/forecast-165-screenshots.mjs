@@ -71,7 +71,7 @@ async function openForecast(page) {
     const m = document.getElementById('forecastMain');
     return m && m.hidden === false;
   }, { timeout: 30000 });
-  await page.waitForTimeout(500);
+  await page.waitForTimeout(400);
 }
 
 async function capture(page, outDir, name, scrollY) {
@@ -91,36 +91,31 @@ async function run() {
   await new Promise((r) => srv.listen(PORT, r));
   const browser = await chromium.launch();
 
-  for (const scheme of ['light', 'dark']) {
-    const context = await browser.newContext({
-      viewport: VIEWPORT,
-      colorScheme: scheme,
-      isMobile: true,
-      hasTouch: true
-    });
-    const page = await context.newPage();
-    await page.addInitScript((data) => {
-      Object.keys(data).forEach((k) => localStorage.setItem(k, data[k]));
-      localStorage.setItem('expenseLogger.lock.v1', JSON.stringify({ enabled: false }));
-      Date.now = function () { return new Date(2026, 9, 16, 12, 0, 0).getTime(); };
-    }, seedStorage({}));
-    await page.goto(`http://127.0.0.1:${PORT}/index.html`, { waitUntil: 'networkidle' });
-    await openForecast(page);
-    for (const outDir of OUT_DIRS) {
-      await capture(page, outDir, `1-top-${scheme}.png`, 0);
-      if (scheme === 'light') {
-        await capture(page, outDir, 'no-income-notice.png', 520);
-        await capture(page, outDir, '3-upcoming.png', 1100);
-        await page.click('[data-forecast-detail="bills"]');
-        await page.waitForSelector('#forecastDetailSheet.show');
-        await page.waitForTimeout(300);
-        await capture(page, outDir, '4-bills-sheet.png', 0);
-        await page.click('#forecastDetailDoneBtn');
-        await page.waitForTimeout(200);
-      }
-    }
-    await context.close();
+  const baseCtx = await browser.newContext({
+    viewport: VIEWPORT,
+    colorScheme: 'light',
+    isMobile: true,
+    hasTouch: true
+  });
+  const page = await baseCtx.newPage();
+  await page.addInitScript((data) => {
+    Object.keys(data).forEach((k) => localStorage.setItem(k, data[k]));
+    localStorage.setItem('expenseLogger.lock.v1', JSON.stringify({ enabled: false }));
+    Date.now = function () { return new Date(2026, 9, 16, 12, 0, 0).getTime(); };
+  }, seedStorage({}));
+  await page.goto(`http://127.0.0.1:${PORT}/index.html`, { waitUntil: 'networkidle' });
+  await openForecast(page);
+  for (const outDir of OUT_DIRS) {
+    await capture(page, outDir, '1-top-light.png', 0);
+    await capture(page, outDir, '3-upcoming.png', 1100);
+    await page.click('[data-forecast-detail="bills"]');
+    await page.waitForSelector('#forecastDetailSheet.show');
+    await page.waitForTimeout(300);
+    await capture(page, outDir, '4-bills-sheet.png', 0);
+    await page.click('#forecastDetailDoneBtn');
+    await page.waitForTimeout(200);
   }
+  await baseCtx.close();
 
   const incomeCtx = await browser.newContext({
     viewport: VIEWPORT,
@@ -137,7 +132,14 @@ async function run() {
   await incomePage.goto(`http://127.0.0.1:${PORT}/index.html`, { waitUntil: 'networkidle' });
   await openForecast(incomePage);
   await incomePage.click('.forecast-range-btn[data-forecast-days="90"]');
-  await incomePage.waitForTimeout(500);
+  await incomePage.waitForFunction(() => {
+    const rows = document.querySelectorAll('.forecast-bd-row');
+    for (let i = 0; i < rows.length; i++) {
+      if (/paycheck/i.test(rows[i].textContent)) return true;
+    }
+    return false;
+  }, { timeout: 15000 });
+  await incomePage.waitForTimeout(300);
   for (const outDir of OUT_DIRS) {
     await capture(incomePage, outDir, '5-with-income.png', 0);
   }

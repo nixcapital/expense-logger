@@ -5,6 +5,7 @@
 import { createRequire } from 'module';
 import assert from 'assert';
 import { buildForecastFixture164, FIXTURE_NOW } from './forecast-fixture-164.mjs';
+import { buildForecastFixture165Income } from './forecast-fixture-165-income.mjs';
 
 const require = createRequire(import.meta.url);
 const FC = require('../forecast.js');
@@ -537,5 +538,21 @@ const headInc = FC.buildForecastHeadline({
 });
 assert.ok(simInc.peekPastWindow, 'large bill peek exists past 90d window');
 assert.ok(headInc.positiveAllWindow, 'stays positive through 90d even with peek row');
+
+console.log('forecast-test: screenshot income fixture projects payroll in 90d window');
+const fx165 = buildForecastFixture165Income();
+const br165 = FC.computeWindowBreakdown({
+  nowMs: fx165.nowMs,
+  windowDays: 90,
+  startingBalance: fx165.balance,
+  entries: fx165.entries,
+  checkingId: fx165.checkingId,
+  chaseId: CHASE,
+  transferPairs: fx165.transferPairs,
+  maxLookaheadDays: 365
+});
+assert.ok(br165.income > 0, '165 income fixture has in-window payroll');
+assert.ok(br165.details.incomeCount >= 1, 'at least one paycheck in 90d');
+assert.strictEqual(br165.income, br165.details.incomeCount * br165.details.incomeEach);
 
 console.log('PASS');

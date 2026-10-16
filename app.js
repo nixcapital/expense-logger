@@ -6225,6 +6225,25 @@
     return sign + '$' + abs;
   }
 
+  function fmtForecastDailyRate(n) {
+    var v = Math.round(n * 100) / 100;
+    if (!isFinite(v) || v <= 0) return '$0.00';
+    return '$' + v.toFixed(2);
+  }
+
+  function fmtForecastAmountCents(n, opts) {
+    opts = opts || {};
+    var rounded = Math.round(n * 100) / 100;
+    var abs = Math.abs(rounded).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    if (opts.inflow) {
+      if (rounded <= 0) return '\u2212$' + abs;
+      return '+\u0024' + abs;
+    }
+    if (rounded < 0) return '\u2212$' + abs;
+    if (opts.alwaysPlus && rounded > 0) return '+\u0024' + abs;
+    return '$' + abs;
+  }
+
   function renderHomeForecastCard() {
     clearHomeForecastError();
     try {
@@ -6375,7 +6394,7 @@
       ? (incomeCount + ' paycheck' + (incomeCount > 1 ? 's' : '') + ' \u00B7 ' + fmtForecastWhole(det.incomeEach) + ' each')
       : 'No deposits found';
     var daily = breakdown.dailyRate || 0;
-    var spendSub = daily > 0 ? '~' + fmtForecastWhole(daily) + '/day \u00B7 groceries, gas, dining' : 'No everyday pace detected';
+    var spendSub = daily > 0 ? '~' + fmtForecastDailyRate(daily) + '/day \u00B7 groceries, gas, dining' : 'No everyday pace detected';
     var rows = [
       { kind: 'income', title: 'Income', sub: incomeSub, amt: breakdown.income, inflow: true, zeroNeutral: true },
       { kind: 'bills', title: 'Bills', sub: billSub, amt: -breakdown.bills },
@@ -6473,7 +6492,8 @@
         causeEl.hidden = false;
         var c = headline.cause;
         causeEl.innerHTML = '<span aria-hidden="true"><svg width="16" height="16" viewBox="0 0 16 16" fill="none"><rect x="2" y="4" width="12" height="8" rx="1.2" stroke="currentColor"/><path d="M2 6.5h12" stroke="currentColor"/></svg></span>'
-          + ' Then <strong>' + escHtml(c.label) + ' ' + fmtForecastWhole(-c.amount) + '</strong> on ' + formatForecastWeekdayDate(c.ts);
+          + ' Then <strong>' + escHtml(c.label) + ' ' + fmtForecastWhole(-c.amount) + '</strong> <span class="forecast-cause-when">on '
+          + escHtml(formatForecastWeekdayDate(c.ts)) + '</span>';
       }
     }
   }
@@ -6548,7 +6568,7 @@
       html += '<div class="forecast-bd-icon" style="background:#cc5de822;color:#cc5de8">' + forecastBreakdownRowIcon('bills').svg + '</div>';
       html += '<div class="forecast-detail-hero-text"><h3>Bills</h3><p>Next ' + forecastChartDays + ' days \u00B7 ' + billCount + ' bills</p></div>';
       html += '<div class="forecast-detail-hero-amt">' + fmtForecastWhole(-total) + '</div></div>';
-      html += '<div class="forecast-detail-section-label"><span>Recurring \u00B7 Counted</span><span>Latest amount</span></div>';
+      html += '<div class="forecast-detail-section-label"><span>Recurring \u00B7 Counted</span><span>Typical amount</span></div>';
       billSchedules.forEach(function (s) {
         var next = FC.nextProjectedOccurrence(s, nowMs, entries, checkingId, FC.addDays(nowMs, 450));
         html += '<div class="forecast-detail-row"><div><p class="forecast-detail-row-name">' + escHtml(s.label) + '</p><p class="forecast-detail-row-sub">\u21BB ' + escHtml(scheduleCadenceLabel(s)) + '</p></div>';
@@ -6566,7 +6586,7 @@
         });
       }
       html += '<p class="forecast-detail-note"><span aria-hidden="true">\u24D8</span><span>One-offs are charges seen only once. Turn on &ldquo;Count this?&rdquo; to repeat one in the forecast.</span></p>';
-      html += '<p class="forecast-detail-note"><span aria-hidden="true">\u21BB</span><span>Recurring bills are found from your Checking history. Amounts use the latest charge.</span></p>';
+      html += '<p class="forecast-detail-note"><span aria-hidden="true">\u21BB</span><span>Recurring bills are found from your Checking history. Amounts use your typical recent charge.</span></p>';
     } else if (kind === 'income') {
       var inc = schedules.filter(function (s) { return s && s.kind === 'inflow'; });
       html += '<div class="forecast-detail-hero"><div class="forecast-bd-icon" style="background:#34C77B22;color:#34C77B">' + forecastBreakdownRowIcon('income').svg + '</div>';
@@ -6597,7 +6617,7 @@
       html += '<div><h3>Everyday spending</h3><p>Typical daily pace from recent Checking</p></div>';
       html += '<div class="forecast-detail-hero-amt">' + forecastSignedMoney(lastForecastBreakdown ? -lastForecastBreakdown.everyday : 0) + '</div></div>';
       html += '<div class="forecast-detail-row"><div><p class="forecast-detail-row-name">Daily rate</p><p class="forecast-detail-row-sub">Groceries, dining, gas, and other small debits</p></div>';
-      html += '<div class="forecast-detail-row-amt">~' + fmtMoneyDisplay(rate) + '/day</div></div>';
+      html += '<div class="forecast-detail-row-amt">~' + fmtForecastDailyRate(rate) + '/day</div></div>';
       html += '<p class="forecast-detail-note"><span aria-hidden="true">\u24D8</span><span>Spread across each day in the forecast window (not shown as separate dated rows).</span></p>';
     }
     body.innerHTML = html;
@@ -6976,8 +6996,8 @@
       html += '<div class="forecast-up-icon" style="background:#ff922b22;color:#ff922b">';
       html += '<svg width="18" height="18" viewBox="0 0 18 18" fill="none"><path d="M4 4h10l-1 9H5L4 4z" stroke="currentColor"/><path d="M7 4V3h4v1" stroke="currentColor"/></svg></div>';
       html += '<div><p class="forecast-up-title">Everyday spending</p>';
-      html += '<p class="forecast-up-sub">~' + fmtMoneyDisplay(daily) + '/day \u00B7 groceries, gas, dining</p></div>';
-      html += '<div class="forecast-up-amt-col"><div class="forecast-up-amt">-' + fmtMoneyDisplay(dailyTotal) + '</div>';
+      html += '<p class="forecast-up-sub">~' + fmtForecastDailyRate(daily) + '/day \u00B7 groceries, gas, dining</p></div>';
+      html += '<div class="forecast-up-amt-col"><div class="forecast-up-amt">' + fmtForecastAmountCents(-dailyTotal) + '</div>';
       html += '<div class="forecast-up-run">over ' + chartDays + ' days</div></div></div>';
     }
     var items = sim.upcoming.slice().sort(function (a, b) { return a.ts - b.ts; });
@@ -7010,12 +7030,12 @@
       var amtTxt = '';
       if (u.kind === 'inflow') {
         amtClass += ' is-in';
-        amtTxt = '+' + fmtMoneyDisplay(u.amount);
+        amtTxt = fmtForecastAmountCents(u.amount, { inflow: true });
       } else if (u.kind === 'transfer-other') {
         amtClass += ' is-xfer';
-        amtTxt = fmtMoneyDisplay(u.amount);
+        amtTxt = fmtForecastAmountCents(u.amount);
       } else {
-        amtTxt = '-' + fmtMoneyDisplay(u.amount);
+        amtTxt = fmtForecastAmountCents(-u.amount);
       }
       var rowClass = 'forecast-up-row';
       if (u.amount >= 500) rowClass += ' forecast-up-row--major';
@@ -7049,7 +7069,7 @@
       html += '<p class="forecast-up-sub">' + formatForecastWeekdayDate(peek.ts) + ' \u00B7 Card payment</p>';
       if (peek.nominalTs && peek.nominalTs !== peek.ts) html += forecastMovedFromHTML(peek.nominalTs, peek.ts);
       html += '</div>';
-      html += '<div class="forecast-up-amt-col"><div class="forecast-up-amt">' + fmtForecastWhole(-peek.amount) + '</div>';
+      html += '<div class="forecast-up-amt-col"><div class="forecast-up-amt">' + fmtForecastAmountCents(-peek.amount) + '</div>';
       var peekBal = peek.balanceAfter != null ? peek.balanceAfter : null;
       html += '<div class="forecast-cushion-chip is-critical">Below $0 \u00B7 ' + (peekBal != null ? fmtForecastWhole(peekBal) : '\u2014') + '</div></div></div>';
     }
