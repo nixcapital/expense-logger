@@ -1,4 +1,4 @@
-/* Expense Logger 1.4.2 — dark-first, iOS-style */
+/* Expense Logger 1.4.3 — dark-first, iOS-style */
 
 :root {
   --bg: #0B0C10;
@@ -716,6 +716,17 @@ button.legend-row.legend-btn.active { background: color-mix(in srgb, var(--accen
 .trend-pill.flat { background: var(--raised); color: var(--text-dim); }
 
 /* Activity */
+.activity-search-row {
+  display: flex;
+  align-items: stretch;
+  gap: var(--sp-2);
+  margin-bottom: var(--sp-3);
+}
+.activity-search-row .search-wrap {
+  flex: 1;
+  min-width: 0;
+  margin-bottom: 0;
+}
 .search-wrap {
   position: relative;
   margin-bottom: var(--sp-3);
@@ -727,6 +738,7 @@ button.legend-row.legend-btn.active { background: color-mix(in srgb, var(--accen
   font-size: 17px;
   background: var(--raised);
   border-radius: 10px;
+  width: 100%;
 }
 .search-icon {
   position: absolute;
@@ -737,31 +749,136 @@ button.legend-row.legend-btn.active { background: color-mix(in srgb, var(--accen
   font-size: 18px;
   pointer-events: none;
 }
-.filter-chips {
-  display: flex;
-  gap: var(--sp-2);
-  overflow-x: auto;
-  margin-bottom: var(--sp-3);
-  margin-right: calc(-1 * var(--gutter));
-  padding-right: var(--gutter);
-  padding-left: 2px;
-  -webkit-overflow-scrolling: touch;
-  scrollbar-width: none;
-}
-.filter-chips::-webkit-scrollbar { display: none; }
-.filter-chip {
-  flex: 0 0 auto;
+.activity-filter-btn {
+  flex: 0 0 36px;
+  width: 36px;
+  height: 36px;
+  min-height: 36px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   background: var(--raised);
   border: none;
-  border-radius: var(--radius-pill);
-  padding: 8px 14px;
-  font-size: 15px;
-  font-family: inherit;
+  border-radius: 10px;
   color: var(--text);
-  min-height: 36px;
   cursor: pointer;
 }
-.filter-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; opacity: 0; pointer-events: none; }
+.activity-filter-btn.is-active {
+  color: var(--accent);
+  box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--accent) 55%, transparent);
+}
+.activity-range-chips {
+  display: flex;
+  gap: 6px;
+  margin-bottom: var(--sp-3);
+  width: 100%;
+}
+.activity-range-chip {
+  flex: 1 1 0;
+  min-width: 0;
+  background: var(--raised);
+  border: 1px solid var(--sep);
+  border-radius: var(--radius-pill);
+  padding: 7px 4px;
+  font-size: 13px;
+  font-weight: 500;
+  font-family: inherit;
+  color: var(--text);
+  min-height: 32px;
+  cursor: pointer;
+  white-space: nowrap;
+  line-height: 1.1;
+}
+.activity-range-chip[aria-pressed="true"] {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+@media (prefers-color-scheme: light) {
+  .activity-range-chip[aria-pressed="true"] {
+    color: var(--accent-ink);
+  }
+}
+.activity-summary-card {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--sp-3);
+  background: var(--card);
+  border-radius: var(--radius-card);
+  padding: var(--sp-4);
+  margin-bottom: var(--sp-4);
+}
+.activity-summary-range {
+  font-size: 13px;
+  color: var(--text-dim);
+  margin-bottom: var(--sp-1);
+}
+.activity-summary-total {
+  font-size: 28px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+  line-height: 1.1;
+}
+.activity-summary-side {
+  text-align: right;
+  flex-shrink: 0;
+}
+.activity-summary-count {
+  font-size: 13px;
+  color: var(--text-dim);
+  margin-bottom: var(--sp-1);
+}
+.activity-summary-avg {
+  font-size: 13px;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+.activity-summary-avg .avg-amt {
+  color: var(--text);
+  font-weight: 600;
+}
+.activity-month-block { margin-bottom: var(--sp-4); }
+.activity-month-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--sp-3);
+  padding: var(--sp-2) 0 var(--sp-3);
+}
+.activity-month-title {
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+.activity-month-meta {
+  font-size: 13px;
+  color: var(--text-dim);
+  margin-top: 2px;
+}
+.activity-month-total {
+  font-size: 20px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+}
+.activity-filter-sheet {
+  padding: 0 var(--sp-4) var(--sp-6);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+.activity-filter-sheet .field-label {
+  font-size: 13px;
+  color: var(--text-dim);
+  margin-top: var(--sp-2);
+}
+.activity-filter-sheet .field-select {
+  width: 100%;
+  min-height: 44px;
+}
 .entries-meta { font-size: 13px; color: var(--text-dim); margin: 0 0 var(--sp-2); }
 
 .activity-group {

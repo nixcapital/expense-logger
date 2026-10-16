@@ -13,8 +13,8 @@
 <link rel="manifest" href="manifest.json">
 <link rel="icon" href="icon-192.png">
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
-<link rel="stylesheet" href="styles.css?v=1.4.2">
-<link rel="stylesheet" href="icon-animations.css?v=1.4.2">
+<link rel="stylesheet" href="styles.css?v=1.4.3">
+<link rel="stylesheet" href="icon-animations.css?v=1.4.3">
 <title>Expense Logger</title>
 </head>
 <body>
@@ -157,35 +157,41 @@
     <p class="screen-title-compact">Activity</p>
   </div>
 
-  <div class="search-wrap">
-    <span class="search-icon" aria-hidden="true">⌕</span>
-    <input type="search" id="searchInput" placeholder="Search" autocomplete="off" enterkeyhint="search">
+  <div class="activity-search-row">
+    <div class="search-wrap">
+      <span class="search-icon" aria-hidden="true">⌕</span>
+      <input type="search" id="searchInput" placeholder="Search" autocomplete="off" enterkeyhint="search">
+    </div>
+    <button type="button" class="activity-filter-btn" id="activityFilterBtn" aria-label="Filters" aria-haspopup="dialog">
+      <svg width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+        <path d="M3 5h14M5 10h10M7 15h6" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"/>
+        <circle cx="6" cy="5" r="1.75" fill="currentColor"/>
+        <circle cx="14" cy="10" r="1.75" fill="currentColor"/>
+        <circle cx="10" cy="15" r="1.75" fill="currentColor"/>
+      </svg>
+    </button>
   </div>
 
-  <div class="filter-chips" role="group" aria-label="Filters">
-    <button type="button" class="filter-chip" data-filter="category">Category ▾</button>
-    <button type="button" class="filter-chip" data-filter="month">Month ▾</button>
-    <button type="button" class="filter-chip" data-filter="type">Type ▾</button>
-    <button type="button" class="filter-chip" data-filter="sort">Sort ▾</button>
-  </div>
-  <div class="filter-hidden">
-    <select id="filterCategory"><option value="">All categories</option></select>
-    <input type="month" id="filterMonth">
-    <select id="filterType">
-      <option value="all">All types</option>
-      <option value="one-time">One-time</option>
-      <option value="recurring">Recurring</option>
-      <option value="with-receipt">With receipt</option>
-    </select>
-    <select id="filterSort">
-      <option value="newest">Newest first</option>
-      <option value="oldest">Oldest first</option>
-      <option value="highest">Highest amount</option>
-      <option value="lowest">Lowest amount</option>
-    </select>
+  <div class="activity-range-chips" role="group" aria-label="Time range">
+    <button type="button" class="activity-range-chip" data-activity-range="this-month" aria-pressed="true">This month</button>
+    <button type="button" class="activity-range-chip" data-activity-range="last-month" aria-pressed="false">Last month</button>
+    <button type="button" class="activity-range-chip" data-activity-range="3-months" aria-pressed="false">3 months</button>
+    <button type="button" class="activity-range-chip" data-activity-range="year" aria-pressed="false">Year</button>
+    <button type="button" class="activity-range-chip" data-activity-range="all" aria-pressed="false">All</button>
   </div>
 
-  <p class="entries-meta" id="entriesCount" aria-live="polite"></p>
+  <div class="activity-summary-card" id="activitySummaryCard" aria-live="polite">
+    <div class="activity-summary-main">
+      <div class="activity-summary-range" id="activitySummaryRange"></div>
+      <div class="activity-summary-total" id="activitySummaryTotal"></div>
+    </div>
+    <div class="activity-summary-side">
+      <div class="activity-summary-count" id="activitySummaryCount"></div>
+      <div class="activity-summary-avg" id="activitySummaryAvg"></div>
+    </div>
+  </div>
+
+  <p class="entries-meta" id="entriesCount" hidden aria-live="polite"></p>
   <div id="entries" class="activity-groups"></div>
 </section>
 
@@ -497,6 +503,36 @@
   </div>
 </div>
 
+<!-- Activity filters -->
+<div class="modal-overlay sheet" id="activityFilterModal">
+  <div class="modal sheet-modal">
+    <div class="sheet-grabber" aria-hidden="true"></div>
+    <div class="sheet-header">
+      <button class="btn-secondary sheet-cancel" id="activityFilterDoneBtn" type="button">Done</button>
+      <h3>Filters</h3>
+      <span class="sheet-header-spacer"></span>
+    </div>
+    <div class="activity-filter-sheet">
+      <label class="field-label" for="filterCategory">Category</label>
+      <select id="filterCategory" class="field-select"><option value="">All categories</option></select>
+      <label class="field-label" for="filterType">Type</label>
+      <select id="filterType" class="field-select">
+        <option value="all">All types</option>
+        <option value="one-time">One-time</option>
+        <option value="recurring">Recurring</option>
+        <option value="with-receipt">With receipt</option>
+      </select>
+      <label class="field-label" for="filterSort">Sort</label>
+      <select id="filterSort" class="field-select">
+        <option value="newest">Newest first</option>
+        <option value="oldest">Oldest first</option>
+        <option value="highest">Highest amount</option>
+        <option value="lowest">Lowest amount</option>
+      </select>
+    </div>
+  </div>
+</div>
+
 <!-- Spending Wrapped -->
 <div class="modal-overlay sheet" id="wrappedModal">
   <div class="modal sheet-modal wrapped-modal">
@@ -511,7 +547,7 @@
   </div>
 </div>
 
-<script src="icon-system.js?v=1.4.2"></script>
-<script src="app.js?v=1.4.2"></script>
+<script src="icon-system.js?v=1.4.3"></script>
+<script src="app.js?v=1.4.3"></script>
 </body>
 </html>
