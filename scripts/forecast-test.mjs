@@ -162,4 +162,62 @@ console.log('forecast-test: other-account transfer delta');
 var xferOut = entry('x1', 200, 'Transfer to savings', ts(2026, 9, 1), { isTransfer: true, transferKind: 'other' });
 assert.strictEqual(FC.entryCheckingDelta(xferOut, CHECKING, {}), -200);
 
+console.log('forecast-test: override targets tapped occurrence');
+var nowFix = ts(2026, 9, 16);
+var itemKey = 'dukeenergy';
+var oct22 = ts(2026, 9, 22);
+var oct25 = ts(2026, 9, 25);
+var nov22 = ts(2026, 10, 22);
+var baseEvents = [
+  { ts: oct22, amount: 142.4, itemKey: itemKey, kind: 'outflow', label: 'Duke Energy' },
+  { ts: nov22, amount: 142.4, itemKey: itemKey, kind: 'outflow', label: 'Duke Energy' }
+];
+var overridden = FC.applyForecastOverrides(baseEvents, {
+  dukeenergy: { amount: 142.4, nextTs: oct25, applyFromTs: oct22, kind: 'outflow' }
+}, nowFix);
+assert.ok(overridden.some(function (e) { return e.itemKey === itemKey && e.ts === FC.startOfDay(oct25); }));
+assert.ok(!overridden.some(function (e) { return e.itemKey === itemKey && e.ts === FC.startOfDay(oct22); }));
+assert.ok(overridden.some(function (e) { return e.itemKey === itemKey && e.ts === nov22; }));
+
+console.log('forecast-test: money lasts until last solvent EOD');
+var eodSim = FC.simulateBalanceTimeline({
+  nowMs: nowFix,
+  startingBalance: 50,
+  entries: [],
+  checkingId: CHECKING,
+  transferPairs: [],
+  recurringItems: [],
+  chartDays: 30,
+  maxLookaheadDays: 30,
+  cushion: 600,
+  dailySpend: 20
+});
+assert.ok(eodSim.lastsUntil != null);
+assert.strictEqual(eodSim.lastsUntil, FC.addDays(nowFix, 2));
+var brokePoint = eodSim.points.filter(function (p) { return p.ts === FC.addDays(nowFix, 3); })[0];
+assert.ok(brokePoint && brokePoint.balance < 0);
+
+console.log('forecast-test: upcoming row matches chart EOD on bill day');
+var billEntries = [
+  entry('b1', 1650, 'Maple Court Apts', ts(2026, 8, 1), {}),
+  entry('b2', 1650, 'Maple Court Apts', ts(2026, 9, 1), {})
+];
+var billSim = FC.simulateBalanceTimeline({
+  nowMs: nowFix,
+  startingBalance: 2000,
+  entries: billEntries,
+  checkingId: CHECKING,
+  transferPairs: [],
+  recurringItems: [],
+  chartDays: 90,
+  maxLookaheadDays: 90,
+  cushion: 600,
+  dailySpend: 18
+});
+var rentRow = billSim.upcoming.filter(function (u) { return /maple/i.test(u.label); })[0];
+assert.ok(rentRow, 'scheduled rent row exists');
+var chartBal = billSim.points.filter(function (p) { return p.ts === rentRow.ts; })[0];
+assert.ok(chartBal, 'chart point on rent day exists');
+assert.strictEqual(rentRow.balanceAfter, chartBal.balance);
+
 console.log('PASS');

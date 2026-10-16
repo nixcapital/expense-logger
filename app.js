@@ -181,6 +181,7 @@
   var lastForecastSchedules = [];
   var editingForecastItemKey = null;
   var editingForecastItemMeta = null;
+  var editingForecastOccurrenceTs = null;
   var FC = window.ExpenseForecast;
 
   // ---------- DOM ----------
@@ -6249,17 +6250,20 @@
     yTicks.sort(function (a, b) { return a - b; });
     ctx.font = '11px system-ui, sans-serif';
     ctx.textAlign = 'right';
+    var cushionLabelY = cushionNear ? yAt(cushion) + 4 : padT + 10;
     yTicks.forEach(function (bal) {
       var isCushion = cushionNear && bal === cushion;
+      var y = yAt(bal) + 4;
+      if (!isCushion && Math.abs(y - cushionLabelY) < 14) return;
       ctx.fillStyle = isCushion ? warnColor : gridColor;
       ctx.font = isCushion ? '600 11px system-ui, sans-serif' : '11px system-ui, sans-serif';
-      ctx.fillText(fmtForecastMoneyShort(bal), padL + w + padR - 4, yAt(bal) + 4);
+      ctx.fillText(fmtForecastMoneyShort(bal), padL + w + padR - 4, y);
     });
     if (!cushionNear) {
       ctx.textAlign = 'left';
       ctx.fillStyle = warnColor;
       ctx.font = '600 11px system-ui, sans-serif';
-      ctx.fillText('Cushion ' + fmtForecastMoneyShort(cushion), padL, padT + 10);
+      ctx.fillText('Cushion ' + fmtForecastMoneyShort(cushion), padL, cushionLabelY);
     }
     ctx.textAlign = 'center';
     ctx.fillStyle = gridColor;
@@ -6284,14 +6288,20 @@
     }
   }
 
+  function formatForecastEditAmount(n) {
+    var v = Math.round(n * 100) / 100;
+    return v.toFixed(2);
+  }
+
   function openForecastItemEditor(itemKey, label, amount, ts, kind, categoryId) {
     if (!itemKey || itemKey === 'daily-spend') return;
     editingForecastItemKey = itemKey;
+    editingForecastOccurrenceTs = ts;
     editingForecastItemMeta = { label: label, kind: kind, categoryId: categoryId };
     var title = $('forecastItemEditTitle');
     if (title) title.textContent = label || 'Upcoming item';
     var amtIn = $('forecastItemAmountInput');
-    if (amtIn) amtIn.value = String(Math.round(amount * 100) / 100);
+    if (amtIn) amtIn.value = formatForecastEditAmount(amount);
     var dateIn = $('forecastItemDateInput');
     if (dateIn) {
       var d = new Date(ts);
@@ -6313,12 +6323,14 @@
     forecastOverrides[editingForecastItemKey] = {
       amount: Math.round(amt * 100) / 100,
       nextTs: nextTs,
+      applyFromTs: editingForecastOccurrenceTs,
       label: meta.label,
       kind: meta.kind,
       categoryId: meta.categoryId
     };
     saveForecastOverrides();
     editingForecastItemKey = null;
+    editingForecastOccurrenceTs = null;
     var m = $('forecastItemEditModal');
     if (m) m.classList.remove('show');
     renderHomeForecastCard();
@@ -6382,7 +6394,10 @@
       if ((u.amount >= majorAmt || majorKeys[u.itemKey]) && u.itemKey && u.itemKey !== 'daily-spend') {
         rowClass += ' forecast-up-row--major';
       }
-      var tap = u.itemKey && u.itemKey !== 'daily-spend' ? ' data-forecast-item="' + escHtml(u.itemKey) + '"' : '';
+      var tap = '';
+      if (u.itemKey && u.itemKey !== 'daily-spend') {
+        tap = ' data-forecast-item="' + escHtml(u.itemKey) + '" data-forecast-ts="' + u.ts + '"';
+      }
       html += '<button type="button" class="' + rowClass + '"' + tap + '>';
       html += '<div class="forecast-up-icon" style="background:' + iconBg + ';color:' + iconColor + '">' + iconSvg + '</div>';
       html += '<div><p class="forecast-up-title">' + escHtml(u.label) + '</p><p class="forecast-up-sub">' + escHtml(sub) + '</p></div>';
@@ -6398,8 +6413,11 @@
     Array.prototype.forEach.call(list.querySelectorAll('[data-forecast-item]'), function (btn) {
       btn.addEventListener('click', function () {
         var key = btn.getAttribute('data-forecast-item');
+        var occTs = parseInt(btn.getAttribute('data-forecast-ts'), 10);
         var match = null;
-        items.forEach(function (u) { if (u.itemKey === key) match = u; });
+        items.forEach(function (u) {
+          if (u.itemKey === key && u.ts === occTs) match = u;
+        });
         if (match) openForecastItemEditor(key, match.label, match.amount, match.ts, match.kind, match.categoryId);
       });
     });
@@ -6721,6 +6739,7 @@
   });
   if ($('forecastItemEditCancelBtn')) $('forecastItemEditCancelBtn').addEventListener('click', function () {
     editingForecastItemKey = null;
+    editingForecastOccurrenceTs = null;
     var m = $('forecastItemEditModal');
     if (m) m.classList.remove('show');
   });

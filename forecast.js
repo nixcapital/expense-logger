@@ -571,8 +571,16 @@
       var o = overrides[key];
       if (!o) return;
       var idx = -1;
-      for (var i = 0; i < out.length; i++) {
-        if (out[i].itemKey === key && out[i].ts > afterMs) { idx = i; break; }
+      if (typeof o.applyFromTs === 'number') {
+        var fromTs = startOfDay(o.applyFromTs);
+        for (var j = 0; j < out.length; j++) {
+          if (out[j].itemKey === key && startOfDay(out[j].ts) === fromTs) { idx = j; break; }
+        }
+      }
+      if (idx < 0) {
+        for (var i = 0; i < out.length; i++) {
+          if (out[i].itemKey === key && out[i].ts > afterMs) { idx = i; break; }
+        }
       }
       if (idx >= 0) {
         if (typeof o.amount === 'number') out[idx].amount = o.amount;
@@ -823,16 +831,21 @@
       byDay[dk].push(ev);
     });
 
+    var dayEventOrder = { inflow: 0, 'transfer-other': 1, 'card-payment': 2, outflow: 3, daily: 4 };
+    var lastSolventDay = bal >= 0 ? nowMs : null;
     var simDay = addDays(nowMs, 1);
     while (simDay <= lookaheadEnd) {
-      var list = byDay[dayKey(simDay)] || [];
+      var list = (byDay[dayKey(simDay)] || []).slice().sort(function (a, b) {
+        return (dayEventOrder[a.kind] || 9) - (dayEventOrder[b.kind] || 9);
+      });
+      var dayUpcoming = [];
       list.forEach(function (ev) {
         var delta;
         if (ev.kind === 'inflow') delta = ev.amount;
         else if (ev.kind === 'transfer-other') delta = ev.inflow ? ev.amount : -ev.amount;
         else delta = -ev.amount;
         bal = Math.round((bal + delta) * 100) / 100;
-        upcoming.push({
+        dayUpcoming.push({
           ts: ev.ts,
           kind: ev.kind,
           label: ev.label,
@@ -844,10 +857,14 @@
           itemKey: ev.itemKey
         });
       });
-      if (bal < lowest.balance) lowest = { balance: bal, ts: simDay };
-      if (simDay <= chartEnd && bal < lowestInWindow.balance) lowestInWindow = { balance: bal, ts: simDay };
-      if (lastsUntil == null && bal < 0) lastsUntil = simDay;
-      if (simDay <= chartEnd) futurePoints.push({ ts: simDay, balance: bal });
+      var eodBal = bal;
+      dayUpcoming.forEach(function (u) { u.balanceAfter = eodBal; });
+      upcoming = upcoming.concat(dayUpcoming);
+      if (eodBal >= 0) lastSolventDay = simDay;
+      else if (lastsUntil == null && lastSolventDay != null) lastsUntil = lastSolventDay;
+      if (eodBal < lowest.balance) lowest = { balance: eodBal, ts: simDay };
+      if (simDay <= chartEnd && eodBal < lowestInWindow.balance) lowestInWindow = { balance: eodBal, ts: simDay };
+      if (simDay <= chartEnd) futurePoints.push({ ts: simDay, balance: eodBal });
       simDay = addDays(simDay, 1);
     }
     histPoints.forEach(function (p) {

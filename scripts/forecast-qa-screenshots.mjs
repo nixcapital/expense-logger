@@ -169,6 +169,7 @@ async function run() {
     localStorage.setItem('expenseLogger.budgets.v1', '{}');
     localStorage.setItem('expenseLogger.recurring.v1', '[]');
     localStorage.setItem('expenseLogger.importRules.v1', '[]');
+    localStorage.setItem('expenseLogger.forecastOverrides.v1', '{}');
     localStorage.setItem('expenseLogger.ui.v1', JSON.stringify({ tab: 'summary' }));
   }, data);
   await page.reload({ waitUntil: 'networkidle' });
@@ -191,9 +192,9 @@ async function run() {
   await page.click('#forecastInfoCloseBtn');
   await page.waitForTimeout(MODAL_MS);
 
-  const firstUpcoming = await page.$('.forecast-up-row[data-forecast-item]');
-  if (firstUpcoming) {
-    await firstUpcoming.click();
+  const dukeRow = await page.$('.forecast-up-row:has-text("Duke Energy")');
+  if (dukeRow) {
+    await dukeRow.click();
     await page.waitForSelector('#forecastItemEditModal.show');
     await page.waitForTimeout(MODAL_MS);
     await shot(page, 'forecast-upcoming-edit-sheet.png');
