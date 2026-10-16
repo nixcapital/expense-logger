@@ -1,4 +1,4 @@
-/* Expense Logger 1.3.3 — dark-first, iOS-style */
+/* Expense Logger 1.4.0 — dark-first, iOS-style */
 
 :root {
   --bg: #0B0C10;
@@ -1147,9 +1147,87 @@ button.legend-row.legend-btn.active { background: color-mix(in srgb, var(--accen
 
 .report-header { text-align: center; padding: var(--sp-2) 0 var(--sp-4); border-bottom: 1px solid var(--sep); }
 .report-total { font-size: 34px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.report-section { margin-top: var(--sp-4); }
+.report-section h3 { margin: 0 0 var(--sp-2); font-size: 15px; font-weight: 600; }
+.report-section-head { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-2); flex-wrap: wrap; margin-bottom: var(--sp-2); }
+.report-section-head h3 { margin: 0; }
 .report-table { width: 100%; border-collapse: collapse; font-size: 13px; }
 .report-table th, .report-table td { padding: var(--sp-2); border-bottom: 1px solid var(--sep); text-align: left; }
 .report-table td:last-child, .report-table th:last-child { text-align: right; font-variant-numeric: tabular-nums; }
+
+.seg-control {
+  display: inline-flex;
+  background: var(--raised);
+  border-radius: var(--radius-pill);
+  padding: 2px;
+  gap: 2px;
+  flex-shrink: 0;
+}
+.seg-btn {
+  border: none;
+  background: transparent;
+  color: var(--text-dim);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 6px 10px;
+  border-radius: var(--radius-pill);
+  min-height: 32px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.seg-btn.is-active {
+  background: var(--card);
+  color: var(--text);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
+}
+.report-chart-card { margin-bottom: var(--sp-4); }
+.report-chart-head { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--sp-3); }
+.report-chart-head .card-title { margin: 0; flex: 1; }
+.report-chart-compare { margin-top: var(--sp-1); min-height: 1.25em; }
+.report-avg-chip { color: var(--text-dim); font-size: 13px; }
+.report-chart-scroll {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  margin: var(--sp-2) calc(-1 * var(--sp-4)) 0;
+  padding: 0 var(--sp-4) var(--sp-1);
+  scrollbar-width: none;
+}
+.report-chart-scroll::-webkit-scrollbar { display: none; }
+.report-chart-svg { display: block; height: 196px; width: auto; min-width: 100%; }
+.report-bar-track { fill: var(--raised); }
+.report-bar-outline { stroke: var(--accent); stroke-width: 2; pointer-events: none; }
+.report-bar-label { fill: var(--text-dim); font-size: 10px; font-weight: 600; font-family: -apple-system, BlinkMacSystemFont, sans-serif; }
+.report-bar-label.is-sel { fill: var(--accent); }
+.report-avg-line { stroke: var(--text-dim); stroke-width: 1; opacity: 0.55; pointer-events: none; }
+.report-avg-label { fill: var(--text-dim); font-size: 9px; font-weight: 600; font-family: -apple-system, BlinkMacSystemFont, sans-serif; opacity: 0.8; pointer-events: none; }
+.report-bar-hit { cursor: pointer; }
+.report-bar-hit:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.report-recur-list { display: flex; flex-direction: column; gap: var(--sp-2); }
+.report-recur-group {
+  border: 1px solid var(--sep);
+  border-radius: var(--radius-input);
+  overflow: hidden;
+  background: var(--raised);
+}
+.report-recur-group[open] { background: var(--card); }
+.report-recur-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-3);
+  padding: var(--sp-3);
+  cursor: pointer;
+  list-style: none;
+  font-size: 14px;
+}
+.report-recur-summary::-webkit-details-marker { display: none; }
+.report-recur-title { font-weight: 600; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.report-recur-meta { display: flex; align-items: center; gap: var(--sp-2); flex-shrink: 0; font-variant-numeric: tabular-nums; }
+.report-recur-count { font-size: 12px; color: var(--text-dim); font-weight: 600; }
+.report-recur-total { font-weight: 700; }
+.report-recur-table { margin: 0; }
+.report-recur-table td { font-size: 12px; }
 
 .lock-screen {
   position: fixed; inset: 0;
@@ -1251,5 +1329,10 @@ button.legend-row.legend-btn.active { background: color-mix(in srgb, var(--accen
   .app-main { padding: 0; }
   #tab-add, #tab-summary, #tab-history, #tab-settings { display: none !important; }
   #tab-report { display: block !important; }
+  #reportMonthSwitcher, #reportExportPdfBtn, #openWrappedBtn, .no-print { display: none !important; }
   .card { border: 1px solid #ddd; break-inside: avoid; }
+  .report-bar-track { fill: #eee; }
+  .report-bar-outline { stroke: #333; }
+  .report-avg-line { stroke: #666; }
+  .report-bar-label, .report-avg-label { fill: #444; }
 }

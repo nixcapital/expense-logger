@@ -16,7 +16,7 @@
   var IMPORT_SETTINGS_KEY = 'expenseLogger.importSettings.v1';
   var META_KEY            = 'expenseLogger.meta.v1';
 
-  var APP_VERSION = '1.3.3';
+  var APP_VERSION = '1.4.0';
   var BACKUP_FORMAT = 1;
   var MS_DAY = 86400000;
   var BACKUP_NUDGE_AFTER_DAYS = 30;
@@ -543,17 +543,24 @@
     try {
       localStorage.setItem(UI_KEY, JSON.stringify({
         tab: currentTab === 'add' ? tabBeforeAdd : currentTab,
-        dismissedWrapped: uiState.dismissedWrapped || {}
+        dismissedWrapped: uiState.dismissedWrapped || {},
+        reportChartMonths: uiState.reportChartMonths === 12 ? 12 : 6,
+        reportTxSort: uiState.reportTxSort || 'latest'
       }));
     } catch (e) {}
   }
-  var uiState = { dismissedWrapped: {} };
+  var uiState = { dismissedWrapped: {}, reportChartMonths: 6, reportTxSort: 'latest' };
   function loadUI() {
     try {
       var raw = localStorage.getItem(UI_KEY);
       if (raw) {
         var p = JSON.parse(raw) || {};
         if (p.dismissedWrapped) uiState.dismissedWrapped = p.dismissedWrapped;
+        if (p.reportChartMonths === 12) uiState.reportChartMonths = 12;
+        else if (p.reportChartMonths === 6) uiState.reportChartMonths = 6;
+        if (p.reportTxSort === 'latest' || p.reportTxSort === 'largest' || p.reportTxSort === 'recurring') {
+          uiState.reportTxSort = p.reportTxSort;
+        }
         return p;
       }
     } catch (e) {}
@@ -596,7 +603,9 @@
     storage[IMPORT_SETTINGS_KEY] = JSON.stringify(importSettings);
     storage[UI_KEY] = JSON.stringify({
       tab: currentTab === 'add' ? tabBeforeAdd : currentTab,
-      dismissedWrapped: uiState.dismissedWrapped || {}
+      dismissedWrapped: uiState.dismissedWrapped || {},
+      reportChartMonths: uiState.reportChartMonths === 12 ? 12 : 6,
+      reportTxSort: uiState.reportTxSort || 'latest'
     });
     return storage;
   }
@@ -1363,6 +1372,242 @@
     return entries
       .filter(function (e) { return isSameMonth(e.ts, y, m); })
       .reduce(function (s, e) { return s + e.amount; }, 0);
+  }
+
+  function reportMonthKey(y, m) {
+    return y + '-' + pad2(m + 1);
+  }
+
+  function getReportMonthSeries(endY, endM, count) {
+    var list = [];
+    var y = endY;
+    var m = endM;
+    for (var i = 0; i < count; i++) {
+      var data = getSummaryData(y, m);
+      list.unshift({
+        y: y,
+        m: m,
+        key: reportMonthKey(y, m),
+        total: data.total,
+        byCat: data.byCat,
+        entries: data.entries
+      });
+      m -= 1;
+      if (m < 0) { m = 11; y -= 1; }
+    }
+    return list;
+  }
+
+  function reportStackSegments(byCat) {
+    var segs = categories.map(function (c) {
+      return { cat: c, amt: byCat[c.id] || 0 };
+    }).filter(function (s) { return s.amt > 0; });
+    segs.sort(function (a, b) { return a.amt - b.amt; });
+    return segs;
+  }
+
+  function reportChartCompareText(months, selY, selM) {
+    if (!months.length) return '';
+    var idx = -1;
+    for (var i = 0; i < months.length; i++) {
+      if (months[i].y === selY && months[i].m === selM) { idx = i; break; }
+    }
+    if (idx < 0) idx = months.length - 1;
+    var cur = months[idx];
+    var label = monthName(new Date(cur.y, cur.m, 1));
+    var withSpend = months.filter(function (mo) { return mo.total > 0; });
+    var avg = 0;
+    if (withSpend.length) {
+      avg = withSpend.reduce(function (s, mo) { return s + mo.total; }, 0) / withSpend.length;
+    }
+    var parts = [];
+    if (idx > 0) {
+      var prev = months[idx - 1].total;
+      var diff = cur.total - prev;
+      if (cur.total === 0 && prev === 0) {
+        parts.push('No spending in ' + label + ' or the prior month.');
+      } else {
+        var pct = prev > 0 ? Math.round((diff / prev) * 100) : (cur.total > 0 ? 100 : 0);
+        var arrow = diff > 0 ? '↑' : diff < 0 ? '↓' : '→';
+        var tone = diff > 0 ? 'up' : diff < 0 ? 'down' : 'flat';
+        parts.push('<span class="trend-pill ' + tone + '">' + arrow + ' ' + fmtMoneyDisplay(Math.abs(diff))
+          + (prev > 0 ? ' (' + (diff >= 0 ? '+' : '') + pct + '%)' : '')
+          + '</span> <span class="trend-words">' + label + ' vs prior month</span>');
+      }
+    } else if (months.length === 1) {
+      parts.push(cur.total > 0
+        ? 'First month in view — ' + fmtMoneyDisplay(cur.total) + ' total.'
+        : 'No spending in ' + label + ' yet.');
+    }
+    if (avg > 0 && withSpend.length > 1) {
+      parts.push('<span class="report-avg-chip">Avg ' + fmtMoneyDisplay(avg) + ' across months with spending</span>');
+    }
+    return parts.join(' · ');
+  }
+
+  var reportChartAnimGen = 0;
+
+  function buildReportChartSvg(months, selY, selM, progress) {
+    var n = months.length;
+    if (!n) return '';
+    var barUnit = 40;
+    var chartW = Math.max(300, n * barUnit + 16);
+    var chartH = 196;
+    var padT = 10;
+    var padB = 28;
+    var padL = 10;
+    var padR = 10;
+    var plotW = chartW - padL - padR;
+    var plotH = chartH - padT - padB;
+    var max = Math.max.apply(null, months.map(function (mo) { return mo.total; }));
+    if (!max || max <= 0) max = 1;
+    var withSpend = months.filter(function (mo) { return mo.total > 0; });
+    var avg = withSpend.length
+      ? withSpend.reduce(function (s, mo) { return s + mo.total; }, 0) / withSpend.length
+      : 0;
+    var barGap = 6;
+    var barW = (plotW - barGap * (n - 1)) / n;
+    var p = Math.max(0, Math.min(1, progress));
+    var svg = '<svg class="report-chart-svg" viewBox="0 0 ' + chartW + ' ' + chartH
+      + '" role="img" aria-label="Monthly spending by category" preserveAspectRatio="xMinYMid meet">';
+    if (avg > 0) {
+      var avgY = padT + plotH - (avg / max) * plotH;
+      svg += '<line class="report-avg-line" x1="' + padL + '" y1="' + avgY + '" x2="' + (chartW - padR)
+        + '" y2="' + avgY + '" stroke-dasharray="4 4" />';
+      svg += '<text class="report-avg-label" x="' + (chartW - padR - 2) + '" y="' + (avgY - 5) + '" text-anchor="end">Avg</text>';
+    }
+    months.forEach(function (mo, i) {
+      var x = padL + i * (barW + barGap);
+      var baseY = padT + plotH;
+      var isSel = mo.y === selY && mo.m === selM;
+      svg += '<rect class="report-bar-track" x="' + x + '" y="' + padT + '" width="' + barW + '" height="' + plotH + '" rx="4" />';
+      var yTop = baseY;
+      reportStackSegments(mo.byCat).forEach(function (seg) {
+        var h = (seg.amt / max) * plotH * p;
+        if (h < 0.5) return;
+        yTop -= h;
+        svg += '<rect class="report-bar-seg" fill="' + seg.cat.color + '" x="' + x + '" y="' + yTop
+          + '" width="' + barW + '" height="' + h + '" rx="2" />';
+      });
+      svg += '<rect class="report-bar-hit" tabindex="0" role="button" aria-label="' + escHtml(monthName(new Date(mo.y, mo.m, 1)))
+        + '" data-report-month="' + mo.key + '" x="' + x + '" y="' + padT + '" width="' + barW + '" height="' + plotH + '" fill="transparent" />';
+      if (isSel) {
+        svg += '<rect class="report-bar-outline" x="' + (x - 1) + '" y="' + (padT - 1) + '" width="' + (barW + 2)
+          + '" height="' + (plotH + 2) + '" rx="5" fill="none" />';
+      }
+      svg += '<text class="report-bar-label' + (isSel ? ' is-sel' : '') + '" x="' + (x + barW / 2) + '" y="' + (padT + plotH + 16)
+        + '" text-anchor="middle">' + escHtml(monthShort(new Date(mo.y, mo.m, 1))) + '</text>';
+    });
+    svg += '</svg>';
+    return svg;
+  }
+
+  function animateReportChart(months, selY, selM) {
+    var wrap = document.getElementById('reportChartSvgWrap');
+    if (!wrap) return;
+    reportChartAnimGen += 1;
+    var gen = reportChartAnimGen;
+    runChartAnim(420, function (t) {
+      if (gen !== reportChartAnimGen) return;
+      wrap.innerHTML = buildReportChartSvg(months, selY, selM, t);
+    });
+  }
+
+  function sortReportTransactions(list, sort) {
+    var out = list.slice();
+    if (sort === 'largest') {
+      out.sort(function (a, b) {
+        if (b.amount !== a.amount) return b.amount - a.amount;
+        return b.ts - a.ts;
+      });
+    } else if (sort === 'latest') {
+      out.sort(function (a, b) { return b.ts - a.ts; });
+    } else {
+      out.sort(function (a, b) { return b.ts - a.ts; });
+    }
+    return out;
+  }
+
+  function recurringGroupLabel(g) {
+    var best = null;
+    Object.keys(g.labels).forEach(function (k) {
+      if (!best || g.labels[k] > best.count) best = { text: k, count: g.labels[k] };
+    });
+    if (best) return best.text;
+    return g.entries.length ? (g.entries[0].note || '').trim() : 'Purchase';
+  }
+
+  function groupRecurringEntries(list) {
+    var groups = {};
+    var order = [];
+    list.forEach(function (e) {
+      var key = descriptionMatchKey(e.note || '');
+      if (!key) key = '__solo:' + (e.id || e.ts);
+      if (!groups[key]) {
+        groups[key] = { key: key, labels: {}, entries: [], total: 0 };
+        order.push(key);
+      }
+      var raw = (e.note || '').trim();
+      if (raw) groups[key].labels[raw] = (groups[key].labels[raw] || 0) + 1;
+      groups[key].entries.push(e);
+      groups[key].total += e.amount;
+    });
+    return order.map(function (k) {
+      var g = groups[k];
+      g.count = g.entries.length;
+      g.label = recurringGroupLabel(g);
+      g.entries.sort(function (a, b) { return b.ts - a.ts; });
+      return g;
+    }).sort(function (a, b) {
+      if (b.count !== a.count) return b.count - a.count;
+      return b.total - a.total;
+    });
+  }
+
+  function renderReportTxRow(e) {
+    var d = new Date(e.ts);
+    var cat = getCat(e.categoryId);
+    var day = d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+    var label = iconBadge(cat, 'xs') + ' ' + escHtml(cat.name) + (e.note ? ' — ' + escHtml(e.note) : '');
+    return '<tr><td>' + day + '</td><td class="report-cat-cell">' + label + '</td><td>' + fmtMoneyDisplay(e.amount) + '</td></tr>';
+  }
+
+  function segButton(dataAttr, value, label, active) {
+    return '<button type="button" class="seg-btn' + (active ? ' is-active' : '') + '" ' + dataAttr + '="' + value + '">' + label + '</button>';
+  }
+
+  var reportBodyWired = false;
+  function wireReportBody() {
+    if (reportBodyWired || !$reportBody) return;
+    reportBodyWired = true;
+    $reportBody.addEventListener('click', function (e) {
+      var monthHit = e.target.closest('[data-report-month]');
+      if (monthHit && monthHit.dataset.reportMonth) {
+        $reportMonth.value = monthHit.dataset.reportMonth;
+        updateMonthPillLabels();
+        renderReport();
+        return;
+      }
+      var rangeBtn = e.target.closest('[data-report-range]');
+      if (rangeBtn) {
+        var n = parseInt(rangeBtn.dataset.reportRange, 10);
+        if (n === 6 || n === 12) {
+          uiState.reportChartMonths = n;
+          saveUI();
+          renderReport();
+        }
+        return;
+      }
+      var sortBtn = e.target.closest('[data-report-sort]');
+      if (sortBtn) {
+        var s = sortBtn.dataset.reportSort;
+        if (s === 'latest' || s === 'largest' || s === 'recurring') {
+          uiState.reportTxSort = s;
+          saveUI();
+          renderReport();
+        }
+      }
+    });
   }
 
   function getTotalBudgetLimit() {
@@ -2544,21 +2789,36 @@
 
   // ---------- Report view ----------
   function renderReport() {
+    wireReportBody();
     var val = $reportMonth.value;
     var y, m;
     if (val) { var p = val.split('-'); y = parseInt(p[0], 10); m = parseInt(p[1], 10) - 1; }
     else { var now = new Date(); y = now.getFullYear(); m = now.getMonth(); }
     var data = getSummaryData(y, m);
+    var rangeMonths = uiState.reportChartMonths === 12 ? 12 : 6;
+    var series = getReportMonthSeries(y, m, rangeMonths);
+    var txSort = uiState.reportTxSort || 'latest';
 
     var html = '';
+    html += '<div class="card report-chart-card">';
+    html += '<div class="report-chart-head">';
+    html += '<h2 class="card-title">Spending over time</h2>';
+    html += '<div class="seg-control report-chart-toolbar no-print" role="group" aria-label="Chart range">';
+    html += segButton('data-report-range', '6', '6 mo', rangeMonths === 6);
+    html += segButton('data-report-range', '12', '12 mo', rangeMonths === 12);
+    html += '</div></div>';
+    html += '<p class="chart-subtitle report-chart-compare">' + reportChartCompareText(series, y, m) + '</p>';
+    html += '<div class="report-chart-scroll" id="reportChartScroll">';
+    html += '<div id="reportChartSvgWrap"></div>';
+    html += '</div></div>';
+
     html += '<div class="card">';
     html += '<div class="report-header">';
     html += '<h2>' + monthName(new Date(y, m, 1)) + '</h2>';
     html += '<div class="report-total">' + fmtMoneyDisplay(data.total) + '</div>';
-    html += '<div class="hint">' + data.entries.length + ' transactions</div>';
+    html += '<div class="hint">' + data.entries.length + ' transaction' + (data.entries.length === 1 ? '' : 's') + '</div>';
     html += '</div>';
 
-    // Category breakdown
     var rows = categories
       .map(function (c) { return { c: c, amt: data.byCat[c.id] || 0 }; })
       .filter(function (r) { return r.amt > 0; })
@@ -2574,7 +2834,6 @@
       html += '</tbody></table></div>';
     }
 
-    // Budget status
     var budgetRows = categories.filter(function (c) { return budgets[c.id] && budgets[c.id] > 0; });
     if (budgetRows.length > 0) {
       html += '<div class="report-section">';
@@ -2589,26 +2848,65 @@
       html += '</tbody></table></div>';
     }
 
-    // All transactions
+    html += '<div class="report-section">';
+    html += '<div class="report-section-head">';
+    html += '<h3>Transactions</h3>';
+    html += '<div class="seg-control report-sort-seg no-print" role="group" aria-label="Sort transactions">';
+    html += segButton('data-report-sort', 'latest', 'Latest', txSort === 'latest');
+    html += segButton('data-report-sort', 'largest', 'Largest', txSort === 'largest');
+    html += segButton('data-report-sort', 'recurring', 'Recurring', txSort === 'recurring');
+    html += '</div></div>';
+
     if (data.entries.length > 0) {
-      var sortedEntries = data.entries.slice().sort(function (a, b) { return a.ts - b.ts; });
-      html += '<div class="report-section">';
-      html += '<h3>Transactions</h3>';
-      html += '<table class="report-table"><thead><tr><th>Date</th><th>Category / Note</th><th>Amount</th></tr></thead><tbody>';
-      sortedEntries.forEach(function (e) {
-        var d = new Date(e.ts);
-        var cat = getCat(e.categoryId);
-        var day = d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
-        var label = iconBadge(cat, 'xs') + ' ' + escHtml(cat.name) + (e.note ? ' — ' + escHtml(e.note) : '');
-        html += '<tr><td>' + day + '</td><td class="report-cat-cell">' + label + '</td><td>' + fmtMoneyDisplay(e.amount) + '</td></tr>';
-      });
-      html += '</tbody></table></div>';
+      if (txSort === 'recurring') {
+        var groups = groupRecurringEntries(data.entries);
+        html += '<div class="report-recur-list">';
+        groups.forEach(function (g) {
+          var open = g.count > 1;
+          html += '<details class="report-recur-group"' + (open ? ' open' : '') + '>';
+          html += '<summary class="report-recur-summary">';
+          html += '<span class="report-recur-title">' + escHtml(g.label) + '</span>';
+          html += '<span class="report-recur-meta">';
+          if (g.count > 1) html += '<span class="report-recur-count">' + g.count + '×</span>';
+          html += '<span class="report-recur-total">' + fmtMoneyDisplay(g.total) + '</span>';
+          html += '</span></summary>';
+          if (g.count > 1) {
+            html += '<table class="report-table report-recur-table"><tbody>';
+            g.entries.forEach(function (e) { html += renderReportTxRow(e); });
+            html += '</tbody></table>';
+          }
+          html += '</details>';
+        });
+        html += '</div>';
+      } else {
+        var sortedEntries = sortReportTransactions(data.entries, txSort);
+        html += '<table class="report-table"><thead><tr><th>Date</th><th>Category / Note</th><th>Amount</th></tr></thead><tbody>';
+        sortedEntries.forEach(function (e) { html += renderReportTxRow(e); });
+        html += '</tbody></table>';
+      }
     } else {
       html += '<div class="empty">No transactions this month.</div>';
     }
+    html += '</div>';
 
     html += '</div>';
     $reportBody.innerHTML = html;
+    animateReportChart(series, y, m);
+    var scrollEl = document.getElementById('reportChartScroll');
+    if (scrollEl && rangeMonths === 12) {
+      var sel = scrollEl.querySelector('.report-bar-outline');
+      if (sel && sel.parentNode) {
+        var parentSvg = sel.closest('svg');
+        if (parentSvg) {
+          var rect = sel.getBoundingClientRect();
+          var wrapRect = scrollEl.getBoundingClientRect();
+          if (rect.right > wrapRect.right || rect.left < wrapRect.left) {
+            scrollEl.scrollLeft += rect.left - wrapRect.left - (wrapRect.width / 2 - rect.width / 2);
+          }
+        }
+      }
+    }
+    refreshIconObservers($reportBody);
   }
 
   // ---------- Category management ----------
