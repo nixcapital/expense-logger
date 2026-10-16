@@ -22,7 +22,7 @@
   var TRANSFER_PATTERNS_KEY = 'expenseLogger.transferPatterns.v1';
   var FORECAST_OVERRIDES_KEY = 'expenseLogger.forecastOverrides.v1';
 
-  var APP_VERSION = '1.6.0';
+  var APP_VERSION = '1.6.1';
   var BACKUP_FORMAT = 2;
   var BACKUP_FORMAT_LEGACY = 1;
   var DEFAULT_ACCOUNT_CHECKING = 'acct-checking';
@@ -788,10 +788,81 @@
   }
 
   function parseMoneyInput(raw) {
-    var s = String(raw || '').replace(/[^0-9.\-]/g, '');
+    var s = String(raw || '').trim();
+    if (!s) return NaN;
+    var neg = false;
+    if (/^\(.+\)$/.test(s)) {
+      neg = true;
+      s = s.slice(1, -1).trim();
+    } else if (/^-/.test(s)) {
+      neg = true;
+      s = s.replace(/^-+/, '');
+    }
+    s = s.replace(/\$/g, '').replace(/\u00a0/g, ' ').replace(/\s/g, '');
+    var hasComma = s.indexOf(',') !== -1;
+    var hasDot = s.indexOf('.') !== -1;
+    if (hasComma && hasDot) {
+      s = s.replace(/,/g, '');
+    } else if (hasComma && !hasDot) {
+      s = s.replace(',', '.');
+    } else if (hasComma) {
+      s = s.replace(/,/g, '');
+    }
+    s = s.replace(/[^0-9.]/g, '');
+    if (!s || s === '.') return NaN;
+    if ((s.match(/\./g) || []).length > 1) return NaN;
     var v = parseFloat(s);
     if (isNaN(v)) return NaN;
+    if (neg) v = -v;
     return Math.round(v * 100) / 100;
+  }
+
+  function normalizeBalanceAsOfDate(raw) {
+    if (!raw) return localDateStamp();
+    var s = String(raw).trim();
+    var m = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+    if (!m) return localDateStamp();
+    return m[1] + '-' + m[2] + '-' + m[3];
+  }
+
+  function setBalanceAmountError(msg) {
+    var el = $('balanceAmountError');
+    if (!el) return;
+    el.textContent = msg || '';
+    el.hidden = !msg;
+  }
+
+  var balanceSheetViewportBound = false;
+  function resetBalanceSheetViewportPadding() {
+    var sheet = $('balanceSheet');
+    if (!sheet) return;
+    var modal = sheet.querySelector('.modal');
+    if (modal) modal.style.paddingBottom = '';
+  }
+
+  function bindBalanceSheetViewport() {
+    if (balanceSheetViewportBound || !window.visualViewport) return;
+    balanceSheetViewportBound = true;
+    var adjust = function () {
+      var sheet = $('balanceSheet');
+      if (!sheet || !sheet.classList.contains('show')) return;
+      var modal = sheet.querySelector('.modal');
+      if (!modal) return;
+      var vv = window.visualViewport;
+      var gap = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
+      var kb = gap > 40 ? gap : 0;
+      modal.style.paddingBottom = kb
+        ? 'calc(var(--sp-4) + env(safe-area-inset-bottom, 0px) + ' + kb + 'px)'
+        : '';
+      var btn = $('balanceSaveBtn');
+      if (btn && kb > 0 && btn.scrollIntoView) {
+        try { btn.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); } catch (e) {
+          btn.scrollIntoView(false);
+        }
+      }
+    };
+    window.visualViewport.addEventListener('resize', adjust);
+    window.visualViewport.addEventListener('scroll', adjust);
   }
 
   function loadTransferPairs() {
@@ -6444,10 +6515,20 @@
     el.innerHTML = html;
   }
 
+  function closeBalanceSheet() {
+    resetBalanceSheetViewportPadding();
+    setBalanceAmountError('');
+    var sheet = $('balanceSheet');
+    if (sheet) sheet.classList.remove('show');
+  }
+
   function openBalanceSheet(accountId) {
     var acct = getAccount(accountId) || getCheckingAccount();
     if (!acct) return;
     balanceSheetAccountId = acct.id;
+    setBalanceAmountError('');
+    resetBalanceSheetViewportPadding();
+    bindBalanceSheetViewport();
     var sheet = $('balanceSheet');
     var acctRow = $('balanceSheetAccount');
     if (acctRow) {
@@ -6455,37 +6536,53 @@
     }
     var inp = $('balanceAmountInput');
     if (inp) inp.value = typeof acct.currentBalance === 'number' ? fmtMoneyDisplay(acct.currentBalance) : '';
-    var asOf = acct.balanceAsOf || localDateStamp();
+    var asOf = normalizeBalanceAsOfDate(acct.balanceAsOf || localDateStamp());
     if ($('balanceAsOfInput')) $('balanceAsOfInput').value = asOf;
     if ($('balanceAsOfPreview')) $('balanceAsOfPreview').textContent = formatBalanceAsOfLabel(asOf);
     var foot = $('balanceSheetFoot');
     if (foot) {
       var hist = acct.balanceHistory;
-      if (hist && hist.amount != null && hist.asOf) {
+      var histAsOf = hist && hist.asOf ? normalizeBalanceAsOfDate(hist.asOf) : null;
+      if (hist && typeof hist.amount === 'number' && histAsOf) {
         foot.textContent = acct.name + ' transactions dated after ' + formatBalanceAsOfLabel(asOf).split(',')[0].replace('Today', 'today')
-          + ' adjust it automatically. Last set: ' + fmtMoneyDisplay(hist.amount) + ' on ' + formatForecastShortDate(new Date(hist.asOf + 'T12:00:00').getTime()) + '.';
+          + ' adjust it automatically. Last set: ' + fmtMoneyDisplay(hist.amount) + ' on ' + formatForecastShortDate(new Date(histAsOf + 'T12:00:00').getTime()) + '.';
       } else {
         foot.textContent = acct.name + ' transactions dated after ' + formatBalanceAsOfLabel(asOf).split(',')[0].replace('Today', 'today') + ' adjust it automatically.';
       }
     }
     if (sheet) sheet.classList.add('show');
     if (EI && EI.hydrateUiIcons) EI.hydrateUiIcons(sheet);
+    requestAnimationFrame(function () {
+      var btn = $('balanceSaveBtn');
+      if (btn && btn.scrollIntoView) {
+        try { btn.scrollIntoView({ block: 'nearest' }); } catch (e) { btn.scrollIntoView(false); }
+      }
+    });
   }
 
   function saveBalanceSheet() {
-    var acct = getAccount(balanceSheetAccountId);
-    if (!acct) return;
-    var val = parseMoneyInput($('balanceAmountInput') && $('balanceAmountInput').value);
-    if (isNaN(val)) { toast('Enter a valid balance'); return; }
-    var asOf = ($('balanceAsOfInput') && $('balanceAsOfInput').value) || localDateStamp();
+    setBalanceAmountError('');
+    var acct = getAccount(balanceSheetAccountId) || getCheckingAccount();
+    if (!acct) {
+      setBalanceAmountError('Could not find this account. Close and try again.');
+      return;
+    }
+    balanceSheetAccountId = acct.id;
+    var inp = $('balanceAmountInput');
+    if (inp && inp.blur) inp.blur();
+    var val = parseMoneyInput(inp && inp.value);
+    if (isNaN(val)) {
+      setBalanceAmountError('Enter a valid balance (e.g. 2378.42, 2,378.42, or -50).');
+      return;
+    }
+    var asOf = normalizeBalanceAsOfDate(($('balanceAsOfInput') && $('balanceAsOfInput').value) || '');
     if (typeof acct.currentBalance === 'number' && acct.balanceAsOf) {
       acct.balanceHistory = { amount: acct.currentBalance, asOf: acct.balanceAsOf };
     }
     acct.currentBalance = val;
     acct.balanceAsOf = asOf;
     saveAccounts();
-    var sheet = $('balanceSheet');
-    if (sheet) sheet.classList.remove('show');
+    closeBalanceSheet();
     renderHomeForecastCard();
     if (forecastScreenOpen) renderForecastScreen();
     renderSettingsAccounts();
@@ -6739,11 +6836,17 @@
       if (forecastScreenOpen) renderForecastScreen();
     });
   });
-  if ($('balanceSheetClose')) $('balanceSheetClose').addEventListener('click', function () {
-    var s = $('balanceSheet');
-    if (s) s.classList.remove('show');
-  });
+  if ($('balanceSheetClose')) $('balanceSheetClose').addEventListener('click', closeBalanceSheet);
   if ($('balanceSaveBtn')) $('balanceSaveBtn').addEventListener('click', saveBalanceSheet);
+  if ($('balanceAmountInput')) {
+    $('balanceAmountInput').addEventListener('input', function () { setBalanceAmountError(''); });
+    $('balanceAmountInput').addEventListener('keydown', function (ev) {
+      if (ev.key === 'Enter') {
+        ev.preventDefault();
+        saveBalanceSheet();
+      }
+    });
+  }
   if ($('balanceAsOfRow')) $('balanceAsOfRow').addEventListener('click', function () {
     var inp = $('balanceAsOfInput');
     if (inp && inp.showPicker) try { inp.showPicker(); } catch (e) { inp.focus(); }
@@ -7232,6 +7335,11 @@
     ensureDefaultAccounts: ensureDefaultAccounts,
     DEFAULT_ACCOUNT_CHECKING: DEFAULT_ACCOUNT_CHECKING,
     DEFAULT_ACCOUNT_CHASE: DEFAULT_ACCOUNT_CHASE,
+    parseMoneyInput: parseMoneyInput,
+    normalizeBalanceAsOfDate: normalizeBalanceAsOfDate,
+    openBalanceSheet: openBalanceSheet,
+    saveBalanceSheet: saveBalanceSheet,
+    closeBalanceSheet: closeBalanceSheet,
     getState: function () {
       return {
         entries: entries,

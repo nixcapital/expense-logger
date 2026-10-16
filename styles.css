@@ -1,4 +1,4 @@
-/* Expense Logger 1.6.0 — dark-first, iOS-style */
+/* Expense Logger 1.6.1 — dark-first, iOS-style */
 
 :root {
   --bg: #0B0C10;
@@ -1385,6 +1385,10 @@ button.legend-row.legend-btn.active { background: color-mix(in srgb, var(--accen
   -webkit-backdrop-filter: none;
   backdrop-filter: none;
 }
+#balanceSheet.modal-overlay.modal-front {
+  z-index: 5200;
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
 .modal-overlay.modal-front .modal {
   background: var(--card);
   box-shadow: 0 -8px 40px rgba(0, 0, 0, 0.45);
@@ -1887,7 +1891,7 @@ button.legend-row.legend-btn.active { background: color-mix(in srgb, var(--accen
   font-size: 15px; font-weight: 600;
   opacity: 0; pointer-events: none;
   transition: opacity 0.25s, transform 0.25s;
-  z-index: 1000;
+  z-index: 6000;
   max-width: 85vw;
 }
 .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
@@ -2060,8 +2064,30 @@ button.legend-row.legend-btn.active { background: color-mix(in srgb, var(--accen
 .forecast-empty-text { color: var(--text-dim); margin: 0 0 var(--sp-4); }
 
 .balance-sheet-modal {
-  padding-bottom: calc(var(--sp-6) + env(safe-area-inset-bottom, 0px));
+  display: flex;
+  flex-direction: column;
+  max-height: min(92dvh, 92vh);
+  padding-bottom: 0;
   box-sizing: border-box;
+}
+.balance-sheet-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+.balance-sheet-actions {
+  flex-shrink: 0;
+  padding: var(--sp-3) 0 calc(var(--sp-4) + env(safe-area-inset-bottom, 0px));
+  background: var(--card);
+  border-top: 1px solid var(--sep);
+}
+.balance-input-error {
+  margin: calc(-1 * var(--sp-2)) 0 var(--sp-3);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--danger);
 }
 .balance-sheet-header { display: flex; justify-content: space-between; align-items: center; padding: 0 0 var(--sp-3); }
 .balance-sheet-header h3 { margin: 0; font-size: 20px; font-weight: 700; }
@@ -2085,7 +2111,14 @@ button.legend-row.legend-btn.active { background: color-mix(in srgb, var(--accen
   padding: var(--sp-3); border-radius: var(--radius-input); background: var(--raised); font-size: 14px; color: var(--text-secondary);
 }
 .balance-sheet-foot { font-size: 12px; color: var(--text-dim); padding: 0 0 var(--sp-3); margin: 0; }
-#balanceSheet .save-btn { margin: 0; width: 100%; box-sizing: border-box; }
+#balanceSheet .save-btn {
+  margin: 0;
+  width: 100%;
+  box-sizing: border-box;
+  touch-action: manipulation;
+  position: relative;
+  z-index: 1;
+}
 
 .other-transfer-sheet { padding-bottom: calc(var(--sp-6) + env(safe-area-inset-bottom, 0px)); }
 .other-transfer-hero { display: grid; grid-template-columns: 48px 1fr auto; gap: 12px; padding: var(--sp-4); align-items: start; }
