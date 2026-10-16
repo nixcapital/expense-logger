@@ -72,6 +72,11 @@ async function run() {
     const page = await context.newPage();
     await page.goto(`http://127.0.0.1:${PORT}/index.html`, { waitUntil: 'networkidle' });
     await openDiscardPrompt(page);
+    const scrimBg = await page.evaluate(() => {
+      const el = document.getElementById('importReviewDiscardScrim');
+      return el ? getComputedStyle(el).backgroundColor : '';
+    });
+    console.log('Scrim background (' + scheme + '):', scrimBg);
     const out = join(OUT_DIR, `import-review-discard-prompt-428x926-${scheme}.png`);
     await page.screenshot({ path: out, fullPage: false });
     console.log('Saved', out);

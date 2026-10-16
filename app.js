@@ -53,7 +53,7 @@
   var TRANSFER_PATTERNS_KEY = 'expenseLogger.transferPatterns.v1';
   var FORECAST_OVERRIDES_KEY = 'expenseLogger.forecastOverrides.v1';
   var FORECAST_ONEOFFS_KEY = 'expenseLogger.forecastCountedOneOffs.v1';
-  var APP_VERSION = '1.7.4';
+  var APP_VERSION = '1.7.5';
   var BACKUP_FORMAT = 2;
   var BACKUP_FORMAT_LEGACY = 1;
   var DEFAULT_ACCOUNT_CHECKING = 'acct-checking';
