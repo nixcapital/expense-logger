@@ -1773,12 +1773,18 @@
     if (subBits.length || e.accountId) {
       var sub = document.createElement('div');
       sub.className = 'row-sub';
-      var subHtml = subBits.join(' · ');
+      var textSpan = document.createElement('span');
+      textSpan.className = 'row-sub-text';
+      textSpan.innerHTML = subBits.join(' · ');
+      sub.appendChild(textSpan);
       if (e.accountId && !e.isTransfer) {
         var acct = getAccount(e.accountId);
-        if (acct) subHtml += accountTagHTML(acct);
+        if (acct) {
+          var tagSlot = document.createElement('span');
+          tagSlot.innerHTML = accountTagHTML(acct);
+          if (tagSlot.firstChild) sub.appendChild(tagSlot.firstChild);
+        }
       }
-      sub.innerHTML = subHtml;
       main.appendChild(sub);
     }
     var amt = document.createElement('span');
@@ -1810,7 +1816,9 @@
     sub.className = 'row-sub';
     var fromName = item.bankAcct ? item.bankAcct.name : 'Bank';
     var toName = item.cardAcct ? item.cardAcct.name : 'Card';
-    sub.textContent = 'Transfer \u00B7 ' + fromName + ' \u2192 ' + toName;
+    var fromShort = item.bankAcct ? accountShortName(item.bankAcct) : 'Bank';
+    var toShort = item.cardAcct ? accountShortName(item.cardAcct) : 'Card';
+    sub.textContent = 'Transfer \u00B7 ' + fromShort + ' \u2192 ' + toShort;
     main.appendChild(title);
     main.appendChild(sub);
     var right = document.createElement('div');
@@ -5165,8 +5173,22 @@
     toast('Imported ' + parts.join(', '));
   }
 
+  function modalTransitionMs() {
+    return prefersReducedMotion() ? 0 : 300;
+  }
+
+  function closeOverlayThen(overlay, cb) {
+    if (!overlay) {
+      if (cb) cb();
+      return;
+    }
+    overlay.classList.remove('show');
+    if (cb) setTimeout(cb, modalTransitionMs());
+  }
+
   function renderImportAccountSheet() {
     if (!pendingImportAccount) return;
+    if ($importModal) $importModal.classList.remove('show');
     ensureDefaultAccounts();
     var layout = pendingImportAccount.layout;
     var suggested = suggestImportAccountId(layout);
@@ -5221,16 +5243,18 @@
     if (!pendingImportAccount || !importAccountPickId) { toast('Choose an account'); return; }
     var payload = pendingImportAccount;
     pendingImportAccount = null;
-    $importAccountModal.classList.remove('show');
-    pendingImport = {
-      batchId: payload.batchId,
-      rows: payload.rows,
-      fileName: payload.fileName,
-      layout: payload.layout,
-      accountId: importAccountPickId
-    };
+    var accountId = importAccountPickId;
     importAccountPickId = null;
-    renderImportReview();
+    closeOverlayThen($importAccountModal, function () {
+      pendingImport = {
+        batchId: payload.batchId,
+        rows: payload.rows,
+        fileName: payload.fileName,
+        layout: payload.layout,
+        accountId: accountId
+      };
+      renderImportReview();
+    });
   }
 
   function parseTableFromCsvText(text) {

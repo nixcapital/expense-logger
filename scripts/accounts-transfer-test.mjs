@@ -45,8 +45,14 @@ function ts(y, m, d) {
 async function importThroughAccountSheet(page, relPath) {
   await page.locator('#importFileInput').setInputFiles(join(FIX, relPath));
   await page.waitForSelector('#importAccountModal.show', { timeout: 5000 });
+  await page.waitForTimeout(350);
   await page.click('#importAccountContinueBtn');
-  await page.waitForSelector('#importModal.show', { timeout: 5000 });
+  await page.waitForFunction(() => {
+    const acct = document.getElementById('importAccountModal');
+    const review = document.getElementById('importModal');
+    return acct && !acct.classList.contains('show') && review && review.classList.contains('show');
+  }, { timeout: 5000 });
+  await page.waitForTimeout(350);
 }
 
 async function run() {

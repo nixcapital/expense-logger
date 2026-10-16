@@ -41,8 +41,18 @@ async function importFile(page, relPath) {
   await page.locator('#importFileInput').setInputFiles(join(FIX, relPath));
   await page.waitForSelector('#importAccountModal.show', { timeout: 5000 }).catch(() => {});
   const accountSheet = await page.locator('#importAccountModal.show').count();
-  if (accountSheet) await page.click('#importAccountContinueBtn');
-  await page.waitForTimeout(400);
+  if (accountSheet) {
+    await page.waitForTimeout(300);
+    await page.click('#importAccountContinueBtn');
+    await page.waitForFunction(() => {
+      const acct = document.getElementById('importAccountModal');
+      const review = document.getElementById('importModal');
+      return acct && !acct.classList.contains('show') && review && review.classList.contains('show');
+    }, { timeout: 5000 }).catch(() => {});
+    await page.waitForTimeout(300);
+  } else {
+    await page.waitForTimeout(400);
+  }
 }
 
 async function confirmImport(page) {

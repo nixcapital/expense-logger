@@ -1,5 +1,5 @@
 /**
- * QA screenshots for Release 1.5.0 accounts + transfers (428x926, fake data only).
+ * QA screenshots for Release 1.5.0 (428x926, fake data only). Not committed to repo.
  * Run: node scripts/accounts-qa-screenshots.mjs
  */
 import { chromium } from 'playwright';
@@ -8,7 +8,7 @@ import { readFileSync, existsSync, mkdirSync } from 'fs';
 import { join, extname } from 'path';
 
 const PORT = 8894;
-const OUT = join(process.cwd(), 'qa-screenshots');
+const OUT = process.env.EL_QA_OUT || '/opt/cursor/artifacts/qa-screenshots-15';
 const MIME = {
   '.html': 'text/html',
   '.js': 'text/javascript',
@@ -16,8 +16,11 @@ const MIME = {
   '.json': 'application/json',
   '.png': 'image/png',
   '.csv': 'text/csv',
-  '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+  '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  '.svg': 'image/svg+xml'
 };
+
+const MODAL_ANIM_MS = 380;
 
 function makeServer(root) {
   return createServer((req, res) => {
@@ -29,13 +32,36 @@ function makeServer(root) {
       res.end('not found');
       return;
     }
-    res.writeHead(200, { 'Content-Type': MIME[extname(file)] || 'application/octet-stream', 'Cache-Control': 'no-store' });
+    res.writeHead(200, {
+      'Content-Type': MIME[extname(file)] || 'application/octet-stream',
+      'Cache-Control': 'no-store'
+    });
     res.end(readFileSync(file));
   });
 }
 
 function ts(y, m, d) {
   return new Date(y, m, d, 12, 0, 0).getTime();
+}
+
+async function waitModalOpen(page, selector) {
+  await page.waitForSelector(selector + '.show', { state: 'visible' });
+  await page.waitForTimeout(MODAL_ANIM_MS);
+}
+
+async function waitModalClosed(page, selector) {
+  await page.waitForFunction((sel) => {
+    const el = document.querySelector(sel);
+    return el && !el.classList.contains('show');
+  }, selector, { timeout: 5000 });
+  await page.waitForTimeout(MODAL_ANIM_MS);
+}
+
+async function waitSingleModal(page) {
+  await page.waitForFunction(() => {
+    const open = document.querySelectorAll('.modal-overlay.show');
+    return open.length === 1;
+  }, { timeout: 5000 });
 }
 
 const categories = [
@@ -86,22 +112,36 @@ await page.evaluate(({ categories, entries, accounts, transferPairs }) => {
 }, { categories, entries, accounts, transferPairs });
 await page.reload({ waitUntil: 'networkidle' });
 
+await page.emulateMedia({ colorScheme: 'dark' });
+
 await page.click('[data-tab="settings"]');
+await page.evaluate(() => {
+  const main = document.querySelector('.app-main');
+  if (main) main.scrollTop = 420;
+});
+await page.waitForTimeout(200);
+
 await page.locator('#importFileInput').setInputFiles(join(process.cwd(), 'test/fixtures/sample-card-period-b.csv'));
-await page.waitForSelector('#importAccountModal.show');
+await waitModalOpen(page, '#importAccountModal');
+await waitSingleModal(page);
 await page.screenshot({ path: join(OUT, '15-import-account-sheet.png') });
+
 await page.click('#importAccountContinueBtn');
-await page.waitForSelector('#importModal.show');
+await waitModalClosed(page, '#importAccountModal');
+await waitModalOpen(page, '#importModal');
+await waitSingleModal(page);
 await page.screenshot({ path: join(OUT, '15-import-summary-reimport.png') });
 await page.click('#importCancelBtn');
+await waitModalClosed(page, '#importModal');
 
 await page.click('[data-tab="history"]');
 await page.waitForSelector('.activity-account-segment');
-await page.waitForTimeout(350);
+await page.waitForSelector('.search-icon-svg');
+await page.waitForTimeout(300);
 await page.screenshot({ path: join(OUT, '15-activity-all-accounts-dark.png') });
 
 await page.click('.activity-account-segment[data-account-id="acct-chase"]');
-await page.waitForTimeout(350);
+await page.waitForTimeout(300);
 await page.screenshot({ path: join(OUT, '15-activity-chase-filter-dark.png') });
 
 await page.click('.activity-row.is-transfer-row');

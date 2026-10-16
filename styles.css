@@ -774,7 +774,8 @@ button.legend-row.legend-btn.active { background: color-mix(in srgb, var(--accen
   width: 22px;
   height: 22px;
 }
-.search-icon [data-ui-icon] {
+.search-icon .search-icon-svg {
+  display: block;
   width: 20px;
   height: 20px;
 }
@@ -1264,7 +1265,32 @@ button.legend-row.legend-btn.active { background: color-mix(in srgb, var(--accen
 .activity-row:last-child { border-bottom: none; }
 .activity-row .row-main { flex: 1; min-width: 0; }
 .activity-row .row-title { font-weight: 600; font-size: 17px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.activity-row .row-sub { font-size: 15px; color: var(--text-dim); margin-top: 2px; }
+.activity-row .row-sub {
+  font-size: 15px;
+  color: var(--text-dim);
+  margin-top: 2px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.activity-row .row-sub-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.activity-row .row-sub .account-tag {
+  flex-shrink: 0;
+  margin-left: 0;
+}
+.activity-row.is-transfer-row .row-sub {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .activity-row .row-amt { font-weight: 600; font-variant-numeric: tabular-nums; flex-shrink: 0; }
 
 .entry {
@@ -1353,6 +1379,16 @@ button.legend-row.legend-btn.active { background: color-mix(in srgb, var(--accen
   padding-right: env(safe-area-inset-right, 0px);
 }
 .modal-overlay.show { opacity: 1; pointer-events: auto; }
+.modal-overlay.modal-front {
+  z-index: 5000;
+  background: rgba(0, 0, 0, 0.72);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+.modal-overlay.modal-front .modal {
+  background: var(--card);
+  box-shadow: 0 -8px 40px rgba(0, 0, 0, 0.45);
+}
 .modal {
   background: var(--card);
   border-radius: var(--radius-sheet) var(--radius-sheet) 0 0;

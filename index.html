@@ -159,7 +159,12 @@
 
   <div class="activity-search-row">
     <div class="search-wrap">
-      <span class="search-icon" aria-hidden="true"><span data-ui-icon="ui-search" data-ui-icon-size="md"></span></span>
+      <span class="search-icon" aria-hidden="true">
+        <svg class="search-icon-svg" width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <circle cx="11" cy="11" r="6.5" stroke="currentColor" stroke-width="1.75"/>
+          <path d="M16.5 16.5L20 20" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"/>
+        </svg>
+      </span>
       <input type="search" id="searchInput" placeholder="Search" autocomplete="off" enterkeyhint="search">
     </div>
     <button type="button" class="activity-filter-btn" id="activityFilterBtn" aria-label="Filters" aria-haspopup="dialog">
@@ -513,7 +518,7 @@
 </div>
 
 <!-- Modal: import account picker -->
-<div class="modal-overlay sheet" id="importAccountModal">
+<div class="modal-overlay sheet modal-front" id="importAccountModal">
   <div class="modal sheet-modal import-account-modal">
     <div class="sheet-grabber" aria-hidden="true"></div>
     <h3 class="import-account-title">Which account is this?</h3>
@@ -525,7 +530,7 @@
 </div>
 
 <!-- Modal: add account -->
-<div class="modal-overlay sheet" id="addAccountModal">
+<div class="modal-overlay sheet modal-front" id="addAccountModal">
   <div class="modal sheet-modal">
     <div class="sheet-grabber" aria-hidden="true"></div>
     <div class="sheet-header">
@@ -548,7 +553,7 @@
 </div>
 
 <!-- Modal: import review -->
-<div class="modal-overlay sheet" id="importModal">
+<div class="modal-overlay sheet modal-front" id="importModal">
   <div class="modal sheet-modal modal-wide import-modal">
     <div class="sheet-grabber" aria-hidden="true"></div>
     <div class="sheet-header">
