@@ -1,5 +1,5 @@
 /**
- * Simulates 1.6.3 → 1.7.0 deploy on the same origin (port).
+ * Simulates 1.6.5 → 1.7.0 deploy on the same origin (port).
  * Run: node scripts/sw-upgrade-test.mjs [--baseline]
  * --baseline uses main-branch sw.js/app (reproduces mixed-cache issues).
  */

@@ -1,11 +1,16 @@
 /**
- * Browser check: forecast Y-axis cushion label does not collide with ticks (light/dark, 30/60/90d).
+ * Forecast Y-axis label spacing (light/dark, 30/60/90d, large negative ranges).
  * Run: node scripts/forecast-chart-axis-test.mjs
  */
 import { chromium } from 'playwright';
 import { createServer } from 'http';
 import { readFileSync, existsSync } from 'fs';
 import { join, extname } from 'path';
+import { createRequire } from 'module';
+import { buildForecastFixture164 } from './forecast-fixture-164.mjs';
+
+const require = createRequire(import.meta.url);
+const FC = require('../forecast.js');
 
 const PORT = 8896;
 const ROOT = '/workspace';
@@ -27,6 +32,30 @@ function server() {
 
 function ts(y, m, d) {
   return new Date(y, m, d, 12, 0, 0).getTime();
+}
+
+function assertAxisPlan(dataMin, dataMax, label) {
+  const scale = FC.computeForecastChartYScale(dataMin, dataMax, { cushion: 600 });
+  const plan = FC.planForecastChartYAxisLabels({
+    minBal: scale.minBal,
+    maxBal: scale.maxBal,
+    step: scale.step,
+    cushion: 600,
+    cushionNear: scale.cushionNear,
+    crossesZero: scale.crossesZero,
+    padT: 12,
+    innerH: 162,
+    baselineNudge: 4
+  });
+  if (plan.labels.length > 6) {
+    throw new Error(label + ': too many labels ' + plan.labels.length);
+  }
+  if (FC.yAxisLabelsCollide(plan)) {
+    throw new Error(label + ': labels collide ' + JSON.stringify(plan.labels));
+  }
+  if (dataMin < 0 && dataMax > 0 && !plan.labels.some((l) => l.bal === 0)) {
+    throw new Error(label + ': missing zero tick');
+  }
 }
 
 function seed() {
@@ -59,7 +88,47 @@ function seed() {
   return { accounts, entries, transferPairs: [], transferPatterns: [], categories };
 }
 
+function seedLargeRange() {
+  const fx = buildForecastFixture164();
+  const accounts = [
+    {
+      id: fx.checkingId, name: 'Checking', type: 'bank', color: '#20C997',
+      currentBalance: fx.balance, balanceAsOf: '2026-10-16'
+    },
+    { id: fx.chaseId, name: 'Chase card', type: 'credit_card', color: '#748FFC' }
+  ];
+  const categories = [
+    { id: 'income', name: 'Income', icon: 'circle-dot', color: '#34C77B' },
+    { id: 'bills', name: 'Bills', icon: 'receipt', color: '#cc5de8' },
+    { id: 'dining', name: 'Dining', icon: 'utensils', color: '#ff922b' },
+    { id: 'transfer', name: 'Transfer', icon: 'boxes', color: '#878e96' }
+  ];
+  return {
+    accounts,
+    entries: fx.entries,
+    transferPairs: fx.transferPairs,
+    transferPatterns: [],
+    categories,
+    meta: { forecastCushion: 600, onboarded: true }
+  };
+}
+
+async function assertBrowserAxis(page, label) {
+  const dbg = await page.evaluate(() => window.__forecastChartAxisDebug);
+  if (!dbg) throw new Error('missing axis debug for ' + label);
+  if (dbg.collides) {
+    throw new Error('Y-axis collision ' + label + ': ' + JSON.stringify(dbg.plan.labels));
+  }
+  if (dbg.plan.labels.length > 6) {
+    throw new Error('too many labels ' + label + ': ' + dbg.plan.labels.length);
+  }
+}
+
 async function run() {
+  console.log('forecast-chart-axis-test: pure large ranges');
+  assertAxisPlan(-10000, 9000, '9k-to--10k');
+  assertAxisPlan(-34000, 3500, '3.5k-to--34k');
+
   const srv = server();
   await new Promise((r) => srv.listen(PORT, r));
   const browser = await chromium.launch();
@@ -80,36 +149,33 @@ async function run() {
     window.Date = MockDate;
   });
 
-  await page.goto(`http://127.0.0.1:${PORT}/index.html`, { waitUntil: 'networkidle' });
-  const data = seed();
-  await page.evaluate((d) => {
-    localStorage.clear();
-    localStorage.setItem('expenseLogger.categories.v1', JSON.stringify(d.categories));
-    localStorage.setItem('expenseLogger.entries.v1', JSON.stringify(d.entries));
-    localStorage.setItem('expenseLogger.accounts.v1', JSON.stringify(d.accounts));
-    localStorage.setItem('expenseLogger.transferPairs.v1', '[]');
-    localStorage.setItem('expenseLogger.transferPatterns.v1', '[]');
-    localStorage.setItem('expenseLogger.meta.v1', JSON.stringify({ forecastCushion: 600 }));
-    localStorage.setItem('expenseLogger.forecastOverrides.v1', '{}');
-  }, data);
-  await page.reload({ waitUntil: 'networkidle' });
-  await page.click('#homeForecastCard');
-  await page.waitForSelector('#tab-forecast:not([hidden])');
-  await page.waitForTimeout(400);
+  async function bootWithData(data) {
+    await page.goto(`http://127.0.0.1:${PORT}/index.html`, { waitUntil: 'networkidle' });
+    await page.evaluate((d) => {
+      localStorage.clear();
+      localStorage.setItem('expenseLogger.categories.v1', JSON.stringify(d.categories));
+      localStorage.setItem('expenseLogger.entries.v1', JSON.stringify(d.entries));
+      localStorage.setItem('expenseLogger.accounts.v1', JSON.stringify(d.accounts));
+      localStorage.setItem('expenseLogger.transferPairs.v1', JSON.stringify(d.transferPairs || []));
+      localStorage.setItem('expenseLogger.transferPatterns.v1', JSON.stringify(d.transferPatterns || []));
+      localStorage.setItem('expenseLogger.meta.v1', JSON.stringify(d.meta || { forecastCushion: 600 }));
+      localStorage.setItem('expenseLogger.forecastOverrides.v1', '{}');
+    }, data);
+    await page.reload({ waitUntil: 'networkidle' });
+    await page.click('#homeForecastCard');
+    await page.waitForSelector('#tab-forecast:not([hidden])');
+    await page.waitForTimeout(400);
+  }
 
-  for (const scheme of ['light', 'dark']) {
-    await page.emulateMedia({ colorScheme: scheme });
-    await page.waitForTimeout(150);
-    for (const days of [30, 60, 90]) {
-      await page.click('.forecast-range-btn[data-forecast-days="' + days + '"]');
-      await page.waitForTimeout(350);
-      const dbg = await page.evaluate(() => window.__forecastChartAxisDebug);
-      if (!dbg) throw new Error('missing axis debug for ' + scheme + ' ' + days + 'd');
-      if (dbg.collides) {
-        throw new Error('Y-axis collision ' + scheme + ' ' + days + 'd: ' + JSON.stringify(dbg.plan));
-      }
-      if (dbg.cushionNear && dbg.plan.labels.some((l) => l.bal === 500)) {
-        throw new Error('500 tick should be hidden when cushion is 600 (' + scheme + ' ' + days + 'd)');
+  for (const [name, seedFn] of [['standard', seed], ['large-range', seedLargeRange]]) {
+    await bootWithData(seedFn());
+    for (const scheme of ['light', 'dark']) {
+      await page.emulateMedia({ colorScheme: scheme });
+      await page.waitForTimeout(150);
+      for (const days of [30, 60, 90]) {
+        await page.click('.forecast-range-btn[data-forecast-days="' + days + '"]');
+        await page.waitForTimeout(350);
+        await assertBrowserAxis(page, name + ' ' + scheme + ' ' + days + 'd');
       }
     }
   }

@@ -6,6 +6,7 @@ import { chromium } from 'playwright';
 import { createServer } from 'http';
 import { readFileSync, existsSync, mkdirSync, writeFileSync } from 'fs';
 import { join, extname } from 'path';
+import { buildForecastFixture164 } from './forecast-fixture-164.mjs';
 
 const PORT = 8898;
 const OUT_DIRS = ['/cursor/stores/self/artifacts/wrapped-17'];
@@ -210,6 +211,7 @@ await page.waitForSelector('#openWrappedBtn', { state: 'visible' });
 await page.evaluate(() => {
   document.getElementById('reportMonth').value = '2026-09';
 });
+await shot('reports-wrapped-entry-dark.png', 'dark');
 await page.click('#openWrappedBtn');
 await page.waitForSelector('#wrappedModal.show');
 await page.waitForTimeout(700);
@@ -278,6 +280,46 @@ await page.click('[data-tab="report"]');
 await page.click('#openWrappedBtn');
 await page.waitForTimeout(700);
 await shot('slide-01-light.png', 'light');
+
+const fx = buildForecastFixture164({ withIncome: false, balance: 3560 });
+const forecastSeed = {
+  'expenseLogger.accounts.v1': JSON.stringify([
+    {
+      id: fx.checkingId, name: 'Checking', type: 'bank', color: '#20C997',
+      currentBalance: fx.balance, balanceAsOf: '2026-10-16'
+    },
+    { id: fx.chaseId, name: 'Chase card', type: 'credit_card', color: '#748FFC' }
+  ]),
+  'expenseLogger.categories.v1': JSON.stringify([
+    { id: 'income', name: 'Income', icon: 'circle-dot', color: '#34C77B' },
+    { id: 'dining', name: 'Dining', icon: 'utensils', color: '#ff922b' },
+    { id: 'groceries', name: 'Groceries', icon: 'shopping-cart', color: '#4dabf7' },
+    { id: 'bills', name: 'Bills', icon: 'receipt', color: '#cc5de8' },
+    { id: 'transfer', name: 'Transfer', icon: 'boxes', color: '#878e96' },
+    { id: 'other', name: 'Other', icon: 'boxes', color: '#878e96' }
+  ]),
+  'expenseLogger.entries.v1': JSON.stringify(fx.entries),
+  'expenseLogger.transferPairs.v1': JSON.stringify(fx.transferPairs),
+  'expenseLogger.meta.v1': JSON.stringify({ forecastCushion: 600, onboarded: true }),
+  'expenseLogger.forecastCountedOneOffs.v1': JSON.stringify({}),
+  'expenseLogger.ui.v1': JSON.stringify({ tab: 'summary' })
+};
+await page.evaluate((data) => {
+  Object.keys(data).forEach((k) => localStorage.setItem(k, data[k]));
+}, forecastSeed);
+await page.reload({ waitUntil: 'networkidle' });
+await page.waitForTimeout(1000);
+await page.evaluate(() => {
+  if (window.ExpenseLoggerTest && window.ExpenseLoggerTest.openForecastScreen) {
+    window.ExpenseLoggerTest.openForecastScreen();
+  }
+});
+await page.waitForFunction(() => {
+  const m = document.getElementById('forecastMain');
+  return m && m.hidden === false;
+}, { timeout: 20000 });
+await page.waitForTimeout(600);
+await shot('forecast-top-dark.png', 'dark');
 
 await browser.close();
 server.close();
