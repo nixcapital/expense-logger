@@ -16,7 +16,7 @@
   var IMPORT_SETTINGS_KEY = 'expenseLogger.importSettings.v1';
   var META_KEY            = 'expenseLogger.meta.v1';
 
-  var APP_VERSION = '1.4.2';
+  var APP_VERSION = '1.4.3';
   var BACKUP_FORMAT = 1;
   var MS_DAY = 86400000;
   var BACKUP_NUDGE_AFTER_DAYS = 30;
@@ -211,9 +211,17 @@
 
   var $searchInput = $('searchInput');
   var $filterCategory = $('filterCategory');
-  var $filterMonth = $('filterMonth');
   var $filterType = $('filterType');
   var $filterSort = $('filterSort');
+  var $activityFilterBtn = $('activityFilterBtn');
+  var $activityFilterModal = $('activityFilterModal');
+  var $activityFilterDoneBtn = $('activityFilterDoneBtn');
+  var $activitySummaryRange = $('activitySummaryRange');
+  var $activitySummaryTotal = $('activitySummaryTotal');
+  var $activitySummaryCount = $('activitySummaryCount');
+  var $activitySummaryAvg = $('activitySummaryAvg');
+
+  var ACTIVITY_RANGE_IDS = ['this-month', 'last-month', '3-months', 'year', 'all'];
 
   var $tabBar = $('tabBar');
   var $budgetModal = $('budgetModal');
@@ -545,11 +553,16 @@
         tab: currentTab === 'add' ? tabBeforeAdd : currentTab,
         dismissedWrapped: uiState.dismissedWrapped || {},
         reportChartMonths: uiState.reportChartMonths === 12 ? 12 : 6,
-        reportTxSort: uiState.reportTxSort || 'latest'
+        reportTxSort: uiState.reportTxSort || 'latest',
+        activityRange: normalizeActivityRangeId(uiState.activityRange)
       }));
     } catch (e) {}
   }
-  var uiState = { dismissedWrapped: {}, reportChartMonths: 6, reportTxSort: 'latest' };
+  var uiState = { dismissedWrapped: {}, reportChartMonths: 6, reportTxSort: 'latest', activityRange: 'this-month' };
+  function normalizeActivityRangeId(id) {
+    if (ACTIVITY_RANGE_IDS.indexOf(id) !== -1) return id;
+    return 'this-month';
+  }
   function loadUI() {
     try {
       var raw = localStorage.getItem(UI_KEY);
@@ -561,6 +574,7 @@
         if (p.reportTxSort === 'latest' || p.reportTxSort === 'largest' || p.reportTxSort === 'recurring') {
           uiState.reportTxSort = p.reportTxSort;
         }
+        uiState.activityRange = normalizeActivityRangeId(p.activityRange);
         return p;
       }
     } catch (e) {}
@@ -605,7 +619,8 @@
       tab: currentTab === 'add' ? tabBeforeAdd : currentTab,
       dismissedWrapped: uiState.dismissedWrapped || {},
       reportChartMonths: uiState.reportChartMonths === 12 ? 12 : 6,
-      reportTxSort: uiState.reportTxSort || 'latest'
+      reportTxSort: uiState.reportTxSort || 'latest',
+      activityRange: normalizeActivityRangeId(uiState.activityRange)
     });
     return storage;
   }
@@ -1120,14 +1135,165 @@
     refreshIconObservers($recentEl);
   }
 
+  function entryCountsAsSpending(e) {
+    if (!e || typeof e.amount !== 'number') return false;
+    if (e.isTransfer) return false;
+    if (e.excluded) return false;
+    if (e.countAsSpending === false) return false;
+    return true;
+  }
+
+  function entrySpendingAmount(e) {
+    return entryCountsAsSpending(e) ? e.amount : 0;
+  }
+
+  function endOfLocalDay(ts) {
+    var d = new Date(ts);
+    return new Date(d.getFullYear(), d.getMonth(), d.getDate(), 23, 59, 59, 999).getTime();
+  }
+
+  function getActivityRangeBounds(rangeId, now) {
+    now = now || new Date();
+    var today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    var y = today.getFullYear();
+    var m = today.getMonth();
+    var id = normalizeActivityRangeId(rangeId);
+
+    if (id === 'all') {
+      return {
+        id: id,
+        startMs: null,
+        endMs: endOfLocalDay(today.getTime()),
+        multiMonth: true,
+        label: 'All time'
+      };
+    }
+    if (id === 'this-month') {
+      return {
+        id: id,
+        startMs: new Date(y, m, 1).getTime(),
+        endMs: endOfLocalDay(today.getTime()),
+        multiMonth: false,
+        label: null
+      };
+    }
+    if (id === 'last-month') {
+      var lm = m - 1;
+      var ly = y;
+      if (lm < 0) { lm = 11; ly -= 1; }
+      var lastDay = daysInMonth(ly, lm);
+      return {
+        id: id,
+        startMs: new Date(ly, lm, 1).getTime(),
+        endMs: endOfLocalDay(new Date(ly, lm, lastDay).getTime()),
+        multiMonth: false,
+        label: null
+      };
+    }
+    if (id === '3-months') {
+      var sm = m - 2;
+      var sy = y;
+      while (sm < 0) { sm += 12; sy -= 1; }
+      return {
+        id: id,
+        startMs: new Date(sy, sm, 1).getTime(),
+        endMs: endOfLocalDay(today.getTime()),
+        multiMonth: true,
+        label: null
+      };
+    }
+    if (id === 'year') {
+      return {
+        id: id,
+        startMs: new Date(y, 0, 1).getTime(),
+        endMs: endOfLocalDay(today.getTime()),
+        multiMonth: true,
+        label: null
+      };
+    }
+    return getActivityRangeBounds('this-month', now);
+  }
+
+  function entryInActivityRange(ts, bounds) {
+    if (!bounds || bounds.id === 'all' || bounds.startMs == null) return true;
+    return ts >= bounds.startMs && ts <= bounds.endMs;
+  }
+
+  function formatActivityRangePart(d) {
+    return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  }
+
+  function formatActivityRangeLabel(bounds) {
+    if (!bounds) return '';
+    if (bounds.label) return bounds.label;
+    var start = new Date(bounds.startMs);
+    var end = new Date(bounds.endMs);
+    var startStr = formatActivityRangePart(start);
+    var endStr = formatActivityRangePart(end);
+    if (start.getFullYear() !== end.getFullYear()) {
+      startStr += ', ' + start.getFullYear();
+    }
+    return startStr + ' \u2013 ' + endStr + ', ' + end.getFullYear();
+  }
+
+  function inclusiveRangeDayCount(bounds, entriesForSpan) {
+    if (!bounds) return 1;
+    var end = new Date(bounds.endMs);
+    var endDay = new Date(end.getFullYear(), end.getMonth(), end.getDate()).getTime();
+    var startDay;
+    if (bounds.startMs == null) {
+      var minTs = null;
+      (entriesForSpan || []).forEach(function (e) {
+        if (minTs === null || e.ts < minTs) minTs = e.ts;
+      });
+      if (minTs == null) startDay = endDay;
+      else {
+        var md = new Date(minTs);
+        startDay = new Date(md.getFullYear(), md.getMonth(), md.getDate()).getTime();
+      }
+    } else {
+      var sd = new Date(bounds.startMs);
+      startDay = new Date(sd.getFullYear(), sd.getMonth(), sd.getDate()).getTime();
+    }
+    return Math.max(1, Math.round((endDay - startDay) / MS_DAY) + 1);
+  }
+
+  function sumSpending(list) {
+    return list.reduce(function (s, e) { return s + entrySpendingAmount(e); }, 0);
+  }
+
+  function computeActivitySummary(list, bounds) {
+    var total = sumSpending(list);
+    var days = inclusiveRangeDayCount(bounds, list);
+    var avg = total / days;
+    return {
+      total: total,
+      count: list.length,
+      avgPerDay: avg,
+      rangeLabel: formatActivityRangeLabel(bounds)
+    };
+  }
+
+  function monthGroupKey(ts) {
+    var d = new Date(ts);
+    return d.getFullYear() + '-' + pad2(d.getMonth() + 1);
+  }
+
+  function parseMonthGroupKey(key) {
+    var p = key.split('-');
+    return { y: parseInt(p[0], 10), m: parseInt(p[1], 10) - 1 };
+  }
+
   function getFilteredEntries() {
     var q = ($searchInput.value || '').toLowerCase().trim();
     var catFilter = $filterCategory.value;
-    var monthFilter = $filterMonth.value;
     var typeFilter = $filterType.value;
     var sort = $filterSort.value;
+    var bounds = getActivityRangeBounds(uiState.activityRange);
 
     var list = entries.slice();
+
+    list = list.filter(function (e) { return entryInActivityRange(e.ts, bounds); });
 
     if (q) {
       list = list.filter(function (e) {
@@ -1137,12 +1303,6 @@
       });
     }
     if (catFilter) list = list.filter(function (e) { return e.categoryId === catFilter; });
-    if (monthFilter) {
-      var parts = monthFilter.split('-');
-      var y = parseInt(parts[0], 10);
-      var m = parseInt(parts[1], 10) - 1;
-      list = list.filter(function (e) { return isSameMonth(e.ts, y, m); });
-    }
     if (typeFilter === 'recurring') list = list.filter(function (e) { return !!e.recurringId; });
     else if (typeFilter === 'one-time') list = list.filter(function (e) { return !e.recurringId; });
     else if (typeFilter === 'with-receipt') list = list.filter(function (e) { return !!e.hasReceipt; });
@@ -1168,6 +1328,28 @@
     return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
   }
 
+  function parseActivityNoteForRow(noteRaw, catName) {
+    var note = String(noteRaw || '').trim();
+    if (!note) return { title: catName, noteTag: null };
+    var parts = note.split(/\s*\u00B7\s*|\s*\u2022\s*/);
+    if (parts.length >= 2) {
+      return {
+        title: parts[0].trim(),
+        noteTag: parts.slice(1).join(' \u00B7 ').trim()
+      };
+    }
+    return { title: note, noteTag: note };
+  }
+
+  function activitySubtitleLine(catName, titleText, noteTag) {
+    catName = String(catName || '').trim();
+    titleText = String(titleText || '').trim();
+    var tag = noteTag != null ? String(noteTag).trim() : '';
+    if (!tag) return catName;
+    if (tag.toLowerCase() === titleText.toLowerCase()) return catName;
+    return catName + ' \u00B7 ' + tag;
+  }
+
   function createActivityRow(e) {
     var cat = getCat(e.categoryId);
     var row = document.createElement('div');
@@ -1184,10 +1366,16 @@
     main.className = 'row-main';
     var title = document.createElement('div');
     title.className = 'row-title';
-    var hasNote = !!(e.note && String(e.note).trim());
-    title.textContent = hasNote ? String(e.note).trim() : cat.name;
+    var noteRaw = String(e.note || '').trim();
+    var hasNote = !!noteRaw;
     var subBits = [];
-    if (hasNote) subBits.push(cat.name);
+    if (hasNote) {
+      var parsed = parseActivityNoteForRow(noteRaw, cat.name);
+      title.textContent = parsed.title;
+      subBits.push(activitySubtitleLine(cat.name, parsed.title, parsed.noteTag));
+    } else {
+      title.textContent = cat.name;
+    }
     if (e.recurringId) subBits.push('Recurring');
     if (e.hasReceipt) subBits.push(uiIcon('ui-camera', 'xs'));
     main.appendChild(title);
@@ -1226,9 +1414,57 @@
     return out;
   }
 
+  function syncActivityRangeChips() {
+    var id = normalizeActivityRangeId(uiState.activityRange);
+    Array.prototype.forEach.call(document.querySelectorAll('.activity-range-chip'), function (btn) {
+      var on = btn.dataset.activityRange === id;
+      btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+    });
+  }
+
+  function updateActivityFilterBtnState() {
+    if (!$activityFilterBtn) return;
+    var active = !!($filterCategory && $filterCategory.value)
+      || ($filterType && $filterType.value !== 'all')
+      || ($filterSort && $filterSort.value !== 'newest');
+    $activityFilterBtn.classList.toggle('is-active', active);
+  }
+
+  function renderActivitySummary(list) {
+    if (!$activitySummaryRange) return;
+    var bounds = getActivityRangeBounds(uiState.activityRange);
+    var summary = computeActivitySummary(list, bounds);
+    $activitySummaryRange.textContent = summary.rangeLabel;
+    $activitySummaryTotal.textContent = fmtMoneyDisplay(summary.total);
+    $activitySummaryCount.textContent = summary.count + ' transaction' + (summary.count === 1 ? '' : 's');
+    $activitySummaryAvg.innerHTML = 'avg <span class="avg-amt">' + fmtMoneyDisplay(summary.avgPerDay) + '</span>/day';
+  }
+
+  function appendActivityDayGroup(parent, dayKey, dayEntries) {
+    var dayTotal = dayEntries.reduce(function (s, e) { return s + entrySpendingAmount(e); }, 0);
+    var block = document.createElement('div');
+    block.className = 'activity-day-block';
+    var hdr = document.createElement('div');
+    hdr.className = 'activity-day-header';
+    hdr.innerHTML = '<span>' + dayGroupTitle(dayKey) + '</span><span class="day-total">' + fmtMoneyDisplay(dayTotal) + '</span>';
+    block.appendChild(hdr);
+    var group = document.createElement('div');
+    group.className = 'activity-group';
+    var rowsWrap = document.createElement('div');
+    rowsWrap.className = 'activity-day-rows';
+    dayEntries.forEach(function (e) { rowsWrap.appendChild(createActivityRow(e)); });
+    group.appendChild(rowsWrap);
+    block.appendChild(group);
+    parent.appendChild(block);
+  }
+
   function renderEntries() {
+    syncActivityRangeChips();
+    updateActivityFilterBtnState();
     var sort = $filterSort ? $filterSort.value : 'newest';
     var list = getFilteredEntries();
+    var bounds = getActivityRangeBounds(uiState.activityRange);
+    renderActivitySummary(list);
     if ($entriesCt) $entriesCt.textContent = list.length === 1 ? '1 item' : list.length + ' items';
     if (list.length === 0) {
       $entriesEl.innerHTML = '<div class="empty">No matching expenses.<br>Try changing filters.</div>';
@@ -1256,33 +1492,61 @@
       return;
     }
 
-    var groups = {};
-    var order = [];
-    list.forEach(function (e) {
-      var k = startOfDay(e.ts);
-      if (!groups[k]) { groups[k] = []; order.push(k); }
-      groups[k].push(e);
-    });
-    order.forEach(function (k) {
-      var dayEntries = groups[k];
-      var dayTotal = dayEntries.reduce(function (s, e) { return s + e.amount; }, 0);
-      var group = document.createElement('div');
-      group.className = 'activity-group';
-      var hdr = document.createElement('div');
-      hdr.className = 'activity-day-header';
-      hdr.innerHTML = '<span>' + dayGroupTitle(k) + '</span><span class="day-total">' + fmtMoneyDisplay(dayTotal) + '</span>';
-      group.appendChild(hdr);
-      var rowsWrap = document.createElement('div');
-      rowsWrap.className = 'activity-day-rows';
-      dayEntries.forEach(function (e) { rowsWrap.appendChild(createActivityRow(e)); });
-      group.appendChild(rowsWrap);
-      frag.appendChild(group);
-    });
+    if (bounds.multiMonth) {
+      var monthMap = {};
+      var monthOrder = [];
+      list.forEach(function (e) {
+        var mk = monthGroupKey(e.ts);
+        if (!monthMap[mk]) { monthMap[mk] = []; monthOrder.push(mk); }
+        monthMap[mk].push(e);
+      });
+      if (sort === 'oldest') monthOrder.reverse();
+      monthOrder.forEach(function (mk) {
+        var monthEntries = monthMap[mk];
+        var mp = parseMonthGroupKey(mk);
+        var block = document.createElement('div');
+        block.className = 'activity-month-block';
+        var monthHdr = document.createElement('div');
+        monthHdr.className = 'activity-month-header';
+        var monthTotal = sumSpending(monthEntries);
+        monthHdr.innerHTML = '<div class="activity-month-left"><div class="activity-month-title">'
+          + escHtml(monthName(new Date(mp.y, mp.m, 1)))
+          + '</div><div class="activity-month-meta">'
+          + monthEntries.length + ' transaction' + (monthEntries.length === 1 ? '' : 's')
+          + '</div></div><div class="activity-month-total">' + fmtMoneyDisplay(monthTotal) + '</div>';
+        block.appendChild(monthHdr);
+
+        var dayGroups = {};
+        var dayOrder = [];
+        monthEntries.forEach(function (e) {
+          var dk = startOfDay(e.ts);
+          if (!dayGroups[dk]) { dayGroups[dk] = []; dayOrder.push(dk); }
+          dayGroups[dk].push(e);
+        });
+        if (sort === 'oldest') dayOrder.reverse();
+        dayOrder.forEach(function (dk) {
+          appendActivityDayGroup(block, dk, dayGroups[dk]);
+        });
+        frag.appendChild(block);
+      });
+    } else {
+      var groups = {};
+      var order = [];
+      list.forEach(function (e) {
+        var k = startOfDay(e.ts);
+        if (!groups[k]) { groups[k] = []; order.push(k); }
+        groups[k].push(e);
+      });
+      order.forEach(function (k) {
+        appendActivityDayGroup(frag, k, groups[k]);
+      });
+    }
+
     $entriesEl.innerHTML = '';
     $entriesEl.appendChild(frag);
     if (lastSavedEntryId) {
-      var savedRow = $entriesEl.querySelector('.activity-row[data-id="' + lastSavedEntryId + '"]');
-      if (savedRow) playCatIcon(savedRow.querySelector('.cat-badge'));
+      var savedRow2 = $entriesEl.querySelector('.activity-row[data-id="' + lastSavedEntryId + '"]');
+      if (savedRow2) playCatIcon(savedRow2.querySelector('.cat-badge'));
       lastSavedEntryId = null;
     }
     refreshIconObservers($entriesEl);
@@ -2952,33 +3216,33 @@
     });
   }
 
-  function wireFilterChips() {
-    var map = {
-      category: $filterCategory,
-      month: $filterMonth,
-      type: $filterType,
-      sort: $filterSort
-    };
-    Array.prototype.forEach.call(document.querySelectorAll('.filter-chip'), function (chip) {
-      chip.addEventListener('click', function () {
-        var key = chip.dataset.filter;
-        var el = map[key];
-        if (!el) return;
-        if (el.showPicker) {
-          try { el.showPicker(); return; } catch (e) {}
-        }
-        el.focus();
-        if (el.tagName === 'SELECT') el.size = 5;
-        el.click();
+  function setActivityRange(rangeId) {
+    var next = normalizeActivityRangeId(rangeId);
+    if (uiState.activityRange === next) return;
+    uiState.activityRange = next;
+    saveUI();
+    renderEntries();
+  }
+
+  function wireActivityFilters() {
+    Array.prototype.forEach.call(document.querySelectorAll('.activity-range-chip'), function (btn) {
+      btn.addEventListener('click', function () {
+        setActivityRange(btn.dataset.activityRange);
       });
     });
-    [$filterCategory, $filterMonth, $filterType, $filterSort].forEach(function (el) {
-      if (!el) return;
-      el.addEventListener('change', function () {
-        if (el.tagName === 'SELECT') el.size = 0;
-        renderEntries();
+    if ($activityFilterBtn && $activityFilterModal) {
+      $activityFilterBtn.addEventListener('click', function () {
+        $activityFilterModal.classList.add('show');
       });
-    });
+    }
+    if ($activityFilterDoneBtn && $activityFilterModal) {
+      $activityFilterDoneBtn.addEventListener('click', function () {
+        $activityFilterModal.classList.remove('show');
+      });
+      $activityFilterModal.addEventListener('click', function (ev) {
+        if (ev.target === $activityFilterModal) $activityFilterModal.classList.remove('show');
+      });
+    }
   }
 
   // ---------- Report view ----------
@@ -4913,7 +5177,6 @@
     searchTimer = setTimeout(renderEntries, 200);
   });
   $filterCategory.addEventListener('change', renderEntries);
-  $filterMonth.addEventListener('change', renderEntries);
   $filterType.addEventListener('change', renderEntries);
   $filterSort.addEventListener('change', renderEntries);
 
@@ -5089,7 +5352,8 @@
   else showApp();
 
   initScreenTitleObservers();
-  wireFilterChips();
+  wireActivityFilters();
+  syncActivityRangeChips();
   updateMonthPillLabels();
   addEntryDate = localDateStamp();
   if ($addDate) $addDate.value = addEntryDate;
