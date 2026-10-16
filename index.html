@@ -1,353 +1,306 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="theme-color" content="#0b0e14">
-<meta name="mobile-web-app-capable" content="yes">
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<meta name="description" content="Offline expense logger with budgets, receipts, and reports.">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Expenses">
-<title>Expense Logger</title>
-<link rel="icon" href="icon-192.png">
-<link rel="apple-touch-icon" href="icon-192.png">
+<meta name="theme-color" content="#0f1117" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#f4f6fb" media="(prefers-color-scheme: light)">
 <link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icon-192.png">
 <link rel="stylesheet" href="styles.css">
+<title>Expense Logger</title>
 </head>
 <body>
 
-<!-- Lock screen -->
+<!-- LOCK SCREEN -->
 <div id="lockScreen" class="lock-screen" hidden>
   <div class="lock-inner">
-    <div class="lock-logo">🔒</div>
-    <h1>Expense Logger</h1>
+    <div class="lock-emoji">🔒</div>
+    <h1 class="lock-title">Expense Logger</h1>
     <p class="lock-sub">Enter your passcode</p>
-    <div id="pinDots" class="pin-dots"></div>
-    <div id="pinPad" class="pin-pad"></div>
-    <button id="forgotPinBtn" class="link-btn" type="button">Forgot passcode?</button>
+    <div class="pin-dots" id="pinDots"></div>
+    <div class="pin-pad" id="pinPad"></div>
+    <button class="link-btn" id="forgotPinBtn" type="button">Forgot passcode?</button>
   </div>
 </div>
 
-<!-- Main app -->
+<!-- APP -->
 <div id="app" hidden>
 
-  <!-- Header -->
-  <header class="app-header">
-    <h1>Expense Logger</h1>
-  </header>
+<h1>Expense Logger</h1>
+<p class="subtitle">Quick entries, saved on this device</p>
 
-  <!-- ============ ADD TAB ============ -->
-  <main id="tab-add">
-    <section class="card">
-      <div class="field">
-        <label for="amount">Amount</label>
-        <div class="amount-wrap">
-          <span class="dollar">$</span>
-          <input id="amount" type="number" inputmode="decimal" step="0.01" min="0" placeholder="0.00" autocomplete="off">
-        </div>
-      </div>
-
-      <div class="field">
-        <label>Category</label>
-        <div id="cats" class="cat-grid"></div>
-      </div>
-
-      <div class="field">
-        <label for="note">Note <span class="optional">(optional)</span></label>
-        <input id="note" type="text" placeholder="What was it for?" autocomplete="off">
-      </div>
-
-      <div class="field">
-        <label class="checkbox-row">
-          <input id="recurring" type="checkbox">
-          <span>Repeat monthly</span>
-        </label>
-      </div>
-
-      <div class="field">
-        <label>Receipt <span class="optional">(optional)</span></label>
-        <div class="receipt-row">
-          <button id="receiptBtn" class="ghost-btn" type="button">📎 Attach photo</button>
-          <img id="receiptPreview" class="receipt-preview" alt="Receipt preview" hidden>
-          <button id="receiptClearBtn" class="del-btn" type="button" hidden aria-label="Remove receipt">✕</button>
-          <input id="receiptInput" type="file" accept="image/*" capture="environment" hidden>
-        </div>
-      </div>
-
-      <button id="saveBtn" class="primary-btn" type="button" disabled>Save expense</button>
-      <div id="saveHint" class="save-hint"></div>
-    </section>
-
-    <section class="card">
-      <div class="card-header">
-        <h2>Recent</h2>
-        <button id="viewAllBtn" class="link-btn" type="button">View all →</button>
-      </div>
-      <div id="recentEntries"></div>
-    </section>
-  </main>
-
-  <!-- ============ SUMMARY TAB ============ -->
-  <main id="tab-summary" hidden>
-    <section class="card">
-      <div class="card-header">
-        <h2>Spending</h2>
-        <input id="summaryMonth" type="month" class="month-input">
-      </div>
-      <div class="total-row">
-        <span class="total-label">Total</span>
-        <span class="total-value">$<span id="totalVal">0.00</span> <span id="summaryMonthLabel" class="total-month"></span></span>
-      </div>
-      <canvas id="chart" class="chart"></canvas>
-      <div id="legend" class="legend"></div>
-    </section>
-
-    <section class="card">
-      <div class="card-header">
-        <h2>Monthly summary</h2>
-      </div>
-      <div id="monthlySummary"></div>
-    </section>
-
-    <section class="card">
-      <div class="card-header">
-        <h2>Budgets</h2>
-        <button id="editBudgetsBtn" class="link-btn" type="button">Edit</button>
-      </div>
-      <div id="budgetList"></div>
-    </section>
-
-    <section class="card">
-      <div class="card-header">
-        <h2>Yearly overview <span id="yearLabel" class="total-month"></span></h2>
-        <select id="yearSelect" class="year-select"></select>
-      </div>
-      <div id="yearlySummary"></div>
-    </section>
-  </main>
-
-  <!-- ============ REPORT TAB ============ -->
-  <main id="tab-report" hidden>
-    <section class="card">
-      <div class="card-header">
-        <h2>Report</h2>
-        <input id="reportMonth" type="month" class="month-input">
-      </div>
-      <div id="reportBody"></div>
-      <button id="reportExportPdfBtn" class="ghost-btn full" type="button">🖨️ Print / Save PDF</button>
-    </section>
-  </main>
-
-  <!-- ============ HISTORY TAB ============ -->
-  <main id="tab-history" hidden>
-    <section class="card">
-      <div class="card-header">
-        <h2>History</h2>
-        <span id="entriesCount" class="count"></span>
-      </div>
-      <input id="searchInput" type="search" placeholder="Search notes or categories…" autocomplete="off">
-      <div class="filter-row">
-        <select id="filterCategory" class="filter-select"></select>
-        <input id="filterMonth" type="month" class="month-input small">
-      </div>
-      <div class="filter-row">
-        <select id="filterType" class="filter-select">
-          <option value="">All types</option>
-          <option value="one-time">One-time</option>
-          <option value="recurring">Recurring</option>
-          <option value="with-receipt">With receipt</option>
-        </select>
-        <select id="filterSort" class="filter-select">
-          <option value="newest">Newest first</option>
-          <option value="oldest">Oldest first</option>
-          <option value="highest">Highest amount</option>
-          <option value="lowest">Lowest amount</option>
-        </select>
-      </div>
-    </section>
-    <section class="card">
-      <div id="entries"></div>
-    </section>
-  </main>
-
-  <!-- ============ SETTINGS TAB ============ -->
-  <main id="tab-settings" hidden>
-    <section class="card">
-      <div class="card-header">
-        <h2>Categories</h2>
-        <button id="addCategoryBtn" class="link-btn" type="button">+ Add</button>
-      </div>
-      <div id="categoryList"></div>
-    </section>
-
-    <section class="card">
-      <div class="card-header">
-        <h2>Monthly budgets</h2>
-      </div>
-      <div id="budgetSettings"></div>
-    </section>
-
-    <section class="card">
-      <div class="card-header">
-        <h2>Recurring expenses</h2>
-      </div>
-      <div id="recurringList"></div>
-    </section>
-
-    <section class="card">
-      <div class="card-header">
-        <h2>Data</h2>
-      </div>
-      <div class="settings-actions">
-        <button id="exportBtn" class="ghost-btn" type="button">⬇️ Export CSV</button>
-        <button id="exportJsonBtn" class="ghost-btn" type="button">⬇️ Backup JSON</button>
-        <button id="importJsonBtn" class="ghost-btn" type="button">⬆️ Restore JSON</button>
-        <button id="importCsvBtn" class="ghost-btn" type="button">⬆️ Import CSV</button>
-        <button id="clearAllBtn" class="danger-btn" type="button">🗑️ Clear all data</button>
-      </div>
-      <input id="jsonFileInput" type="file" accept="application/json,.json" hidden>
-      <input id="csvFileInput" type="file" accept="text/csv,.csv" hidden>
-    </section>
-
-    <section class="card">
-      <div class="card-header">
-        <h2>Security</h2>
-      </div>
-      <div class="settings-row">
-        <span>Passcode lock</span>
-        <button id="togglePinBtn" class="pill-btn" type="button">Off</button>
-      </div>
-    </section>
-
-    <p id="versionLine" class="version-line">Version 1.0.0</p>
-  </main>
-
-  <!-- Tab bar -->
-  <nav id="tabBar" class="tab-bar">
-    <button class="tab-btn active" data-tab="add" type="button">
-      <span class="tab-icon">＋</span><span class="tab-label">Add</span>
-    </button>
-    <button class="tab-btn" data-tab="summary" type="button">
-      <span class="tab-icon">📊</span><span class="tab-label">Summary</span>
-    </button>
-    <button class="tab-btn" data-tab="report" type="button">
-      <span class="tab-icon">📄</span><span class="tab-label">Report</span>
-    </button>
-    <button class="tab-btn" data-tab="history" type="button">
-      <span class="tab-icon">🕘</span><span class="tab-label">History</span>
-    </button>
-    <button class="tab-btn" data-tab="settings" type="button">
-      <span class="tab-icon">⚙️</span><span class="tab-label">Settings</span>
-    </button>
-  </nav>
-
+<div class="tab-bar" id="tabBar" role="tablist">
+  <button class="tab-btn active" data-tab="add" role="tab">Add</button>
+  <button class="tab-btn" data-tab="summary" role="tab">Summary</button>
+  <button class="tab-btn" data-tab="report" role="tab">Report</button>
+  <button class="tab-btn" data-tab="history" role="tab">History</button>
+  <button class="tab-btn" data-tab="settings" role="tab">Settings</button>
 </div>
 
-<!-- ============ BUDGET MODAL ============ -->
-<div id="budgetModal" class="overlay">
+<!-- TAB: ADD -->
+<section id="tab-add">
+  <div class="card">
+    <div class="field">
+      <label for="amount">Amount</label>
+      <div class="amount-wrap">
+        <span class="dollar">$</span>
+        <input type="number" id="amount" inputmode="decimal" step="0.01" min="0" placeholder="0.00" autocomplete="off">
+      </div>
+    </div>
+
+    <div class="field">
+      <label>Category</label>
+      <div class="cats" id="cats"></div>
+    </div>
+
+    <div class="field">
+      <label for="note">Note (optional)</label>
+      <input type="text" id="note" placeholder="e.g. lunch with Sam" autocomplete="off" maxlength="80">
+    </div>
+
+    <div class="field">
+      <label>Receipt (optional)</label>
+      <div class="receipt-row">
+        <button class="btn-secondary" id="receiptBtn" type="button">📷 Add photo</button>
+        <img id="receiptPreview" class="receipt-preview" alt="" hidden>
+        <button class="del-btn" id="receiptClearBtn" type="button" hidden aria-label="Remove receipt">✕</button>
+      </div>
+      <input type="file" id="receiptInput" accept="image/*" capture="environment" hidden>
+    </div>
+
+    <div class="field">
+      <label class="check-row">
+        <input type="checkbox" id="recurring" >
+        <span>Recurring monthly</span>
+      </label>
+    </div>
+
+    <button class="save-btn" id="saveBtn" disabled>Save Expense</button>
+  </div>
+
+  <div class="card" id="recentCard">
+    <div class="section-header">
+      <h2>Recent</h2>
+      <button class="link-btn" id="viewAllBtn" type="button">View all →</button>
+    </div>
+    <div id="recentEntries"></div>
+  </div>
+</section>
+
+<!-- TAB: SUMMARY -->
+<section id="tab-summary" hidden>
+  <div class="card">
+    <div class="field">
+      <label for="summaryMonth">Month</label>
+      <input type="month" id="summaryMonth">
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Spending <span class="month-label" id="summaryMonthLabel"></span></h2>
+    <p id="total-display"><span class="cur">$</span><span id="totalVal">0.00</span></p>
+    <canvas id="chart" width="600" height="200"></canvas>
+    <div class="cat-legend" id="legend"></div>
+  </div>
+
+  <div class="card">
+    <div class="section-header">
+      <h2>Budgets</h2>
+      <button class="link-btn" id="editBudgetsBtn" type="button">Edit</button>
+    </div>
+    <div id="budgetList"></div>
+  </div>
+
+  <div class="card">
+    <h2>Monthly Summary <span class="month-label" id="yearLabel"></span></h2>
+    <div id="monthlySummary"></div>
+  </div>
+
+  <div class="card">
+    <div class="section-header">
+      <h2>Yearly Summary</h2>
+      <select id="yearSelect" class="mini-select"></select>
+    </div>
+    <div id="yearlySummary"></div>
+  </div>
+</section>
+
+<!-- TAB: REPORT -->
+<section id="tab-report" hidden>
+  <div class="card">
+    <div class="field">
+      <label for="reportMonth">Report month</label>
+      <input type="month" id="reportMonth">
+    </div>
+    <button class="btn-secondary" id="reportExportPdfBtn" type="button">🖨 Print / Save as PDF</button>
+  </div>
+  <div id="reportBody"></div>
+</section>
+
+<!-- TAB: HISTORY -->
+<section id="tab-history" hidden>
+  <div class="card">
+    <div class="field">
+      <label for="searchInput">Search</label>
+      <input type="text" id="searchInput" placeholder="Search notes or categories…" autocomplete="off">
+    </div>
+    <div class="filter-row">
+      <select id="filterCategory"><option value="">All categories</option></select>
+      <input type="month" id="filterMonth">
+    </div>
+    <div class="filter-row">
+      <select id="filterType">
+        <option value="all">All types</option>
+        <option value="one-time">One-time</option>
+        <option value="recurring">Recurring</option>
+        <option value="with-receipt">With receipt</option>
+      </select>
+      <select id="filterSort">
+        <option value="newest">Newest first</option>
+        <option value="oldest">Oldest first</option>
+        <option value="highest">Highest amount</option>
+        <option value="lowest">Lowest amount</option>
+      </select>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Entries <span class="month-label" id="entriesCount"></span></h2>
+    <div id="entries"></div>
+  </div>
+</section>
+
+<!-- TAB: SETTINGS -->
+<section id="tab-settings" hidden>
+  <div class="card">
+    <h2>Security</h2>
+    <div class="summary-row">
+      <span class="label">Passcode lock</span>
+      <span class="value"><button class="link-btn" id="togglePinBtn" type="button">Off</button></span>
+    </div>
+    <p class="hint">Passcode is stored hashed (SHA-256) on this device. It is not a substitute for device encryption.</p>
+  </div>
+
+  <div class="card">
+    <h2>Data</h2>
+    <div class="stack">
+      <button class="btn-secondary" id="exportBtn" type="button">⬇ Export CSV</button>
+      <button class="btn-secondary" id="exportJsonBtn" type="button">⬇ Export JSON backup (with receipts)</button>
+      <button class="btn-secondary" id="importJsonBtn" type="button">⬆ Import JSON backup</button>
+      <button class="btn-secondary" id="importCsvBtn" type="button">⬆ Import CSV</button>
+      <input type="file" id="jsonFileInput" accept=".json,application/json" hidden>
+      <input type="file" id="csvFileInput" accept=".csv,text/csv" hidden>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="section-header">
+      <h2>Categories</h2>
+      <button class="link-btn" id="addCategoryBtn" type="button">+ Add</button>
+    </div>
+    <div id="categoryList"></div>
+  </div>
+
+  <div class="card">
+    <h2>Budget Settings</h2>
+    <p class="hint">Set monthly spending limits per category.</p>
+    <div id="budgetSettings"></div>
+  </div>
+
+  <div class="card">
+    <h2>Recurring Expenses</h2>
+    <p class="hint">Added automatically on the day you set, each month.</p>
+    <div id="recurringList"></div>
+  </div>
+
+  <div class="card danger">
+    <h2>Danger Zone</h2>
+    <button class="btn-secondary danger" id="clearAllBtn" type="button">Clear All Data</button>
+  </div>
+
+  <p class="version" id="versionLine"></p>
+</section>
+
+</div><!-- /#app -->
+
+<!-- Undo -->
+<div class="undo-toast" id="undoToast" role="status">
+  <span id="undoText">Entry deleted</span>
+  <button id="undoBtn" type="button">Undo</button>
+</div>
+
+<!-- Toast -->
+<div class="toast" id="toast" role="status"></div>
+
+<!-- Modal: budgets -->
+<div class="modal-overlay" id="budgetModal">
   <div class="modal">
-    <h2>Edit budgets</h2>
-    <div id="budgetEditList" class="modal-scroll"></div>
-    <div class="modal-actions">
-      <button id="budgetCancelBtn" class="ghost-btn" type="button">Cancel</button>
-      <button id="budgetSaveBtn" class="primary-btn" type="button">Save</button>
+    <h3>Edit Budgets</h3>
+    <div id="budgetEditList"></div>
+    <div class="btn-row">
+      <button class="btn-secondary" id="budgetCancelBtn" type="button">Cancel</button>
+      <button class="save-btn flex1" id="budgetSaveBtn" type="button">Save</button>
     </div>
   </div>
 </div>
 
-<!-- ============ CATEGORY MODAL ============ -->
-<div id="catModal" class="overlay">
+<!-- Modal: category -->
+<div class="modal-overlay" id="catModal">
   <div class="modal">
-    <h2 id="catModalTitle">Add Category</h2>
+    <h3 id="catModalTitle">Add Category</h3>
     <div class="field">
       <label for="catNameInput">Name</label>
-      <input id="catNameInput" type="text" placeholder="e.g. Coffee" autocomplete="off">
+      <input type="text" id="catNameInput" placeholder="Category name" maxlength="20">
     </div>
     <div class="field">
       <label>Emoji</label>
-      <div id="emojiPicker" class="emoji-picker"></div>
+      <div class="emoji-picker" id="emojiPicker"></div>
     </div>
     <div class="field">
       <label>Color</label>
-      <div id="colorSwatches" class="color-swatches"></div>
+      <div class="color-swatches" id="colorSwatches"></div>
     </div>
-    <div class="modal-actions">
-      <button id="catCancelBtn" class="ghost-btn" type="button">Cancel</button>
-      <button id="catSaveBtn" class="primary-btn" type="button">Save</button>
-    </div>
-  </div>
-</div>
-
-<!-- ============ RECEIPT / EDIT MODAL ============ -->
-<div id="receiptModal" class="overlay">
-  <div class="modal wide">
-    <div class="modal-header">
-      <h2>Edit expense</h2>
-      <button id="receiptModalClose" class="del-btn" type="button" aria-label="Close">✕</button>
-    </div>
-
-    <div class="modal-scroll">
-      <div class="field">
-        <label for="editAmount">Amount</label>
-        <div class="amount-wrap">
-          <span class="dollar">$</span>
-          <input id="editAmount" type="number" inputmode="decimal" step="0.01" min="0" placeholder="0.00">
-        </div>
-      </div>
-
-      <div class="field">
-        <label for="editCategory">Category</label>
-        <select id="editCategory" class="filter-select"></select>
-      </div>
-
-      <div class="field">
-        <label for="editDate">Date</label>
-        <input id="editDate" type="date">
-      </div>
-
-      <div class="field">
-        <label for="editNote">Note</label>
-        <input id="editNote" type="text" placeholder="Optional note" autocomplete="off">
-      </div>
-
-      <div class="field">
-        <label>Receipt</label>
-        <img id="receiptModalImg" class="receipt-full" alt="Receipt" hidden>
-        <button id="receiptModalDelete" class="danger-btn small" type="button" hidden>Delete receipt</button>
-      </div>
-    </div>
-
-    <div class="modal-actions">
-      <button id="editDeleteBtn" class="danger-btn" type="button">Delete</button>
-      <button id="editSaveBtn" class="primary-btn" type="button">Save changes</button>
+    <div class="btn-row">
+      <button class="btn-secondary" id="catCancelBtn" type="button">Cancel</button>
+      <button class="save-btn flex1" id="catSaveBtn" type="button">Save</button>
     </div>
   </div>
 </div>
 
-<!-- ============ PIN MODAL ============ -->
-<div id="pinModal" class="overlay">
+<!-- Modal: receipt viewer -->
+<div class="modal-overlay" id="receiptModal">
   <div class="modal">
-    <h2 id="pinModalTitle">Set Passcode</h2>
+    <h3>Receipt</h3>
+    <img id="receiptModalImg" class="receipt-modal-img" alt="Receipt">
+    <div class="btn-row">
+      <button class="btn-secondary flex1" id="receiptModalClose" type="button">Close</button>
+      <button class="btn-secondary flex1 danger" id="receiptModalDelete" type="button">Delete</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal: passcode -->
+<div class="modal-overlay" id="pinModal">
+  <div class="modal">
+    <h3 id="pinModalTitle">Set Passcode</h3>
     <div class="field">
       <label for="pinInput1">Passcode (4–8 digits)</label>
-      <input id="pinInput1" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="8" autocomplete="new-password">
+      <input type="password" id="pinInput1" inputmode="numeric" pattern="[0-9]*" maxlength="8" autocomplete="new-password">
     </div>
     <div class="field">
-      <label for="pinInput2">Confirm passcode</label>
-      <input id="pinInput2" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="8" autocomplete="new-password">
+      <label for="pinInput2">Confirm</label>
+      <input type="password" id="pinInput2" inputmode="numeric" pattern="[0-9]*" maxlength="8" autocomplete="new-password">
     </div>
-    <div class="modal-actions">
-      <button id="pinCancelBtn" class="ghost-btn" type="button">Cancel</button>
-      <button id="pinSaveBtn" class="primary-btn" type="button">Set passcode</button>
+    <div class="btn-row">
+      <button class="btn-secondary" id="pinCancelBtn" type="button">Cancel</button>
+      <button class="save-btn flex1" id="pinSaveBtn" type="button">Save</button>
     </div>
   </div>
-</div>
-
-<div id="toast" class="toast" role="status" aria-live="polite"></div>
-
-<div id="undoToast" class="undo-toast" role="status" aria-live="polite">
-  <span id="undoText"></span>
-  <button id="undoBtn" class="undo-btn" type="button">Undo</button>
 </div>
 
 <script src="app.js"></script>
