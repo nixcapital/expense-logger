@@ -155,3 +155,105 @@ If you hit a specific bug when you test, tell me what you see and I'll patch it.
 - The icons (`icon-192.png`, `icon-512.png`) are a simple green dollar sign on a dark background, generated with Python/PIL instead of ImageMagick.
 - Not yet tested on a real iPhone. Check the passcode keypad on small screens and whether receipt capture opens the camera.
 - When you publish a new version, bump `CACHE_VERSION` in `sw.js` so installed copies pick up the update.
+
+---
+
+# Round 3: bug fixes from QA (https://chat.deepseek.com/share/endv6smbz025qyb0z8)
+
+# DeepSeek shared conversation: Expense Logger fixes
+
+Source: https://chat.deepseek.com/share/endv6smbz025qyb0z8
+Title: "DeepSeek - Into the Unknown"
+Attachment on the user turn: app.js (JS 65.75KB)
+
+### Prompt
+
+Fix these in my Expense Logger (index.html, styles.css, app.js, sw.js, manifest.json; framework-free, keep all "expenseLogger." localStorage keys and IndexedDB data compatible):
+
+BUGS
+1. CSV import corrupts data: re-importing an exported CSV duplicates every row and imports the TOTAL footer row as a real expense. Skip the TOTAL/summary row, and dedupe on import (by id if present, otherwise date+amount+category+note). Show "Imported X new, skipped Y duplicates."
+2. JSON restore says "Imported 0 entries" when restoring a backup that matches current data. Report "X new, Y already present" instead.
+3. Settings shows "Passcode lock: Off" after reload even when a passcode is set. Derive the label from the stored passcode on load.
+4. Add editing for existing expenses: tap an entry to open it prefilled (amount, category, date, note, receipt), save changes or delete.
+
+UX
+5. Format all amounts with thousands separators (Intl.NumberFormat, USD); keep chart labels inside their bars.
+6. Show shares under 1% as "<1%" instead of "0%".
+7. Daily average for the current month = total / days elapsed so far, not days in month.
+8. Undo toast: 8–10 seconds.
+9. When Save is disabled, show a hint why (e.g. "Enter an amount").
+10. Fix the clipped "Highest amount" label in the sort dropdown.
+11. Add a favicon link (reuse icon-192.png) and replace the deprecated apple-mobile-web-app-capable meta with mobile-web-app-capable (keep the apple one too for older iOS).
+12. Bump CACHE_VERSION in sw.js.
+
+Return only the changed files, complete (no "rest unchanged" placeholders), and list what you changed.
+
+### Reply
+
+Here are the complete updated files with all the requested fixes applied.
+
+What changed
+
+app.js
+
+CSV import dedupe — Added entryDedupeKey(), skip rows where the first column is TOTAL/Subtotal/empty, and dedupe by id (if present) or by date+amount+category+note. Reports "Imported X new, skipped Y duplicates."
+
+JSON restore reporting — Now counts new vs already present for entries and reports "X new, Y already present".
+
+Passcode label on load — $togglePinBtn.textContent is derived from getStoredPin() during boot (and after forgot/clear).
+
+Edit entries — Entry rows are now clickable; opens the receipt/edit modal prefilled with amount, category, date, note, receipt. New "Save changes" + "Delete" buttons. saveEdit() updates the existing entry in place, preserving id/ts/recurringId/receipt. Date input added to the modal.
+
+Money formatting — New fmtMoneyDisplay() uses Intl.NumberFormat('en-US', {style:'currency', currency:'USD'}). Used in legend, budgets, summaries, report, entries list, and month/year bars. fmtMoney() kept for raw decimals (CSV, math, chart labels kept as plain $12.34 — see below).
+
+Chart labels inside bars — Value text is now drawn with textAlign='right' at barX + w - 6 when the bar is wide enough, otherwise falls back to right edge outside. Category name label is clipped inside its own column; long names are truncated with ellipsis.
+
+Shares <1% — Both legend and report now show <1% for pct === 0 when amt > 0.
+
+Daily average — For the current month, daysElapsed = min(today, daysInMonth), so avg = total / daysElapsed; past/future months use daysInMonth.
+
+Undo toast — Duration increased from 5000 → 9000 ms.
+
+Save-disabled hint — #saveHint element shows "Enter an amount" / "Pick a category" / "Enter an amount and pick a category".
+
+Filter sort dropdown — Removed the fixed height/line-height clipping; uses padding so "Highest amount" fits.
+
+index.html
+
+Added favicon link (icon-192.png), mobile-web-app-capable, kept apple-mobile-web-app-capable.
+
+Added #saveHint under the Save button.
+
+Added edit/receipt modal markup with amount, category select, date, note, receipt preview, Save/Delete buttons.
+
+styles.css
+
+.save-hint styling.
+
+select#filterSort padding fix to stop clipping.
+
+.entry { cursor: pointer } and .entry:active feedback.
+
+Receipt-modal edit form styles.
+
+Legend <1% uses same styles.
+
+sw.js
+
+CACHE_VERSION bumped to 'expense-logger-v1.0.1' (and asset list includes the new icon reference implicitly via cache-first fallback).
+
+manifest.json
+
+Unchanged (no requested change).
+
+[code block: app.js — saved separately]
+
+[code block: index.html — saved separately]
+
+[code block: styles.css — saved separately]
+
+[code block: sw.js — saved separately]
+
+[code block: manifest.json — saved separately]
+
+_Botmon note: DeepSeek only had app.js attached but returned regenerated index.html and styles.css. Botmon checked that every element ID app.js uses exists in the new HTML before publishing. Published Oct 15, 2026 ~8:05 PM ET._
