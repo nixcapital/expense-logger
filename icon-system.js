@@ -1,5 +1,4 @@
-/* Expense Logger — file-based category & UI icons (icons/*.svg).
-   Placeholder artwork until Canva exports replace files (same filenames). */
+/* Expense Logger — file-based category & UI icons (icons/*.svg). */
 (function (global) {
   'use strict';
 
@@ -17,33 +16,43 @@
     gas: 'fuel',
     bills: 'receipt',
     fun: 'ticket',
-    other: 'circle-dot'
+    other: 'boxes'
   };
 
   var PICKER_ICON_IDS = [
-    'shopping-cart', 'utensils', 'fuel', 'receipt', 'ticket', 'circle-dot',
-    'car', 'bag', 'coffee', 'home', 'heart', 'plane', 'gift', 'phone',
-    'wrench', 'gamepad', 'book'
+    'shopping-cart', 'utensils', 'fuel', 'receipt', 'ticket', 'boxes',
+    'car', 'home', 'health', 'bag', 'coffee', 'gift', 'plane', 'phone',
+    'pets', 'education'
   ];
+
+  var ICON_ALIASES = {
+    'circle-dot': 'boxes',
+    heart: 'health'
+  };
 
   var KNOWN = {};
   PICKER_ICON_IDS.forEach(function (id) { KNOWN[id] = true; });
   Object.keys(DEFAULT_ICON_BY_CAT).forEach(function (k) {
     KNOWN[DEFAULT_ICON_BY_CAT[k]] = true;
   });
+  Object.keys(ICON_ALIASES).forEach(function (k) { KNOWN[k] = true; });
   [
     'ui-note', 'ui-calendar', 'ui-camera', 'ui-repeat', 'ui-search', 'ui-sparkles',
     'ui-insight', 'ui-trend-up', 'ui-trend-down', 'ui-trend-flat', 'ui-alert'
   ].forEach(function (id) { KNOWN[id] = true; });
 
+  function canonicalIconId(id) {
+    return ICON_ALIASES[id] || id;
+  }
+
   function isKnownIcon(id) {
-    return id && KNOWN[id];
+    return id && (KNOWN[id] || KNOWN[canonicalIconId(id)]);
   }
 
   function resolveIconId(cat) {
-    if (!cat) return 'circle-dot';
+    if (!cat) return 'boxes';
     if (cat.icon === LETTER_ID) return LETTER_ID;
-    if (cat.icon && isKnownIcon(cat.icon)) return cat.icon;
+    if (cat.icon && isKnownIcon(cat.icon)) return canonicalIconId(cat.icon);
     if (DEFAULT_ICON_BY_CAT[cat.id]) return DEFAULT_ICON_BY_CAT[cat.id];
     return LETTER_ID;
   }
@@ -55,7 +64,7 @@
   }
 
   function iconAssetUrl(iconId) {
-    return ICON_BASE + iconId + '.svg';
+    return ICON_BASE + canonicalIconId(iconId) + '.svg';
   }
 
   function escHtml(s) {
@@ -72,9 +81,10 @@
   }
 
   function inlineArtMarkup(iconId) {
-    var inner = svgCache[iconId];
+    var id = canonicalIconId(iconId);
+    var inner = svgCache[id];
     if (!inner) return '';
-    return '<svg class="icon-art icon-art--' + escHtml(iconId) + '" viewBox="0 0 24 24" fill="none" aria-hidden="true">'
+    return '<svg class="icon-art icon-art--' + escHtml(id) + '" viewBox="0 0 24 24" fill="none" aria-hidden="true">'
       + inner + '</svg>';
   }
 
@@ -109,7 +119,7 @@
 
   function uiIconHTML(iconId, opts) {
     opts = opts || {};
-    if (!isKnownIcon(iconId)) iconId = 'circle-dot';
+    if (!isKnownIcon(iconId)) iconId = 'boxes';
     var url = escHtml(iconAssetUrl(iconId));
     var cls = 'ui-icon' + (opts.size ? ' ui-icon--' + opts.size : ' ui-icon--md');
     return '<span class="' + cls + '" aria-hidden="true">'
@@ -193,6 +203,11 @@
     var ids = {};
     PICKER_ICON_IDS.forEach(function (id) { ids[id] = true; });
     Object.keys(DEFAULT_ICON_BY_CAT).forEach(function (k) { ids[DEFAULT_ICON_BY_CAT[k]] = true; });
+    Object.keys(ICON_ALIASES).forEach(function (k) { ids[ICON_ALIASES[k]] = true; });
+    [
+      'ui-note', 'ui-calendar', 'ui-camera', 'ui-repeat', 'ui-search', 'ui-sparkles',
+      'ui-insight', 'ui-trend-up', 'ui-trend-down', 'ui-trend-flat', 'ui-alert'
+    ].forEach(function (id) { ids[id] = true; });
     return Object.keys(ids);
   }
 
@@ -227,8 +242,10 @@
     ICON_BASE: ICON_BASE,
     DEFAULT_ICON_BY_CAT: DEFAULT_ICON_BY_CAT,
     PICKER_ICON_IDS: PICKER_ICON_IDS,
+    ICON_ALIASES: ICON_ALIASES,
     isKnownIcon: isKnownIcon,
     resolveIconId: resolveIconId,
+    canonicalIconId: canonicalIconId,
     letterFor: letterFor,
     iconAssetUrl: iconAssetUrl,
     badgeHTML: badgeHTML,

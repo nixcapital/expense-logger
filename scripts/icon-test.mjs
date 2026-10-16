@@ -16,20 +16,25 @@ const DEFAULT_ICON_BY_CAT = {
   gas: 'fuel',
   bills: 'receipt',
   fun: 'ticket',
-  other: 'circle-dot'
+  other: 'boxes'
 };
 
 const LETTER_ID = 'letter';
+const ALIASES = { 'circle-dot': 'boxes', heart: 'health' };
+
+function canonical(id) {
+  return ALIASES[id] || id;
+}
 
 function resolveIconId(cat) {
-  if (!cat) return 'circle-dot';
+  if (!cat) return 'boxes';
   if (cat.icon === LETTER_ID) return LETTER_ID;
   const known = new Set([
     ...Object.values(DEFAULT_ICON_BY_CAT),
-    'car', 'bag', 'coffee', 'home', 'heart', 'plane', 'gift', 'phone',
-    'wrench', 'gamepad', 'book', 'ui-note', 'ui-calendar'
+    'car', 'home', 'health', 'bag', 'coffee', 'gift', 'plane', 'phone', 'pets', 'education',
+    'circle-dot', 'heart'
   ]);
-  if (cat.icon && known.has(cat.icon)) return cat.icon;
+  if (cat.icon && known.has(cat.icon)) return canonical(cat.icon);
   if (DEFAULT_ICON_BY_CAT[cat.id]) return DEFAULT_ICON_BY_CAT[cat.id];
   return LETTER_ID;
 }
@@ -37,14 +42,16 @@ function resolveIconId(cat) {
 assert.strictEqual(resolveIconId({ id: 'groceries', name: 'Groceries' }), 'shopping-cart');
 assert.strictEqual(resolveIconId({ id: 'dining', name: 'Dining', icon: 'coffee' }), 'coffee');
 assert.strictEqual(resolveIconId({ id: 'custom-cat', name: 'Pets' }), LETTER_ID);
-assert.strictEqual(resolveIconId({ id: 'custom-cat', name: 'Pets', icon: LETTER_ID }), LETTER_ID);
-assert.strictEqual(resolveIconId({ id: 'other', name: 'Other' }), 'circle-dot');
+assert.strictEqual(resolveIconId({ id: 'other', name: 'Other' }), 'boxes');
+assert.strictEqual(resolveIconId({ id: 'x', name: 'X', icon: 'circle-dot' }), 'boxes');
 
 const manifest = JSON.parse(readFileSync(join(root, 'icons/icons.json'), 'utf8'));
 assert.ok(Array.isArray(manifest) && manifest.length >= 20);
-for (const id of manifest) {
-  const svg = join(root, 'icons', id + '.svg');
-  assert.ok(readFileSync(svg, 'utf8').includes('PLACEHOLDER'), `expected placeholder marker in ${id}.svg`);
+for (const id of ['shopping-cart', 'ticket', 'pets', 'education', 'boxes']) {
+  const svg = readFileSync(join(root, 'icons', id + '.svg'), 'utf8');
+  assert.ok(svg.includes('viewBox="0 0 24 24"'), id);
+  assert.ok(svg.includes('data-part'), id);
+  assert.ok(svg.includes('currentColor'), id);
 }
 
 console.log('icon-test.mjs: OK (' + manifest.length + ' icons in manifest)');

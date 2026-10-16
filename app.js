@@ -120,7 +120,7 @@
     { id: 'gas',       name: 'Gas',       emoji: '⛽', icon: 'fuel', color: '#51cf66' },
     { id: 'bills',     name: 'Bills',     emoji: '📄', icon: 'receipt', color: '#cc5de8' },
     { id: 'fun',       name: 'Fun',       emoji: '🎉', icon: 'ticket', color: '#f783ac' },
-    { id: 'other',     name: 'Other',     emoji: '📦', icon: 'circle-dot', color: '#adb5bd' }
+    { id: 'other',     name: 'Other',     emoji: '📦', icon: 'boxes', color: '#adb5bd' }
   ];
 
   // ---------- State ----------
@@ -135,7 +135,7 @@
   var pendingDelete = null;
   var undoTimer = null;
   var editingCategoryId = null;
-  var selectedIconId = 'circle-dot';
+  var selectedIconId = 'boxes';
   var selectedColor = '#adb5bd';
   var pendingReceiptBlob = null; // { id, blob } not yet attached
   var editingEntryId = null;     // id of entry being edited (modal)
@@ -2203,12 +2203,12 @@
       var cat = getCat(id);
       $catModalTitle.textContent = 'Edit Category';
       $catNameInput.value = cat.name;
-      selectedIconId = cat.icon || (EI ? EI.resolveIconId(cat) : 'circle-dot');
+      selectedIconId = cat.icon || (EI ? EI.resolveIconId(cat) : 'boxes');
       selectedColor = cat.color;
     } else {
       $catModalTitle.textContent = 'Add Category';
       $catNameInput.value = '';
-      selectedIconId = 'circle-dot';
+      selectedIconId = 'boxes';
       selectedColor = '#adb5bd';
     }
     renderIconPicker();

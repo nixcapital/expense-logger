@@ -80,7 +80,8 @@
   animation-name: icon-receipt-unroll;
   transform-origin: top center;
 }
-.icon-anim-play[data-icon-id="receipt"] [data-part="lines"] {
+.icon-anim-play[data-icon-id="receipt"] [data-part="lines"],
+.icon-anim-play[data-icon-id="receipt"] [data-part="bolt"] {
   animation-name: icon-receipt-lines;
 }
 @keyframes icon-receipt-unroll {
@@ -132,12 +133,21 @@
   to { transform: none; opacity: 1; }
 }
 
-/* circle-dot / box */
+/* boxes / other (legacy circle-dot id) */
+.icon-anim-play[data-icon-id="boxes"] [data-part="lid"],
 .icon-anim-play[data-icon-id="circle-dot"] [data-part="lid"] {
   animation-name: icon-lid-pop;
 }
+.icon-anim-play[data-icon-id="boxes"] [data-part="box"],
+.icon-anim-play[data-icon-id="circle-dot"] [data-part="box"] {
+  animation-name: icon-box-settle;
+}
 @keyframes icon-lid-pop {
   45% { transform: translateY(-1.5px) rotate(-3deg); }
+  to { transform: none; }
+}
+@keyframes icon-box-settle {
+  50% { transform: translateY(0.5px); }
   to { transform: none; }
 }
 
@@ -188,13 +198,21 @@
   to { opacity: 0.5; }
 }
 
-/* heart */
+/* health (legacy heart id) */
+.icon-anim-play[data-icon-id="health"] [data-part="heart"],
 .icon-anim-play[data-icon-id="heart"] [data-part="heart"] {
   animation-name: icon-heart-pulse;
+}
+.icon-anim-play[data-icon-id="health"] [data-part="stethoscope"] {
+  animation-name: icon-stethoscope-nudge;
 }
 @keyframes icon-heart-pulse {
   40% { transform: scale(1.06); }
   to { transform: scale(1); }
+}
+@keyframes icon-stethoscope-nudge {
+  45% { transform: translateX(0.5px); }
+  to { transform: none; }
 }
 
 /* plane */
@@ -221,39 +239,50 @@
   animation-name: icon-phone-buzz;
   animation-duration: 0.38s;
 }
+.icon-anim-play[data-icon-id="phone"] [data-part="alert"] {
+  animation-name: icon-alert-pop;
+}
 @keyframes icon-phone-buzz {
   20% { transform: translateX(-0.5px) rotate(-1deg); }
   40% { transform: translateX(0.5px) rotate(1deg); }
   60% { transform: translateX(-0.5px); }
   to { transform: none; }
 }
-
-/* wrench */
-.icon-anim-play[data-icon-id="wrench"] [data-part="wrench"] {
-  animation-name: icon-wrench-turn;
-  transform-origin: 8px 16px;
-}
-@keyframes icon-wrench-turn {
-  50% { transform: rotate(10deg); }
+@keyframes icon-alert-pop {
+  45% { transform: scale(1.08); }
   to { transform: none; }
 }
 
-/* gamepad */
-.icon-anim-play[data-icon-id="gamepad"] [data-part="buttons"] {
-  animation-name: icon-pad-press;
+/* pets */
+.icon-anim-play[data-icon-id="pets"] [data-part="ear"] {
+  animation-name: icon-pet-ear;
 }
-@keyframes icon-pad-press {
-  45% { transform: translateY(0.5px); opacity: 0.75; }
-  to { transform: none; opacity: 1; }
+.icon-anim-play[data-icon-id="pets"] [data-part="head"] {
+  animation-name: icon-pet-head;
+}
+@keyframes icon-pet-ear {
+  45% { transform: rotate(4deg); }
+  to { transform: none; }
+}
+@keyframes icon-pet-head {
+  50% { transform: translateY(0.5px); }
+  to { transform: none; }
 }
 
-/* book */
-.icon-anim-play[data-icon-id="book"] [data-part="cover"] {
-  animation-name: icon-book-flip;
-  transform-origin: left center;
+/* education */
+.icon-anim-play[data-icon-id="education"] [data-part="tassel"] {
+  animation-name: icon-tassel-sway;
+  transform-origin: top center;
 }
-@keyframes icon-book-flip {
-  45% { transform: rotateY(8deg); }
+.icon-anim-play[data-icon-id="education"] [data-part="cap"] {
+  animation-name: icon-cap-settle;
+}
+@keyframes icon-tassel-sway {
+  45% { transform: rotate(5deg); }
+  to { transform: none; }
+}
+@keyframes icon-cap-settle {
+  50% { transform: translateY(-0.5px); }
   to { transform: none; }
 }
 
