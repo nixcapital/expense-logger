@@ -476,11 +476,21 @@ input[type="number"] {
   max-width: 100%;
   justify-content: center;
 }
+.donut-center-label-wrap--stacked {
+  flex-direction: column;
+  gap: 3px;
+  align-items: center;
+  width: 100%;
+  max-width: 100%;
+}
 .donut-center-label-wrap .donut-center-cat-name {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   min-width: 0;
+  max-width: 100%;
+  text-align: center;
+  font-weight: 600;
 }
 .insight-kicker-inner {
   display: inline-flex;

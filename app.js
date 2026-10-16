@@ -1491,14 +1491,25 @@
     wrap.style.setProperty('--donut-center-label-size', labelSize + 'px');
     wrap.style.setProperty('--donut-center-sub-size', subSize + 'px');
 
+    var labelWrap = $donutCenterLabel.querySelector('.donut-center-label-wrap');
     var nameSpan = $donutCenterLabel.querySelector('.donut-center-cat-name');
-    if (nameSpan) nameSpan.style.maxWidth = Math.max(24, Math.round(box - 22)) + 'px';
+    if (nameSpan) nameSpan.style.maxWidth = '';
 
-    var labelShrink = 0;
-    while (labelShrink < 6 && $donutCenterLabel.scrollWidth > box + 1) {
-      labelSize = Math.max(9, labelSize - 1);
-      wrap.style.setProperty('--donut-center-label-size', labelSize + 'px');
-      labelShrink += 1;
+    if (nameSpan && labelWrap) {
+      var catName = (nameSpan.textContent || '').trim();
+      var minLabel = 9;
+      var ls = labelSize;
+      while (ls > minLabel && measureDonutTextWidth(catName, ls, 600) > fitWidth) {
+        ls -= 0.5;
+      }
+      labelSize = ls;
+      wrap.style.setProperty('--donut-center-label-size', ls.toFixed(2) + 'px');
+      var labelShrink = 0;
+      while (labelShrink < 10 && labelWrap.scrollWidth > box + 1 && ls > minLabel) {
+        ls = Math.max(minLabel, ls - 0.5);
+        wrap.style.setProperty('--donut-center-label-size', ls.toFixed(2) + 'px');
+        labelShrink += 1;
+      }
     }
 
     var stack = $('donutCenterStack');
@@ -1521,7 +1532,7 @@
       var c = getCat(catId);
       var amt = byCat[catId];
       var pct = total > 0 ? Math.round((amt / total) * 100) : 0;
-      $donutCenterLabel.innerHTML = '<span class="donut-center-label-wrap">' + iconBadge(c, 'xs') + '<span class="donut-center-cat-name">' + escHtml(c.name) + '</span></span>';
+      $donutCenterLabel.innerHTML = '<span class="donut-center-label-wrap donut-center-label-wrap--stacked">' + iconBadge(c, 'xs') + '<span class="donut-center-cat-name">' + escHtml(c.name) + '</span></span>';
       $donutCenterValue.textContent = fmtMoneyDisplay(amt);
       $donutCenterSub.textContent = pct + '% of spending';
     } else if (total === 0) {
