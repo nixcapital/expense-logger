@@ -82,6 +82,24 @@ async function seedPage(page) {
   await page.reload({ waitUntil: 'networkidle' });
 }
 
+const SHEET_SETTLE_MS = 360;
+
+async function waitForOpenSheet(page, overlaySelector) {
+  await page.waitForSelector(overlaySelector + '.show', { state: 'visible' });
+  await page.waitForFunction(
+    (sel) => {
+      const overlay = document.querySelector(sel);
+      const modal = overlay && overlay.querySelector('.modal');
+      if (!overlay || !modal || !overlay.classList.contains('show')) return false;
+      const tr = getComputedStyle(modal).transform;
+      return tr === 'none' || tr === 'matrix(1, 0, 0, 1, 0, 0)';
+    },
+    overlaySelector,
+    { timeout: 5000 }
+  ).catch(() => {});
+  await page.waitForTimeout(SHEET_SETTLE_MS);
+}
+
 async function shot(browser, name, scheme, fn) {
   const context = await browser.newContext({
     viewport: { width: 428, height: 926 },
@@ -121,7 +139,7 @@ async function run() {
   hashes.push(await shot(browser, '1-recategorize-edit-chips-light.png', 'light', async (page) => {
     await page.click('button[data-tab="history"]');
     await page.locator('.activity-row[data-id="sb1"]').click();
-    await page.waitForSelector('#receiptModal.show');
+    await waitForOpenSheet(page, '#receiptModal');
   }));
 
   hashes.push(await shot(browser, '1-recategorize-prompt-light.png', 'light', async (page) => {
@@ -142,6 +160,7 @@ async function run() {
   hashes.push(await shot(browser, '2-import-filters-light.png', 'light', async (page) => {
     await page.click('button[data-tab="settings"]');
     await importFile(page, 'fake-chase-oct-messy.csv', 'acct-chase');
+    await waitForOpenSheet(page, '#importModal');
   }));
 
   hashes.push(await shot(browser, '2-import-apply-light.png', 'light', async (page) => {
@@ -166,13 +185,13 @@ async function run() {
     await page.evaluate(() => window.ExpenseLoggerTest.openForecastScreen());
     await page.waitForSelector('#forecastMain:not([hidden])');
     await page.locator('[data-forecast-item]').first().click();
-    await page.waitForSelector('#forecastItemEditModal.show');
+    await waitForOpenSheet(page, '#forecastItemEditModal');
   }));
 
   hashes.push(await shot(browser, '4-transfer-edit-light.png', 'light', async (page) => {
     await page.click('button[data-tab="history"]');
     await page.locator('.activity-row[data-id="xfer"]').click();
-    await page.waitForSelector('#receiptModal.show');
+    await waitForOpenSheet(page, '#receiptModal');
     await page.locator('#editTypeSeg .seg-btn[data-edit-type="transfer"]').click();
     const remember = page.locator('#editRememberImports');
     await remember.check();
@@ -181,22 +200,25 @@ async function run() {
   hashes.push(await shot(browser, '5-balance-offer-light.png', 'light', async (page) => {
     await page.click('button[data-tab="settings"]');
     await importFile(page, 'fake-checking-oct.csv', 'acct-checking');
+    await waitForOpenSheet(page, '#importModal');
   }));
 
   hashes.push(await shot(browser, '5-balance-offer-dark.png', 'dark', async (page) => {
     await page.click('button[data-tab="settings"]');
     await importFile(page, 'fake-checking-oct.csv', 'acct-checking');
+    await waitForOpenSheet(page, '#importModal');
   }));
 
   hashes.push(await shot(browser, '2-import-filters-dark.png', 'dark', async (page) => {
     await page.click('button[data-tab="settings"]');
     await importFile(page, 'fake-chase-oct-messy.csv', 'acct-chase');
+    await waitForOpenSheet(page, '#importModal');
   }));
 
   hashes.push(await shot(browser, '1-recategorize-edit-chips-dark.png', 'dark', async (page) => {
     await page.click('button[data-tab="history"]');
     await page.locator('.activity-row[data-id="sb1"]').click();
-    await page.waitForSelector('#receiptModal.show');
+    await waitForOpenSheet(page, '#receiptModal');
   }));
 
   hashes.push(await shot(browser, '4-transfer-edit-dark.png', 'dark', async (page) => {

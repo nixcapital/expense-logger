@@ -120,6 +120,8 @@ async function run() {
     return T.extractCheckingBalanceOffer(rows, layout);
   }, balDescTable);
   assert.ok(bal2 && bal2.ts, 'descending CSV should still pick newest row');
+  assert.strictEqual(bal.amount, 4212.37, 'ascending CSV uses newest-dated row balance');
+  assert.strictEqual(bal2.amount, 3120.55, 'descending CSV uses first Oct 14 row balance');
 
   console.log('qol-190-test: rule learning from Edit');
   await page.evaluate(() => {

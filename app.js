@@ -2499,9 +2499,9 @@
     var cat = getCat(p.categoryId);
     var card = document.createElement('div');
     card.className = 'bulk-recat-prompt';
-    card.innerHTML = '<div class="bulk-recat-icon" aria-hidden="true"><svg width="20" height="20" viewBox="0 0 20 20" fill="none"><path d="M4 6h12M4 10h8M4 14h10" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/><path d="M14.5 13.5l2 2-3 3-2-2" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg></div>'
+    card.innerHTML = '<div class="bulk-recat-head"><div class="bulk-recat-icon" aria-hidden="true"><svg width="20" height="20" viewBox="0 0 20 20" fill="none"><path d="M4 6h12M4 10h8M4 14h10" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/><path d="M14.5 13.5l2 2-3 3-2-2" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg></div>'
       + '<div class="bulk-recat-copy"><p class="bulk-recat-title">Also change ' + p.count + ' other ' + escHtml(p.merchantLabel) + ' to ' + escHtml(cat.name) + '?</p>'
-      + '<p class="hint">And remember it for future imports. Matches any \u201c' + escHtml((p.merchantLabel || '').toUpperCase()) + ' STORE\u201d number.</p></div>'
+      + '<p class="hint">And remember it for future imports. Matches any \u201c' + escHtml((p.merchantLabel || '').toUpperCase()) + ' STORE\u201d number.</p></div></div>'
       + '<div class="bulk-recat-actions"><button type="button" class="btn-secondary" data-bulk-dismiss>Not now</button>'
       + '<button type="button" class="save-btn" data-bulk-apply>Change all</button></div>';
     anchor.insertAdjacentElement('afterend', card);
@@ -6480,12 +6480,14 @@
       var nowBal = typeof checking.currentBalance === 'number' ? fmtMoneyDisplay(checking.currentBalance) : '\u2014';
       var nowAsOf = checking.balanceAsOf ? formatBalanceAsOfLabel(checking.balanceAsOf) : '';
       html += '<div class="import-balance-offer' + (pendingImport.useBalanceOffer ? ' is-on' : '') + '">';
+      html += '<div class="import-balance-offer-top">';
       html += '<div class="import-balance-offer-icon" aria-hidden="true"><span data-ui-icon="ui-insight" data-ui-icon-size="sm"></span></div>';
       html += '<div class="import-balance-offer-main"><p class="import-balance-offer-title">Balance in this file. <strong>Set Checking to '
         + fmtMoneyDisplay(offer.amount) + ' as of ' + escHtml(asOfLbl) + '?</strong></p>';
       html += '<p class="hint">In the app now: ' + escHtml(nowBal) + (nowAsOf ? ', set ' + escHtml(nowAsOf.replace(/^Today, /, '')) : '') + '</p>';
-      html += '<p class="import-balance-foot">Saved when you tap Import</p></div>';
-      html += '<button type="button" class="btn-secondary import-balance-use" id="importBalanceUseBtn">' + (pendingImport.useBalanceOffer ? 'Using' : 'Use') + '</button></div>';
+      html += '<p class="import-balance-foot">Saved when you tap Import</p></div></div>';
+      html += '<button type="button" class="btn-secondary import-balance-use" id="importBalanceUseBtn" aria-pressed="'
+        + (pendingImport.useBalanceOffer ? 'true' : 'false') + '">' + (pendingImport.useBalanceOffer ? 'Using' : 'Use') + '</button></div>';
     }
     html += '<div class="import-stats">';
     html += '<div class="import-stat"><strong>' + counts.import + '</strong><span> to import</span></div>';
@@ -6846,7 +6848,7 @@
         layout: payload.layout,
         accountId: accountId,
         balanceOffer: payload.balanceOffer || null,
-        useBalanceOffer: !!(payload.balanceOffer && accountId === DEFAULT_ACCOUNT_CHECKING)
+        useBalanceOffer: false
       };
       renderImportReview();
     });
@@ -6859,25 +6861,52 @@
     return table;
   }
 
+  function rowDateFromImportTable(cols, header) {
+    var postIdx = findCol(header, ['post date']);
+    var dateIdx = findCol(header, ['transaction date', 'post date', 'date']);
+    var dateCell = postIdx !== -1 ? cols[postIdx] : (dateIdx !== -1 ? cols[dateIdx] : '');
+    return /^\d+(\.\d+)?$/.test(String(dateCell).trim()) ? excelSerialToTs(dateCell) : parseUsDate(dateCell);
+  }
+
+  function importTableDateDescending(table, header) {
+    var first = null;
+    var last = null;
+    for (var ri = 1; ri < table.length; ri++) {
+      var cols = table[ri];
+      if (isRowEmpty(cols)) continue;
+      var ts = rowDateFromImportTable(cols, header);
+      if (!ts) continue;
+      if (first == null) first = ts;
+      last = ts;
+    }
+    if (first == null || last == null) return true;
+    return first >= last;
+  }
+
   function extractCheckingBalanceOffer(table, layout) {
     if (layout !== 'bank' || !table || table.length < 2) return null;
     var header = table[0];
     var balIdx = findCol(header, ['balance']);
     if (balIdx === -1) return null;
-    var postIdx = findCol(header, ['post date']);
-    var dateIdx = findCol(header, ['transaction date', 'post date', 'date']);
+    var descending = importTableDateDescending(table, header);
     var best = null;
     for (var ri = 1; ri < table.length; ri++) {
       var cols = table[ri];
       if (isRowEmpty(cols)) continue;
       var bal = parseAmountCell(cols[balIdx]);
       if (isNaN(bal)) continue;
-      var dateCell = postIdx !== -1 ? cols[postIdx] : (dateIdx !== -1 ? cols[dateIdx] : '');
-      var ts = /^\d+(\.\d+)?$/.test(String(dateCell).trim()) ? excelSerialToTs(dateCell) : parseUsDate(dateCell);
+      var ts = rowDateFromImportTable(cols, header);
       if (!ts) continue;
-      if (!best || ts > best.ts) best = { amount: Math.round(bal * 100) / 100, ts: ts };
+      var pick = false;
+      if (!best || ts > best.ts) pick = true;
+      else if (ts === best.ts) {
+        if (descending && ri < best.ri) pick = true;
+        if (!descending && ri > best.ri) pick = true;
+      }
+      if (pick) best = { amount: Math.round(bal * 100) / 100, ts: ts, ri: ri };
     }
-    return best;
+    if (!best) return null;
+    return { amount: best.amount, ts: best.ts };
   }
 
   function processImportTable(table, batchId, fileName) {
