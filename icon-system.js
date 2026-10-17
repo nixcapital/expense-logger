@@ -75,6 +75,10 @@
       .replace(/"/g, '&quot;');
   }
 
+  function safeColor(c, fallback) {
+    return (typeof c === 'string' && /^#[0-9a-fA-F]{3,8}$/.test(c)) ? c : (fallback || '#adb5bd');
+  }
+
   function parseSvgInner(svgText) {
     var m = svgText.match(/<svg[^>]*>([\s\S]*)<\/svg>/i);
     return m ? m[1].trim() : '';
@@ -93,14 +97,14 @@
   }
 
   function badgeStyle(color) {
-    var c = color || '#adb5bd';
+    var c = safeColor(color);
     return 'background:color-mix(in srgb,' + c + ' 18%, transparent);--badge-fg:' + c + ';';
   }
 
   function badgeHTML(cat, opts) {
     opts = opts || {};
     var id = resolveIconId(cat);
-    var color = (cat && cat.color) || '#adb5bd';
+    var color = safeColor(cat && cat.color);
     var cls = 'cat-badge' + badgeSizeClass(opts.size || 'md');
     var style = badgeStyle(color);
     var dataId = ' data-icon-id="' + escHtml(id) + '"';
@@ -138,7 +142,7 @@
   /** 34px tinted preview badge for the category name field. */
   function pickerNamePreviewHTML(cat) {
     var id = resolveIconId(cat);
-    var color = (cat && cat.color) || '#adb5bd';
+    var color = safeColor(cat && cat.color);
     var style = 'background:color-mix(in srgb,' + color + ' 18%,transparent);--badge-fg:var(--picker-fg,'
       + color + ');';
     var dataId = ' data-icon-id="' + escHtml(id) + '"';
@@ -294,6 +298,7 @@
     hydrateUiIcons: hydrateUiIcons,
     categoryLabelHTML: categoryLabelHTML,
     escHtml: escHtml,
+    safeColor: safeColor,
     preloadIcons: preloadIcons,
     playIconAnimation: playIconAnimation,
     scanBadgesForReveal: scanBadgesForReveal,
