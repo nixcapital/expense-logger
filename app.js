@@ -53,7 +53,7 @@
   var TRANSFER_PATTERNS_KEY = 'expenseLogger.transferPatterns.v1';
   var FORECAST_OVERRIDES_KEY = 'expenseLogger.forecastOverrides.v1';
   var FORECAST_ONEOFFS_KEY = 'expenseLogger.forecastCountedOneOffs.v1';
-  var APP_VERSION = '1.9.0';
+  var APP_VERSION = '1.9.1';
   var BACKUP_FORMAT = 2;
   var BACKUP_FORMAT_LEGACY = 1;
   var DEFAULT_ACCOUNT_CHECKING = 'acct-checking';
@@ -71,10 +71,16 @@
     return EI ? EI.uiIconHTML(id, { size: size || 'md' }) : '';
   }
   function escHtml(s) {
-    return EI ? EI.escHtml(s) : String(s);
+    if (EI) return EI.escHtml(s);
+    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  }
+  function safeColor(c, fallback) {
+    if (EI && EI.safeColor) return EI.safeColor(c, fallback);
+    return (typeof c === 'string' && /^#[0-9a-fA-F]{3,8}$/.test(c)) ? c : (fallback || '#adb5bd');
   }
   function catPillHTML(cat) {
-    return '<span class="cat-pill cat-pill--icon" style="color:' + cat.color + '; border-color:' + cat.color + '55;">'
+    var col = safeColor(cat.color);
+    return '<span class="cat-pill cat-pill--icon" style="color:' + col + '; border-color:' + col + '55;">'
       + iconBadge(cat, 'xs') + '<span>' + escHtml(cat.name) + '</span></span>';
   }
   var lastSavedEntryId = null;
@@ -233,9 +239,6 @@
   var $ = function (id) { return document.getElementById(id); };
 
   var $app = $('app');
-  var $lockScreen = $('lockScreen');
-  var $pinDots = $('pinDots');
-  var $pinPad = $('pinPad');
 
   var $amount = $('amount');
   var $note = $('note');
@@ -339,14 +342,6 @@
   var $editSaveBtn = $('editSaveBtn');
   var $editDeleteBtn = $('editDeleteBtn');
 
-  var $pinModal = $('pinModal');
-  var $pinModalTitle = $('pinModalTitle');
-  var $pinInput1 = $('pinInput1');
-  var $pinInput2 = $('pinInput2');
-  var $pinCancelBtn = $('pinCancelBtn');
-  var $pinSaveBtn = $('pinSaveBtn');
-  var $togglePinBtn = $('togglePinBtn');
-  var $forgotPinBtn = $('forgotPinBtn');
 
   var $versionLine = $('versionLine');
   var $storageStatusLine = $('storageStatusLine');
@@ -1079,7 +1074,8 @@
 
   function accountMiniIconHTML(acct) {
     if (!acct) return '';
-    return '<span class="account-mini-icon" style="background:' + acct.color + '22;color:' + acct.color + '">' + accountIconSvg(acct.type) + '</span>';
+    var col = safeColor(acct.color);
+    return '<span class="account-mini-icon" style="background:' + col + '22;color:' + col + '">' + accountIconSvg(acct.type) + '</span>';
   }
 
   function accountTagHTML(acct) {
@@ -1286,7 +1282,7 @@
     try {
       for (var i = 0; i < localStorage.length; i++) {
         var k = localStorage.key(i);
-        if (k && k.indexOf('expenseLogger.') === 0) out[k] = localStorage.getItem(k);
+        if (k && k.indexOf('expenseLogger.') === 0 && k !== PIN_KEY) out[k] = localStorage.getItem(k);
       }
     } catch (e) {}
     return out;
@@ -1350,7 +1346,7 @@
   function applyBackupStorageReplacingAppData(backupStorage, deviceMetaKeep) {
     var filtered = {};
     Object.keys(backupStorage || {}).forEach(function (k) {
-      if (k.indexOf('expenseLogger.') === 0 && k !== META_KEY) {
+      if (k.indexOf('expenseLogger.') === 0 && k !== META_KEY && k !== PIN_KEY) {
         filtered[k] = backupStorage[k];
       }
     });
@@ -2185,7 +2181,7 @@
     } else if (hasNote) {
       var parsed = parseActivityNoteForRow(noteRaw, cat.name);
       title.textContent = parsed.title;
-      subBits.push(activitySubtitleLine(cat.name, parsed.title, parsed.noteTag));
+      subBits.push(escHtml(activitySubtitleLine(cat.name, parsed.title, parsed.noteTag)));
     } else {
       title.textContent = cat.name;
     }
@@ -2662,6 +2658,7 @@
     renderAll();
 
     pendingDelete = entry;
+    pendingRestoreUndo = null;
     if (undoTimer) clearTimeout(undoTimer);
     $undoText.textContent = 'Deleted ' + fmtMoneyDisplay(entry.amount) + ' — ' + getCat(entry.categoryId).name;
     updateActivityStickyTop();
@@ -2941,7 +2938,7 @@
         var h = (seg.amt / max) * plotH * p;
         if (h < 0.5) return;
         yTop -= h;
-        svg += '<rect class="report-bar-seg" fill="' + seg.cat.color + '" x="' + x + '" y="' + yTop
+        svg += '<rect class="report-bar-seg" fill="' + safeColor(seg.cat.color) + '" x="' + x + '" y="' + yTop
           + '" width="' + barW + '" height="' + h + '" rx="2" />';
       });
       svg += '<rect class="report-bar-hit" tabindex="0" role="button" aria-label="' + escHtml(monthName(new Date(mo.y, mo.m, 1)))
@@ -3385,7 +3382,7 @@
       var path = describeDonutArc(cx, cy, rOuter, rInner, angle, end);
       var opacity = highlightId && highlightId !== r.c.id ? dimOpacity : 1;
       var strokeW = highlightId === r.c.id ? 3 : (prefersLightScheme() ? 1.5 : 0);
-      html += '<path class="donut-seg" data-cat="' + r.c.id + '" d="' + path + '" fill="' + donutSegmentColor(r.c.color) + '"'
+      html += '<path class="donut-seg" data-cat="' + escHtml(r.c.id) + '" d="' + path + '" fill="' + donutSegmentColor(safeColor(r.c.color)) + '"'
         + ' opacity="' + opacity + '" stroke="' + cssVar('--bg', '#0B0C10') + '" stroke-width="' + strokeW + '"/>';
       angle = end;
     });
@@ -3445,7 +3442,7 @@
       var budgetPct = budgetLimit > 0 ? Math.min(100, (r.amt / budgetLimit) * 100) : 0;
       var budgetBar = '';
       if (budgetLimit > 0) {
-        var bColor = r.amt > budgetLimit ? cssVar('--danger', '#FF5A5F') : r.c.color;
+        var bColor = r.amt > budgetLimit ? cssVar('--danger', '#FF5A5F') : safeColor(r.c.color);
         budgetBar = '<div class="legend-budget-bar"><div class="legend-budget-fill" style="width:' + budgetPct + '%;background:' + bColor + '"></div></div>';
       }
       row.innerHTML = '<span class="name">' + iconBadge(r.c, 'sm') + ' '
@@ -3961,10 +3958,11 @@
       var limit = budgets[c.id];
       var pct = limit > 0 ? Math.min(100, (spent / limit) * 100) : 0;
       var over = spent > limit;
-      var barColor = over ? '#ff6b6b' : c.color;
+      var catColor = safeColor(c.color);
+      var barColor = over ? '#ff6b6b' : catColor;
       html += '<div class="budget-row">'
         + '<div class="budget-header">'
-        + '<span class="cat-name"><span class="dot" style="background:' + c.color + '"></span>' + c.name + '</span>'
+        + '<span class="cat-name"><span class="dot" style="background:' + catColor + '"></span>' + escHtml(c.name) + '</span>'
         + '<span class="amounts' + (over ? ' over' : '') + '">' + fmtMoneyDisplay(spent) + ' / ' + fmtMoneyDisplay(limit)
         + (over ? ' ' + uiIcon('ui-alert', 'xs') : '') + '</span>'
         + '</div>'
@@ -4170,7 +4168,7 @@
     if (slideId === 'topCategory') {
       var top = d.top;
       var stack = d.categories.map(function (row) {
-        return '<span class="wrapped-stack-seg" style="width:' + row.sharePct + '%;background:' + row.cat.color + '"></span>';
+        return '<span class="wrapped-stack-seg" style="width:' + row.sharePct + '%;background:' + safeColor(row.cat.color) + '"></span>';
       }).join('');
       var rows = d.categories.map(function (row) {
         return '<div class="wrapped-cat-row"><span class="wrapped-cat-icon">' + iconBadge(row.cat, 'sm') + '</span>'
@@ -4323,10 +4321,10 @@
           + '<p class="wrapped-hero-sub">' + fmtMoneyDisplay(d.win.cur) + ' vs ' + fmtMoneyDisplay(d.win.prev) + ' last month</p></div>';
       }
       var stack = d.accounts.map(function (a) {
-        return '<span class="wrapped-stack-seg" style="width:' + a.sharePct + '%;background:' + a.color + '"></span>';
+        return '<span class="wrapped-stack-seg" style="width:' + a.sharePct + '%;background:' + safeColor(a.color) + '"></span>';
       }).join('');
       var acctRows = d.accounts.map(function (a) {
-        return '<div class="wrapped-purchase-row"><span class="wrapped-row-icon" style="background:' + a.color + '33">'
+        return '<div class="wrapped-purchase-row"><span class="wrapped-row-icon" style="background:' + safeColor(a.color) + '33">'
           + uiIcon(a.id.indexOf('checking') >= 0 ? 'home' : 'receipt', 'sm') + '</span>'
           + '<div><strong>' + escHtml(a.name) + '</strong><p class="wrapped-stat-sub">' + a.sharePct + '% · ' + a.count + ' purchases</p></div>'
           + '<span class="wrapped-cat-amt">' + fmtMoneyDisplay(a.amount) + '</span></div>';
@@ -5000,13 +4998,13 @@
       html += '<div class="entry settings-inset-entry">'
         + '<div class="entry-info"><div class="top">'
         + iconBadge(c, 'sm')
-        + '<span style="font-weight:600;">' + c.name + '</span>'
-        + '<span class="cat-pill" style="color:' + c.color + '; border-color:' + c.color + '55;">'
+        + '<span style="font-weight:600;">' + escHtml(c.name) + '</span>'
+        + '<span class="cat-pill" style="color:' + safeColor(c.color) + '; border-color:' + safeColor(c.color) + '55;">'
         + (budgets[c.id] ? fmtMoneyDisplay(budgets[c.id]) + '/mo' : 'No budget') + '</span>'
         + '</div></div>'
         + '<div class="entry-right">'
-        + '<button class="del-btn" style="color:var(--accent);" data-edit="' + c.id + '" type="button">✎</button>'
-        + (categories.length > 1 ? '<button class="del-btn" data-del="' + c.id + '" type="button">✕</button>' : '')
+        + '<button class="del-btn" style="color:var(--accent);" data-edit="' + escHtml(c.id) + '" type="button">✎</button>'
+        + (categories.length > 1 ? '<button class="del-btn" data-del="' + escHtml(c.id) + '" type="button">✕</button>' : '')
         + '</div></div>';
     });
     $categoryList.innerHTML = html;
@@ -5186,10 +5184,10 @@
         + '<div class="entry-info"><div class="top">'
         + catPillHTML(cat)
         + '<span class="recurring-badge">Day ' + r.dayOfMonth + '</span></div>'
-        + (r.note ? '<div class="note">' + r.note + '</div>' : '')
+        + (r.note ? '<div class="note">' + escHtml(r.note) + '</div>' : '')
         + '</div><div class="entry-right">'
         + '<span class="entry-amt">' + fmtMoneyDisplay(r.amount) + '</span>'
-        + '<button class="del-btn" data-del-rec="' + r.id + '" type="button">✕</button>'
+        + '<button class="del-btn" data-del-rec="' + escHtml(r.id) + '" type="button">✕</button>'
         + '</div></div>';
     });
     $recurringList.innerHTML = html;
@@ -5394,7 +5392,7 @@
     if ($editCategory) {
       var html = '';
       categories.forEach(function (c) {
-        html += '<option value="' + c.id + '"' + (c.id === selectedId ? ' selected' : '') + '>' + escHtml(c.name) + '</option>';
+        html += '<option value="' + escHtml(c.id) + '"' + (c.id === selectedId ? ' selected' : '') + '>' + escHtml(c.name) + '</option>';
       });
       $editCategory.innerHTML = html;
       $editCategory.value = selectedId || '';
@@ -6983,7 +6981,7 @@
       html += '<div class="entry import-rule" style="padding:10px 0;">';
       html += '<div class="entry-info"><div class="top"><span style="font-weight:600;font-size:13px;">' + escHtml(r.pattern) + '</span></div>';
       html += '<div class="note">' + (r.isTransfer ? 'Transfer' : cat) + '</div></div>';
-      html += '<button class="del-btn" type="button" data-del-rule="' + r.id + '">✕</button></div>';
+      html += '<button class="del-btn" type="button" data-del-rule="' + escHtml(r.id) + '">✕</button></div>';
     });
     $importRulesList.innerHTML = html;
     Array.prototype.forEach.call($importRulesList.querySelectorAll('[data-del-rule]'), function (btn) {
@@ -7316,7 +7314,7 @@
     var currentVal = $filterCategory.value;
     var html = '<option value="">All categories</option>';
     categories.forEach(function (c) {
-      html += '<option value="' + c.id + '">' + escHtml(c.name) + '</option>';
+      html += '<option value="' + escHtml(c.id) + '">' + escHtml(c.name) + '</option>';
     });
     $filterCategory.innerHTML = html;
     if (currentVal && categories.some(function (c) { return c.id === currentVal; })) $filterCategory.value = currentVal;
@@ -9275,144 +9273,6 @@
     }
   });
 
-  // ---------- Passcode lock ----------
-  var pinBuffer = '';
-  var pinExpectedLength = 4;
-
-  function hashPin(pin) {
-    if (window.crypto && crypto.subtle && crypto.subtle.digest) {
-      var enc = new TextEncoder().encode('expenseLogger:' + pin);
-      return crypto.subtle.digest('SHA-256', enc).then(function (buf) {
-        var arr = Array.from(new Uint8Array(buf));
-        return arr.map(function (b) { return b.toString(16).padStart(2, '0'); }).join('');
-      });
-    }
-    // Fallback: very weak, only used if SubtleCrypto unavailable
-    var h = 0;
-    var s = 'expenseLogger:' + pin;
-    for (var i = 0; i < s.length; i++) { h = ((h << 5) - h) + s.charCodeAt(i); h |= 0; }
-    return Promise.resolve('weak:' + h);
-  }
-
-  function getStoredPin() {
-    try { return localStorage.getItem(PIN_KEY); } catch (e) { return null; }
-  }
-  function setStoredPin(hash) {
-    try { localStorage.setItem(PIN_KEY, hash); } catch (e) {}
-  }
-  function clearStoredPin() {
-    try { localStorage.removeItem(PIN_KEY); } catch (e) {}
-  }
-
-  function buildPinPad() {
-    var layout = ['1','2','3','4','5','6','7','8','9','','0','⌫'];
-    $pinPad.innerHTML = '';
-    layout.forEach(function (key) {
-      var btn = document.createElement('button');
-      btn.type = 'button';
-      btn.className = 'pin-key' + (key === '' ? ' empty' : '');
-      btn.textContent = key;
-      if (key !== '') {
-        btn.addEventListener('click', function () {
-          if (key === '⌫') pinBuffer = pinBuffer.slice(0, -1);
-          else if (pinBuffer.length < 8) pinBuffer += key;
-          updatePinDots();
-          if (pinBuffer.length >= pinExpectedLength) tryUnlock();
-        });
-      }
-      $pinPad.appendChild(btn);
-    });
-  }
-
-  function updatePinDots() {
-    var stored = getStoredPin();
-    // We don't know length; show dots for current buffer
-    $pinDots.innerHTML = '';
-    var len = Math.max(pinBuffer.length, 4);
-    for (var i = 0; i < len; i++) {
-      var d = document.createElement('span');
-      d.className = 'pin-dot' + (i < pinBuffer.length ? ' filled' : '');
-      $pinDots.appendChild(d);
-    }
-  }
-
-  function tryUnlock() {
-    var stored = getStoredPin();
-    if (!stored) { showApp(); return; }
-    hashPin(pinBuffer).then(function (h) {
-      if (h === stored) {
-        pinBuffer = '';
-        showApp();
-      } else {
-        toast('Wrong passcode');
-        pinBuffer = '';
-        updatePinDots();
-      }
-    });
-  }
-
-  function showLock() {
-    $app.hidden = true;
-    $lockScreen.hidden = false;
-    pinBuffer = '';
-    updatePinDots();
-    buildPinPad();
-  }
-  function showApp() {
-    $lockScreen.hidden = true;
-    $app.hidden = false;
-  }
-
-  $togglePinBtn.addEventListener('click', function () {
-    if (getStoredPin()) {
-      // Turn off
-      if (!window.confirm('Remove passcode lock?')) return;
-      clearStoredPin();
-      $togglePinBtn.textContent = 'Off';
-      toast('Passcode removed');
-    } else {
-      // Turn on
-      $pinModalTitle.textContent = 'Set Passcode';
-      $pinInput1.value = ''; $pinInput2.value = '';
-      $pinModal.classList.add('show');
-    }
-  });
-
-  $pinCancelBtn.addEventListener('click', function () { $pinModal.classList.remove('show'); });
-  $pinSaveBtn.addEventListener('click', function () {
-    var p1 = $pinInput1.value.trim();
-    var p2 = $pinInput2.value.trim();
-    if (!/^\d{4,8}$/.test(p1)) { toast('Passcode must be 4–8 digits'); return; }
-    if (p1 !== p2) { toast('Passcodes do not match'); return; }
-    hashPin(p1).then(function (h) {
-      setStoredPin(h);
-      $pinModal.classList.remove('show');
-      $togglePinBtn.textContent = 'On';
-      toast('Passcode set');
-    });
-  });
-
-  $forgotPinBtn.addEventListener('click', function () {
-    var msg = 'Forgot passcode?\n\nThis will erase all app data on this device (expenses, budgets, receipts) so you can start fresh. Backups you exported are not affected.';
-    if (!window.confirm(msg)) return;
-    if (!window.confirm('Really erase everything?')) return;
-    entries = []; budgets = {}; recurringItems = [];
-    categories = DEFAULT_CATEGORIES.slice();
-    try {
-      localStorage.removeItem(STORAGE_KEY);
-      localStorage.removeItem(CATS_KEY);
-      localStorage.removeItem(BUDGETS_KEY);
-      localStorage.removeItem(RECURRING_KEY);
-      localStorage.removeItem(PIN_KEY);
-    } catch (e) {}
-    idbClear().catch(function () {});
-    buildCategoryButtons(); rebuildFilterDropdowns();
-    renderAll(); renderCategoryList(); renderBudgetSettings(); renderRecurringList();
-    $togglePinBtn.textContent = 'Off';
-    showApp();
-    toast('Data erased. Passcode removed.');
-  });
-
   // ---------- Event wiring ----------
   $amount.addEventListener('input', updateSaveState);
   $saveBtn.addEventListener('click', addEntry);
@@ -9505,7 +9365,7 @@
     });
   });
 
-  [$budgetModal, $catModal, $receiptModal, $pinModal, $importAccountModal, $addAccountModal, $wrappedModal, $backupRestoreModal].forEach(function (ov) {
+  [$budgetModal, $catModal, $receiptModal, $importAccountModal, $addAccountModal, $wrappedModal, $backupRestoreModal].forEach(function (ov) {
     if (!ov) return;
     ov.addEventListener('click', function (e) {
       if (e.target === ov) {
@@ -9664,6 +9524,8 @@
 
   function bootApp() {
     var bootFailed = false;
+    // Passcode lock was removed; drop any stale hash left by older versions.
+    try { localStorage.removeItem(PIN_KEY); } catch (e) {}
     try {
       // ---------- Boot ----------
       initPersistentStorage();
@@ -9711,10 +9573,7 @@
       renderDataMetaLines();
       renderBackupReminder();
 
-      if ($togglePinBtn) $togglePinBtn.textContent = getStoredPin() ? 'On' : 'Off';
-
-      if (getStoredPin()) showLock();
-      else showApp();
+      if ($app) $app.hidden = false;
 
       initScreenTitleObservers();
       wireActivityFilters();
@@ -9732,13 +9591,7 @@
       bootFailed = true;
       logBootSectionError('boot', err);
       showHomeBootError('Something went wrong while opening the app. Your saved entries and settings on this device were not changed.');
-      try {
-        if (getStoredPin()) showLock();
-        else showApp();
-      } catch (e2) {
-        if ($app) $app.hidden = false;
-        if ($lockScreen) $lockScreen.hidden = true;
-      }
+      if ($app) $app.hidden = false;
       try {
         if ($('tab-summary')) $('tab-summary').hidden = false;
       } catch (e3) {}
@@ -9755,7 +9608,6 @@
     showHomeBootError('Something went wrong while opening the app. Your saved entries and settings on this device were not changed.');
     try {
       if ($app) $app.hidden = false;
-      if ($lockScreen) $lockScreen.hidden = true;
       if ($('tab-summary')) $('tab-summary').hidden = false;
     } catch (e2) {}
     hideSplashVisualOnly();
