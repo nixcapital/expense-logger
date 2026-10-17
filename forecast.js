@@ -2122,7 +2122,8 @@
       cushion: input.cushion,
       dailySpend: input.dailySpend,
       overrides: input.overrides,
-      countedOneOffs: input.countedOneOffs
+      countedOneOffs: input.countedOneOffs,
+      cardBalanceOwed: input.cardBalanceOwed
     });
     if (!sim.ok) return sim;
     var incomeSince = addDays(nowMs, -400);

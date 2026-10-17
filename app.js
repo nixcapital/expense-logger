@@ -8337,9 +8337,12 @@
         html += '<span class="chevron" aria-hidden="true">›</span></button>';
       }
     });
+    if (showFoot) {
+      html += '<p class="settings-accounts-foot">Balance owed is what you owe Chase. Card purchases raise it. A payment from Checking lowers it, and the payment isn&rsquo;t spending.</p>';
+    }
     el.innerHTML = html;
     var foot = $('settingsAccountsFoot');
-    if (foot) foot.hidden = !showFoot;
+    if (foot) foot.hidden = true;
     Array.prototype.forEach.call(el.querySelectorAll('[data-balance-acct]'), function (btn) {
       btn.addEventListener('click', function () { openBalanceSheet(btn.dataset.balanceAcct); });
     });
@@ -9242,7 +9245,9 @@
     hasCardBalanceAnchor: hasCardBalanceAnchor,
     saveChaseBalanceSheet: saveChaseBalanceSheet,
     openChaseCardSheet: openChaseCardSheet,
+    closeChaseCardSheet: closeChaseCardSheet,
     openChaseBalanceSheet: openChaseBalanceSheet,
+    closeChaseBalanceSheet: closeChaseBalanceSheet,
     chaseBalanceSheetDirty: chaseBalanceSheetDirty,
     getState: function () {
       return {

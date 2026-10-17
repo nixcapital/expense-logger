@@ -113,6 +113,28 @@ var medianSched = builtMedian.schedules.find(function (s) { return s && s.kind =
 assert.ok(medianSched);
 assert.notStrictEqual(medianSched.amount, 1284.17);
 
+console.log('chase-balance-test: runForecast uses balance owed');
+var runPayload = {
+  nowMs: ts(2026, 9, 16),
+  checkingId: CHECKING,
+  chaseId: CHASE,
+  balance: 3560,
+  balanceAsOfMs: ts(2026, 9, 16),
+  entries: fixtureEntries,
+  transferPairs: paired,
+  cardBalanceOwed: 1284.17,
+  chartDays: 30,
+  maxLookaheadDays: 120,
+  recurringItems: [],
+  overrides: {},
+  countedOneOffs: []
+};
+var run = FC.runForecast(runPayload);
+assert.ok(run.ok);
+var upChase = (run.upcoming || []).find(function (u) { return u.label === 'Chase card payment'; });
+assert.ok(upChase);
+assert.strictEqual(upChase.amount, 1284.17);
+
 console.log('chase-balance-test: browser migration + neutral correction');
 
 const PORT = 8918;
