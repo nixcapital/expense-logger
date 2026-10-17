@@ -1545,7 +1545,13 @@ button.legend-row.legend-btn.active { background: color-mix(in srgb, var(--accen
   background: transparent;
   transition: none;
 }
-.modal-overlay.sheet:not(.show) { pointer-events: none; }
+.modal-overlay.sheet:not(.show) {
+  visibility: hidden;
+  pointer-events: none;
+}
+.modal-overlay.sheet.show {
+  visibility: visible;
+}
 .modal-overlay.sheet::before {
   content: '';
   position: absolute;
@@ -3022,12 +3028,17 @@ button.legend-row.legend-btn.active { background: color-mix(in srgb, var(--accen
 }
 
 /* Chase card balance owed (1.8.0) */
-.modal-overlay.sheet-fade .modal {
+.modal-overlay.sheet-fade.show .modal {
   transform: none;
   opacity: 1;
 }
+.modal-overlay.sheet-fade:not(.show) .modal {
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(12px);
+}
 .modal-overlay.sheet-fade {
-  transition: opacity 0.25s cubic-bezier(.2,.8,.2,1);
+  transition: none;
 }
 #chaseCardSheet.modal-overlay.modal-front,
 #chaseBalanceSheet.modal-overlay.modal-front {

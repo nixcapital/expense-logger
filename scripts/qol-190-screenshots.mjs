@@ -155,6 +155,9 @@ async function run() {
       window.ExpenseLoggerTest.renderEntries();
     });
     await page.waitForTimeout(200);
+    const prompt = page.locator('.bulk-recat-prompt');
+    await prompt.scrollIntoViewIfNeeded();
+    await page.waitForTimeout(150);
   }));
 
   hashes.push(await shot(browser, '2-import-filters-light.png', 'light', async (page) => {
