@@ -1,4 +1,4 @@
-/* Expense Logger 1.7.6 — dark-first, iOS-style */
+/* Expense Logger 1.8.0 — dark-first, iOS-style */
 
 :root {
   --bg: #0B0C10;
@@ -11,6 +11,7 @@
   --accent: #5B8CFF;
   --accent-press: #4a7ae6;
   --accent-ink: #0B0C10;
+  --link: #8CADFF;
   --success: #34C77B;
   --warn: #F5A524;
   --danger: #FF5A5F;
@@ -42,6 +43,7 @@
     --accent: #2558D4;
     --accent-press: #1E4BB8;
     --accent-ink: #FFFFFF;
+    --link: #2558D4;
     --shadow: 0 8px 24px rgba(20,30,60,.12);
   }
 }
@@ -2984,6 +2986,372 @@ button.legend-row.legend-btn.active { background: color-mix(in srgb, var(--accen
   .modal { transition: opacity 0.1s ease; transform: none; }
   .modal-overlay.show .modal { transform: none; }
   .hero-budget-fill { transition: none; }
+}
+
+/* Chase card balance owed (1.8.0) */
+.modal-overlay.sheet-fade .modal {
+  transform: none;
+  opacity: 1;
+}
+.modal-overlay.sheet-fade {
+  transition: opacity 0.25s cubic-bezier(.2,.8,.2,1);
+}
+#chaseCardSheet.modal-overlay.modal-front,
+#chaseBalanceSheet.modal-overlay.modal-front {
+  z-index: 5300;
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+.settings-account-row-btn {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  box-sizing: border-box;
+  border: none;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+  padding: 12px var(--sp-4);
+  margin: 0;
+  border-top: 1px solid var(--sep);
+}
+.settings-accounts-foot {
+  margin: 0;
+  padding: 10px var(--sp-4) 12px;
+  font-size: 13px;
+  line-height: 18px;
+  color: var(--text-dim);
+  border-top: 1px solid var(--sep);
+}
+#chaseBalanceSheet {
+  isolation: isolate;
+}
+#chaseBalanceSheet .import-review-discard-scrim {
+  position: absolute;
+  inset: 0;
+  z-index: 30;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  padding: var(--gutter);
+  background: rgba(0, 0, 0, 0.62);
+  box-sizing: border-box;
+}
+@media (prefers-color-scheme: light) {
+  #chaseBalanceSheet .import-review-discard-scrim {
+    background: rgba(0, 0, 0, 0.72);
+  }
+}
+#chaseBalanceSheet .import-review-discard-scrim.show {
+  display: flex;
+}
+#chaseBalanceSheet .import-discard-card {
+  width: 100%;
+  max-width: 340px;
+  background-color: var(--card);
+  color: var(--text);
+  opacity: 1;
+  border-radius: var(--radius-card);
+  padding: var(--sp-4) var(--sp-4) var(--sp-3);
+  text-align: center;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.35);
+}
+.chase-balance-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: var(--sp-4);
+  min-height: 44px;
+}
+.chase-balance-topbar-title {
+  flex: 1 1 auto;
+  margin: 0;
+  text-align: center;
+  font-size: 17px;
+  font-weight: 600;
+  line-height: 22px;
+  white-space: nowrap;
+}
+.chase-balance-topbar-btn {
+  flex: 0 0 auto;
+  min-width: 44px;
+  min-height: 44px;
+  padding: 10px 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: none;
+  color: var(--link);
+  font-size: 17px;
+  line-height: 22px;
+  cursor: pointer;
+}
+.chase-balance-topbar-save { font-weight: 600; }
+#chaseBalanceAmountInput {
+  width: 100%;
+  border: none;
+  background: transparent;
+  font-size: 34px;
+  font-weight: 700;
+  line-height: 41px;
+  letter-spacing: 0.4px;
+  color: var(--text);
+  padding: 0;
+  font-family: inherit;
+}
+.chase-balance-input-wrap {
+  margin-top: var(--sp-2);
+}
+.settings-account-owed {
+  text-align: right;
+  flex-shrink: 0;
+  min-width: 88px;
+}
+.settings-account-owed-amt {
+  font-size: 17px;
+  font-weight: 600;
+  line-height: 22px;
+  display: block;
+}
+.settings-account-owed-label {
+  font-size: 13px;
+  line-height: 18px;
+  color: var(--text-dim);
+  display: block;
+}
+.settings-account-row-btn .chevron {
+  margin-left: 6px;
+  color: var(--text-dim);
+  font-size: 18px;
+}
+.chase-card-sheet-modal,
+.chase-balance-sheet-modal {
+  max-height: calc(100vh - 57px);
+  display: flex;
+  flex-direction: column;
+  padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 16px);
+  background: var(--card);
+}
+.chase-card-sheet-header {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  padding: 0 44px var(--sp-3);
+  flex-shrink: 0;
+}
+.chase-card-sheet-header h3 {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 600;
+  line-height: 22px;
+}
+.sheet-icon-close {
+  position: absolute;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 44px;
+  height: 44px;
+  border: none;
+  border-radius: 50%;
+  background: var(--raised);
+  color: var(--text);
+  font-size: 22px;
+  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.chase-card-sheet-scroll {
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: 0 0 var(--sp-2);
+}
+.chase-card-hero {
+  background: var(--raised);
+  border-radius: 16px;
+  padding: var(--sp-4);
+  margin-bottom: var(--sp-3);
+  position: relative;
+}
+.chase-card-hero-label {
+  font-size: 13px;
+  line-height: 18px;
+  color: var(--text-dim);
+  margin: 0 0 4px;
+}
+.chase-card-hero-amt {
+  font-size: 34px;
+  font-weight: 700;
+  line-height: 41px;
+  letter-spacing: 0.4px;
+  margin: 0 0 4px;
+}
+.chase-card-hero-asof {
+  font-size: 15px;
+  line-height: 20px;
+  color: var(--text-dim);
+  margin: 0;
+}
+.chase-card-set-btn {
+  position: absolute;
+  top: var(--sp-4);
+  right: var(--sp-4);
+  min-height: 44px;
+  padding: 0 16px;
+  border: none;
+  border-radius: 999px;
+  background: var(--link);
+  color: var(--accent-ink);
+  font-size: 17px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.chase-card-math {
+  display: grid;
+  gap: 8px;
+  margin-bottom: var(--sp-4);
+  font-size: 15px;
+  line-height: 20px;
+}
+.chase-card-math-row {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--sp-2);
+}
+.chase-card-math-row.is-credit span:last-child { color: var(--success); }
+.chase-card-section-label {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--sp-2);
+  font-size: 13px;
+  line-height: 18px;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin: var(--sp-3) 0 var(--sp-2);
+}
+.chase-card-row-btn {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  border: none;
+  background: transparent;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--sep);
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+  min-height: 44px;
+}
+.chase-card-row-btn:last-child { border-bottom: none; }
+.chase-card-row-main { flex: 1; min-width: 0; }
+.chase-card-row-title {
+  font-size: 17px;
+  font-weight: 600;
+  line-height: 22px;
+  margin: 0;
+}
+.chase-card-row-sub {
+  font-size: 15px;
+  line-height: 20px;
+  color: var(--text-dim);
+  margin: 2px 0 0;
+}
+.chase-card-row-amt {
+  font-size: 17px;
+  font-weight: 600;
+  line-height: 22px;
+  white-space: nowrap;
+}
+.chase-card-row-amt.is-credit { color: var(--success); }
+.chase-card-row-amt.is-forecast { color: var(--text-dim); }
+.chase-card-all-link {
+  font-size: 17px;
+  font-weight: 600;
+  color: var(--link);
+  background: none;
+  border: none;
+  padding: 10px 0;
+  cursor: pointer;
+  width: 100%;
+  text-align: left;
+  min-height: 44px;
+}
+.chase-neutral-tag {
+  display: inline-block;
+  font-size: 13px;
+  line-height: 18px;
+  color: var(--text-dim);
+  background: var(--raised);
+  border-radius: 999px;
+  padding: 2px 8px;
+  margin-top: 4px;
+}
+.chase-card-sheet-foot {
+  font-size: 13px;
+  line-height: 18px;
+  color: var(--text-dim);
+  text-align: center;
+  margin: var(--sp-3) 0 0;
+  flex-shrink: 0;
+}
+.chase-balance-sheet-scroll { padding-bottom: var(--sp-2); }
+.chase-balance-input-wrap { margin-top: var(--sp-2); }
+.chase-balance-change-line {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--sp-2);
+  font-size: 13px;
+  line-height: 18px;
+  color: var(--text-dim);
+  margin: var(--sp-2) 0 0;
+}
+.chase-balance-change-line strong {
+  color: var(--text);
+  font-weight: 600;
+}
+.chase-balance-callout {
+  margin-top: var(--sp-4);
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  background: var(--raised);
+  border-radius: 12px;
+  padding: var(--sp-3);
+}
+.chase-balance-callout p {
+  margin: 0;
+  font-size: 13px;
+  line-height: 18px;
+  color: var(--text-dim);
+}
+.balance-info-icon { flex-shrink: 0; color: var(--link); margin-top: 1px; }
+.forecast-up-not-spending-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 13px;
+  line-height: 18px;
+  color: var(--text-dim);
+  background: var(--raised);
+  border-radius: 999px;
+  padding: 2px 8px;
+  margin-top: 4px;
+}
+@media (prefers-color-scheme: light) {
+  .chase-card-set-btn { color: #fff; }
 }
 
 @media print {

@@ -13,8 +13,8 @@
 <link rel="manifest" href="manifest.json">
 <link rel="icon" href="icon-192.png">
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
-<link rel="stylesheet" href="styles.css?v=1.7.6">
-<link rel="stylesheet" href="icon-animations.css?v=1.7.6">
+<link rel="stylesheet" href="styles.css?v=1.8.0">
+<link rel="stylesheet" href="icon-animations.css?v=1.8.0">
 <title>Expense Logger</title>
 </head>
 <body>
@@ -394,6 +394,7 @@
   <div class="inset-group">
     <h3 class="group-label">Accounts</h3>
     <div class="inset-card" id="settingsAccountsList"></div>
+    <p class="hint inset-hint" id="settingsAccountsFoot" hidden>Balance owed is what you owe on your card. Purchases raise it; a payment from Checking lowers it, and the payment isn&rsquo;t spending.</p>
   </div>
 
   <div class="inset-group">
@@ -711,6 +712,64 @@
   </div>
 </div>
 
+<!-- Modal: Chase card detail -->
+<div class="modal-overlay sheet sheet-fade modal-front" id="chaseCardSheet" aria-hidden="true">
+  <div class="modal sheet-modal chase-card-sheet-modal">
+    <div class="sheet-grabber" aria-hidden="true"></div>
+    <div class="chase-card-sheet-header">
+      <h3>Chase card</h3>
+      <button type="button" class="sheet-icon-close" id="chaseCardSheetClose" aria-label="Close">&times;</button>
+    </div>
+    <div class="chase-card-sheet-scroll" id="chaseCardSheetBody"></div>
+    <p class="chase-card-sheet-foot" id="chaseCardSheetFoot">Purchases count as spending on the day you buy. Checking only changes when the payment posts.</p>
+  </div>
+</div>
+
+<!-- Modal: set Chase balance owed -->
+<div class="modal-overlay sheet sheet-fade modal-front" id="chaseBalanceSheet" aria-hidden="true">
+  <div class="modal sheet-modal chase-balance-sheet-modal">
+    <div class="sheet-grabber" aria-hidden="true"></div>
+    <div class="chase-balance-topbar">
+      <button type="button" class="link-btn chase-balance-topbar-btn" id="chaseBalanceCancelBtn">Cancel</button>
+      <h3 class="chase-balance-topbar-title">Balance owed</h3>
+      <button type="button" class="link-btn chase-balance-topbar-btn chase-balance-topbar-save" id="chaseBalanceSaveBtn">Save</button>
+    </div>
+    <div class="chase-balance-sheet-scroll">
+      <div class="balance-sheet-account" id="chaseBalanceSheetAccount"></div>
+      <label class="balance-input-wrap chase-balance-input-wrap">
+        <span class="balance-input-label">Balance owed</span>
+        <input type="text" id="chaseBalanceAmountInput" inputmode="decimal" autocomplete="off" enterkeyhint="done" aria-label="Balance owed" aria-describedby="chaseBalanceAmountError">
+      </label>
+      <div class="chase-balance-change-line" id="chaseBalanceChangeLine" hidden>
+        <span id="chaseBalanceNowLine"></span>
+        <strong id="chaseBalanceDeltaLine"></strong>
+      </div>
+      <p class="balance-input-error" id="chaseBalanceAmountError" hidden role="alert"></p>
+      <button type="button" class="grouped-row balance-asof-row" id="chaseBalanceAsOfRow">
+        <span class="row-icon" data-ui-icon="ui-calendar" data-ui-icon-size="row" aria-hidden="true"></span>
+        <span class="row-label">As of</span>
+        <span class="row-value" id="chaseBalanceAsOfPreview">Today</span>
+        <span class="chevron">›</span>
+      </button>
+      <input type="date" id="chaseBalanceAsOfInput" class="visually-hidden-input" tabindex="-1">
+      <div class="balance-info-callout chase-balance-callout">
+        <span class="balance-info-icon" aria-hidden="true"><svg width="16" height="16" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6.25" stroke="currentColor"/><path d="M8 7v4M8 5.2h.01" stroke="currentColor" stroke-width="1.25" stroke-linecap="round"/></svg></span>
+        <p>Use the current balance in the Chase app, not the statement balance. A correction isn&rsquo;t spending and doesn&rsquo;t change Checking.</p>
+      </div>
+    </div>
+  </div>
+  <div id="chaseBalanceDiscardScrim" class="import-review-discard-scrim" aria-hidden="true">
+    <div class="import-discard-card" role="dialog" aria-labelledby="chaseBalanceDiscardTitle" aria-modal="true">
+      <h3 id="chaseBalanceDiscardTitle">Discard changes?</h3>
+      <p class="hint">Your balance correction will be lost.</p>
+      <div class="import-discard-actions">
+        <button type="button" class="save-btn" id="chaseBalanceDiscardKeepBtn">Keep editing</button>
+        <button type="button" class="btn-secondary" id="chaseBalanceDiscardConfirmBtn">Discard</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <!-- Modal: set checking balance -->
 <div class="modal-overlay sheet modal-front" id="balanceSheet">
   <div class="modal sheet-modal balance-sheet-modal">
@@ -889,10 +948,10 @@
   <p class="hint wrapped-empty" id="wrappedEmpty" hidden>No spending data for this month.</p>
 </div>
 
-<script src="icon-system.js?v=1.7.6"></script>
-<script src="forecast.js?v=1.7.6"></script>
-<script src="wrapped.js?v=1.7.6"></script>
-<script src="app.js?v=1.7.6"></script>
+<script src="icon-system.js?v=1.8.0"></script>
+<script src="forecast.js?v=1.8.0"></script>
+<script src="wrapped.js?v=1.8.0"></script>
+<script src="app.js?v=1.8.0"></script>
 <script>
 (function () {
   'use strict';

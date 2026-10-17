@@ -53,7 +53,7 @@
   var TRANSFER_PATTERNS_KEY = 'expenseLogger.transferPatterns.v1';
   var FORECAST_OVERRIDES_KEY = 'expenseLogger.forecastOverrides.v1';
   var FORECAST_ONEOFFS_KEY = 'expenseLogger.forecastCountedOneOffs.v1';
-  var APP_VERSION = '1.7.6';
+  var APP_VERSION = '1.8.0';
   var BACKUP_FORMAT = 2;
   var BACKUP_FORMAT_LEGACY = 1;
   var DEFAULT_ACCOUNT_CHECKING = 'acct-checking';
@@ -210,6 +210,7 @@
   var lastForecastHeadline = null;
   var forecastScreenOpen = false;
   var balanceSheetAccountId = null;
+  var chaseBalanceDraftInitial = null;
   var viewingOtherTransferEntryId = null;
   var forecastOverrides = {};
   var forecastCountedOneOffs = {};
@@ -1687,6 +1688,14 @@
     });
     if (changed) saveEntries();
     ensureDefaultAccounts();
+    accounts.forEach(function (a) {
+      if (a && a.type === 'credit_card' && a.balanceAsOf && typeof a.currentBalance !== 'number') {
+        delete a.balanceAsOf;
+        if (a.balanceHistory) delete a.balanceHistory;
+        changed = true;
+      }
+    });
+    if (changed) saveAccounts();
     entries.forEach(function (e) {
       if (e.isTransfer && !e.accountId) {
         if (e.importSource === 'card') e.accountId = DEFAULT_ACCOUNT_CHASE;
@@ -6146,6 +6155,24 @@
     showImportDiscardPrompt();
   }
 
+  function bindSheetSwipeDismiss(overlay, onDismiss) {
+    if (!overlay || !onDismiss) return;
+    var grabber = overlay.querySelector('.sheet-grabber');
+    if (!grabber || grabber.__swipeBound) return;
+    grabber.__swipeBound = true;
+    var startY = null;
+    grabber.addEventListener('touchstart', function (ev) {
+      if (!ev.touches || !ev.touches.length) return;
+      startY = ev.touches[0].clientY;
+    }, { passive: true });
+    grabber.addEventListener('touchend', function (ev) {
+      if (startY == null || !ev.changedTouches || !ev.changedTouches.length) return;
+      var dy = ev.changedTouches[0].clientY - startY;
+      startY = null;
+      if (dy > 72) onDismiss();
+    }, { passive: true });
+  }
+
   function renderImportReview() {
     if (!pendingImport) return;
     hideImportDiscardPrompt();
@@ -6893,18 +6920,390 @@
     return accounts[0] || null;
   }
 
+  function getChaseAccount() {
+    var acct = getAccount(DEFAULT_ACCOUNT_CHASE);
+    if (acct && acct.type === 'credit_card') return acct;
+    for (var i = 0; i < accounts.length; i++) {
+      if (accounts[i].type === 'credit_card') return accounts[i];
+    }
+    return null;
+  }
+
+  function cardBalanceAnchorMs(acct) {
+    if (!acct) return null;
+    return accountBalanceAsOfMs(acct);
+  }
+
+  function hasCardBalanceAnchor(acct) {
+    return !!(acct && typeof acct.currentBalance === 'number' && acct.balanceAsOf);
+  }
+
+  function getCardBalanceSnapshot(nowMs) {
+    if (!FC || !FC.computeCardBalanceOwed) return null;
+    var chase = getChaseAccount();
+    if (!hasCardBalanceAnchor(chase)) return null;
+    return FC.computeCardBalanceOwed({
+      anchorAmount: chase.currentBalance,
+      anchorAsOfMs: cardBalanceAnchorMs(chase),
+      entries: entries,
+      chaseId: chase.id,
+      nowMs: nowMs || Date.now()
+    });
+  }
+
+  function formatCardOwedLabel(amount) {
+    if (amount == null || isNaN(amount)) return '—';
+    if (amount < 0) return fmtMoneyDisplay(amount);
+    return fmtMoneyDisplay(amount);
+  }
+
+  function formatCardOwedSignedDelta(delta) {
+    if (delta == null || isNaN(delta) || Math.abs(delta) < 0.005) return 'No change';
+    var sign = delta > 0 ? '+' : '\u2212';
+    return 'Change ' + sign + fmtMoneyDisplay(Math.abs(delta));
+  }
+
+  function formatCardAnchorShort(asOfStr) {
+    if (!asOfStr) return 'Set date';
+    return new Date(asOfStr + 'T12:00:00').toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  }
+
+  function chaseCardPurchaseEntries(chaseId, sinceMs, nowMs) {
+    var out = [];
+    var end = endOfLocalDay(nowMs || Date.now());
+    entries.forEach(function (e) {
+      if (!e || e.accountId !== chaseId) return;
+      if (e.ts < sinceMs || e.ts > end) return;
+      if (!FC || !FC.entryCardOwedDelta) return;
+      if (FC.entryCardOwedDelta(e, chaseId) <= 0) return;
+      if (!entryCountsAsSpending(e)) return;
+      out.push(e);
+    });
+    out.sort(function (a, b) { return b.ts - a.ts; });
+    return out;
+  }
+
+  function chaseCardCreditEntries(chaseId, sinceMs, nowMs) {
+    var out = [];
+    var end = endOfLocalDay(nowMs || Date.now());
+    entries.forEach(function (e) {
+      if (!e || e.accountId !== chaseId) return;
+      if (e.ts < sinceMs || e.ts > end) return;
+      if (!FC || !FC.entryCardOwedDelta) return;
+      if (FC.entryCardOwedDelta(e, chaseId) >= 0) return;
+      out.push(e);
+    });
+    out.sort(function (a, b) { return b.ts - a.ts; });
+    return out;
+  }
+
+  function findCardPaymentPairForCreditEntry(cardEntry) {
+    if (!cardEntry) return null;
+    for (var i = 0; i < transferPairs.length; i++) {
+      var p = transferPairs[i];
+      if (!p || p.unlinked) continue;
+      if (p.entryIds[0] === cardEntry.id || p.entryIds[1] === cardEntry.id) return p;
+    }
+    return null;
+  }
+
+  function closeChaseCardSheet() {
+    var sheet = $('chaseCardSheet');
+    if (sheet) {
+      sheet.classList.remove('show');
+      sheet.setAttribute('aria-hidden', 'true');
+    }
+  }
+
+  function openChaseCardSheet() {
+    var chase = getChaseAccount();
+    if (!chase) return;
+    renderChaseCardSheet(chase);
+    var sheet = $('chaseCardSheet');
+    if (sheet) {
+      sheet.classList.add('show');
+      sheet.setAttribute('aria-hidden', 'false');
+    }
+    if (EI && EI.hydrateUiIcons) EI.hydrateUiIcons(sheet);
+  }
+
+  function renderChaseCardSheet(chase) {
+    var body = $('chaseCardSheetBody');
+    if (!body || !chase) return;
+    var nowMs = Date.now();
+    var snap = getCardBalanceSnapshot(nowMs);
+    var checking = getCheckingAccount();
+    var owed = snap && snap.ok ? snap.owed : null;
+    var html = '';
+    html += '<div class="chase-card-hero">';
+    html += '<button type="button" class="chase-card-set-btn" id="chaseCardSetBalanceBtn">Set balance</button>';
+    html += '<p class="chase-card-hero-label">Balance owed</p>';
+    html += '<p class="chase-card-hero-amt">' + (owed != null ? formatCardOwedLabel(owed) : '—') + '</p>';
+    html += '<p class="chase-card-hero-asof">As of today, ' + escHtml(formatBalanceAsOfLabel(localDateStamp()).replace(/^Today, /, '')) + '</p>';
+    html += '</div>';
+    if (snap && snap.ok) {
+      html += '<div class="chase-card-math">';
+      html += '<div class="chase-card-math-row"><span>Set on ' + escHtml(formatCardAnchorShort(chase.balanceAsOf)) + '</span><span>' + fmtMoneyDisplay(snap.anchorAmount) + '</span></div>';
+      html += '<div class="chase-card-math-row"><span>Purchases</span><span>+' + fmtMoneyDisplay(snap.purchasesTotal).replace(/^\$/, '$') + '</span></div>';
+      html += '<div class="chase-card-math-row is-credit"><span>Payments &amp; credits</span><span>\u2212' + fmtMoneyDisplay(snap.paymentsTotal).replace(/^\$/, '$') + '</span></div>';
+      html += '</div>';
+    } else {
+      html += '<p class="hint">Set your balance owed to match the Chase app. Purchases and payments will keep it up to date.</p>';
+    }
+    var sinceMs = snap && snap.ok ? snap.anchorAsOfMs : 0;
+    var purchases = chaseCardPurchaseEntries(chase.id, sinceMs, nowMs);
+    var credits = chaseCardCreditEntries(chase.id, sinceMs, nowMs);
+    if (purchases.length) {
+      html += '<div class="chase-card-section-label"><span>Purchases · raised it</span><span>Counted as spending</span></div>';
+      purchases.slice(0, 3).forEach(function (e) {
+        var cat = getCat(e.categoryId);
+        html += '<button type="button" class="chase-card-row-btn" data-chase-entry="' + escHtml(e.id) + '">';
+        html += iconBadge(cat || { icon: 'receipt', color: '#878e96' }, 'sm');
+        html += '<div class="chase-card-row-main"><p class="chase-card-row-title">' + escHtml((e.note || 'Purchase').trim()) + '</p>';
+        html += '<p class="chase-card-row-sub">' + escHtml(formatForecastWeekdayDate(e.ts)) + ' · ' + escHtml(cat ? cat.name : 'Other') + '</p></div>';
+        html += '<span class="chase-card-row-amt">+' + fmtMoneyDisplay(e.amount).replace(/^\$/, '$') + '</span>';
+        html += '<span class="chevron" aria-hidden="true">›</span></button>';
+      });
+      if (purchases.length > 3) {
+        html += '<button type="button" class="chase-card-all-link" id="chaseCardAllPurchasesBtn">All ' + purchases.length + ' purchases <span style="float:right;font-weight:600;color:var(--text)">+' + fmtMoneyDisplay(snap ? snap.purchasesTotal : 0).replace(/^\$/, '$') + '</span></button>';
+      }
+    }
+    if (credits.length || (snap && snap.ok)) {
+      html += '<div class="chase-card-section-label"><span>Payments &amp; credits · lowered it</span><span></span></div>';
+      credits.slice(0, 5).forEach(function (e) {
+        var pair = findCardPaymentPairForCreditEntry(e);
+        var isPay = pair && FC && FC.isCardPaymentCreditEntry && FC.isCardPaymentCreditEntry(e);
+        var cat = getCat(e.categoryId);
+        var title = (e.note || 'Credit').trim();
+        if (isPay && checking) title = 'Paid from ' + checking.name;
+        html += '<button type="button" class="chase-card-row-btn" data-chase-credit="' + escHtml(e.id) + '"' + (pair ? ' data-chase-pair="' + escHtml(pair.id) + '"' : '') + '>';
+        html += iconBadge(cat || { icon: 'receipt', color: '#34C77B' }, 'sm');
+        html += '<div class="chase-card-row-main"><p class="chase-card-row-title">' + escHtml(title) + '</p>';
+        html += '<p class="chase-card-row-sub">' + escHtml(formatForecastWeekdayDate(e.ts)) + (isPay ? '' : ' · ' + escHtml(cat ? cat.name : 'Refund')) + '</p>';
+        if (isPay) html += '<span class="chase-neutral-tag">Not spending</span>';
+        html += '</div>';
+        html += '<span class="chase-card-row-amt is-credit">\u2212' + fmtMoneyDisplay(Math.abs(FC.entryCardOwedDelta(e, chase.id))).replace(/^\$/, '$') + '</span>';
+        html += '<span class="chevron" aria-hidden="true">›</span></button>';
+      });
+      var cardSched = null;
+      if (lastForecastSim && lastForecastSim.schedules) {
+        lastForecastSim.schedules.forEach(function (s) {
+          if (s && s.kind === 'card-payment') cardSched = s;
+        });
+      }
+      if (!cardSched && FC) {
+        var payloadNext = buildForecastPayload(forecastChartDays);
+        if (payloadNext) {
+          var built = FC.buildScheduledEvents(payloadNext);
+          (built.schedules || []).forEach(function (s) {
+            if (s && s.kind === 'card-payment') cardSched = s;
+          });
+        }
+      }
+      var nextPay = null;
+      if (cardSched && FC && FC.nextProjectedOccurrence) {
+        nextPay = FC.nextProjectedOccurrence(
+          cardSched,
+          FC.startOfDay(nowMs),
+          entries,
+          checking ? checking.id : DEFAULT_ACCOUNT_CHECKING,
+          FC.addDays(nowMs, 450)
+        );
+      }
+      if (nextPay) {
+        html += '<button type="button" class="chase-card-row-btn" id="chaseCardNextPaymentBtn">';
+        html += '<span class="account-mini-icon" style="background:var(--raised);color:var(--text-dim)" aria-hidden="true">' + uiIcon('ui-calendar', 'sm') + '</span>';
+        html += '<div class="chase-card-row-main"><p class="chase-card-row-title">Next payment</p>';
+        html += '<p class="chase-card-row-sub">' + escHtml(formatForecastWeekdayDate(nextPay.ts)) + ' · forecast</p></div>';
+        html += '<span class="chase-card-row-amt is-forecast">~' + fmtMoneyDisplay(nextPay.amount).replace(/^\$/, '$') + '</span>';
+        html += '<span class="chevron" aria-hidden="true">›</span></button>';
+      }
+    }
+    body.innerHTML = html;
+    var setBtn = document.getElementById('chaseCardSetBalanceBtn');
+    if (setBtn) setBtn.addEventListener('click', function () {
+      closeChaseCardSheet();
+      openChaseBalanceSheet();
+    });
+    var allBtn = document.getElementById('chaseCardAllPurchasesBtn');
+    if (allBtn) allBtn.addEventListener('click', function () {
+      closeChaseCardSheet();
+      openChasePurchasesActivity(chase.id, sinceMs);
+    });
+    var nextBtn = document.getElementById('chaseCardNextPaymentBtn');
+    if (nextBtn) nextBtn.addEventListener('click', function () {
+      closeChaseCardSheet();
+      openForecastFromChase();
+    });
+    Array.prototype.forEach.call(body.querySelectorAll('[data-chase-entry]'), function (btn) {
+      btn.addEventListener('click', function () {
+        closeChaseCardSheet();
+        openEntryEditor(btn.getAttribute('data-chase-entry'));
+      });
+    });
+    Array.prototype.forEach.call(body.querySelectorAll('[data-chase-credit]'), function (btn) {
+      btn.addEventListener('click', function () {
+        var pairId = btn.getAttribute('data-chase-pair');
+        closeChaseCardSheet();
+        if (pairId) {
+          switchTab('history');
+          openTransferDetail(pairId);
+        } else {
+          openEntryEditor(btn.getAttribute('data-chase-credit'));
+        }
+      });
+    });
+    refreshIconObservers(body);
+  }
+
+  function openChasePurchasesActivity(chaseId, sinceMs) {
+    uiState.activityAccountId = chaseId;
+    uiState.activityRange = 'all';
+    saveUI();
+    switchTab('history');
+    renderAll();
+  }
+
+  function openForecastFromChase() {
+    openForecastScreen();
+  }
+
+  function setChaseBalanceAmountError(msg) {
+    var el = $('chaseBalanceAmountError');
+    if (!el) return;
+    el.textContent = msg || '';
+    el.hidden = !msg;
+  }
+
+  function chaseBalanceSheetDirty() {
+    if (!chaseBalanceDraftInitial) return false;
+    var inp = $('chaseBalanceAmountInput');
+    var val = parseMoneyInput(inp && inp.value);
+    var asOf = normalizeBalanceAsOfDate(($('chaseBalanceAsOfInput') && $('chaseBalanceAsOfInput').value) || '');
+    if (isNaN(val) && chaseBalanceDraftInitial.amount == null) return false;
+    if (isNaN(val)) return true;
+    return val !== chaseBalanceDraftInitial.amount || asOf !== chaseBalanceDraftInitial.asOf;
+  }
+
+  function updateChaseBalanceChangeLine() {
+    var line = $('chaseBalanceChangeLine');
+    if (!line) return;
+    var snap = getCardBalanceSnapshot(Date.now());
+    var nowAmt = snap && snap.ok ? snap.owed : null;
+    var inp = $('chaseBalanceAmountInput');
+    var val = parseMoneyInput(inp && inp.value);
+    if (nowAmt == null || isNaN(val)) {
+      line.hidden = true;
+      return;
+    }
+    line.hidden = false;
+    if ($('chaseBalanceNowLine')) $('chaseBalanceNowLine').textContent = 'In the app now: ' + formatCardOwedLabel(nowAmt);
+    if ($('chaseBalanceDeltaLine')) $('chaseBalanceDeltaLine').textContent = formatCardOwedSignedDelta(val - nowAmt);
+  }
+
+  function hideChaseBalanceDiscardPrompt() {
+    var scrim = $('chaseBalanceDiscardScrim');
+    if (scrim) {
+      scrim.classList.remove('show');
+      scrim.setAttribute('aria-hidden', 'true');
+    }
+  }
+
+  function showChaseBalanceDiscardPrompt() {
+    var scrim = $('chaseBalanceDiscardScrim');
+    if (scrim) {
+      scrim.classList.add('show');
+      scrim.setAttribute('aria-hidden', 'false');
+    }
+  }
+
+  function requestDismissChaseBalanceSheet() {
+    if (!chaseBalanceSheetDirty()) {
+      closeChaseBalanceSheet();
+      return;
+    }
+    showChaseBalanceDiscardPrompt();
+  }
+
+  function closeChaseBalanceSheet() {
+    hideChaseBalanceDiscardPrompt();
+    chaseBalanceDraftInitial = null;
+    setChaseBalanceAmountError('');
+    var sheet = $('chaseBalanceSheet');
+    if (sheet) {
+      sheet.classList.remove('show');
+      sheet.setAttribute('aria-hidden', 'true');
+    }
+  }
+
+  function openChaseBalanceSheet() {
+    var chase = getChaseAccount();
+    if (!chase) return;
+    var snap = getCardBalanceSnapshot(Date.now());
+    var startVal = snap && snap.ok ? snap.owed : (typeof chase.currentBalance === 'number' ? chase.currentBalance : null);
+    var asOf = normalizeBalanceAsOfDate(chase.balanceAsOf || localDateStamp());
+    chaseBalanceDraftInitial = { amount: startVal, asOf: asOf };
+    var acctRow = $('chaseBalanceSheetAccount');
+    if (acctRow) {
+      var checking = getCheckingAccount();
+      var sub = 'Credit card';
+      if (checking) sub += ' · paid from ' + checking.name;
+      acctRow.innerHTML = accountMiniIconHTML(chase) + '<div><div class="settings-account-name">' + escHtml(chase.name) + '</div><div class="settings-account-sub">' + escHtml(sub) + '</div></div>';
+    }
+    var inp = $('chaseBalanceAmountInput');
+    if (inp) inp.value = startVal != null && !isNaN(startVal) ? fmtMoneyDisplay(startVal) : '';
+    if ($('chaseBalanceAsOfInput')) $('chaseBalanceAsOfInput').value = asOf;
+    if ($('chaseBalanceAsOfPreview')) $('chaseBalanceAsOfPreview').textContent = formatBalanceAsOfLabel(asOf);
+    updateChaseBalanceChangeLine();
+    var sheet = $('chaseBalanceSheet');
+    if (sheet) {
+      sheet.classList.add('show');
+      sheet.setAttribute('aria-hidden', 'false');
+    }
+    if (EI && EI.hydrateUiIcons) EI.hydrateUiIcons(sheet);
+    if (inp && inp.focus) {
+      try { inp.focus(); } catch (e) {}
+    }
+  }
+
+  function saveChaseBalanceSheet() {
+    var chase = getChaseAccount();
+    if (!chase) return;
+    var inp = $('chaseBalanceAmountInput');
+    if (inp && inp.blur) inp.blur();
+    var val = parseMoneyInput(inp && inp.value);
+    if (isNaN(val)) {
+      setChaseBalanceAmountError('Enter a valid balance (e.g. 1284.17, 1,284.17, or -50).');
+      return;
+    }
+    var asOf = normalizeBalanceAsOfDate(($('chaseBalanceAsOfInput') && $('chaseBalanceAsOfInput').value) || '');
+    if (hasCardBalanceAnchor(chase)) {
+      chase.balanceHistory = { amount: chase.currentBalance, asOf: chase.balanceAsOf };
+    }
+    chase.currentBalance = val;
+    chase.balanceAsOf = asOf;
+    saveAccounts();
+    closeChaseBalanceSheet();
+    renderSettingsAccounts();
+    renderHomeForecastCard();
+    if (forecastScreenOpen) renderForecastScreen();
+    toast('Balance saved');
+  }
+
   function buildForecastPayload(chartDays) {
     if (!FC) return null;
     var checking = getCheckingAccount();
     if (!checking) return null;
     var asOfMs = accountBalanceAsOfMs(checking);
     var nowMs = Date.now();
+    var cardSnap = getCardBalanceSnapshot(nowMs);
     return {
       nowMs: nowMs,
       checkingId: checking.id,
       chaseId: DEFAULT_ACCOUNT_CHASE,
       balance: typeof checking.currentBalance === 'number' ? checking.currentBalance : null,
       balanceAsOfMs: asOfMs,
+      cardBalanceOwed: cardSnap && cardSnap.ok ? cardSnap.owed : null,
       cushion: getForecastCushion(),
       entries: entries,
       recurringItems: recurringItems,
@@ -7448,7 +7847,8 @@
       countedOneOffs: forecastCountedOneOffsList(),
       chartDays: forecastChartDays,
       maxLookaheadDays: 365,
-      cushion: getForecastCushion()
+      cushion: getForecastCushion(),
+      cardBalanceOwed: payload.cardBalanceOwed
     });
     if (sim.schedules) lastForecastSchedules = sim.schedules;
     lastForecastSim = sim;
@@ -7473,7 +7873,8 @@
       recurringItems: recurringItems,
       overrides: forecastOverrides,
       countedOneOffs: forecastCountedOneOffsList(),
-      maxLookaheadDays: 365
+      maxLookaheadDays: 365,
+      cardBalanceOwed: payload.cardBalanceOwed
     });
     lastForecastBreakdown = breakdown.ok ? breakdown : null;
     if (breakdown.ok) renderForecastBreakdownCard(breakdown, result, sim.schedules);
@@ -7741,7 +8142,9 @@
       } else if (u.kind === 'card-payment') {
         iconBg = '#748FFC22'; iconColor = '#748FFC';
         iconSvg = '<svg width="18" height="18" viewBox="0 0 18 18" fill="none"><rect x="2" y="4" width="14" height="10" rx="1.5" stroke="currentColor"/><path d="M2 7h14" stroke="currentColor"/></svg>';
-        sub += ' \u00B7 Card payment';
+        var cardSnapUp = getCardBalanceSnapshot(Date.now());
+        if (cardSnapUp && cardSnapUp.ok) sub += ' \u00B7 Balance owed today';
+        else sub += ' \u00B7 Card payment';
       } else if (u.kind === 'transfer-other') {
         iconBg = 'var(--raised)'; iconColor = 'var(--text-secondary)';
         iconSvg = '<svg width="18" height="18" viewBox="0 0 18 18" fill="none"><path d="M3 7h8M9 5l3 2-3 2M15 11H7M9 13l-3-2 3-2" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>';
@@ -7769,6 +8172,7 @@
       html += '<button type="button" class="' + rowClass + '"' + tap + '>';
       html += '<div class="forecast-up-icon" style="background:' + iconBg + ';color:' + iconColor + '">' + iconSvg + '</div>';
       html += '<div><p class="forecast-up-title">' + escHtml(u.label) + '</p><p class="forecast-up-sub">' + sub + '</p>';
+      if (u.kind === 'card-payment') html += '<span class="forecast-up-not-spending-chip">Not spending</span>';
       if (u.nominalTs && u.nominalTs !== u.ts) html += forecastMovedFromHTML(u.nominalTs, u.ts);
       html += '</div>';
       html += '<div class="forecast-up-amt-col"><div class="' + amtClass + '">' + amtTxt + '</div>';
@@ -7905,20 +8309,47 @@
     if (!el) return;
     ensureDefaultAccounts();
     var html = '';
+    var checking = getCheckingAccount();
+    var chaseSnap = getCardBalanceSnapshot(Date.now());
+    var showFoot = false;
     accounts.forEach(function (a) {
-      html += '<div class="settings-account-row">';
-      html += '<div class="settings-account-main">' + accountMiniIconHTML(a) + '<div><div class="settings-account-name">' + escHtml(a.name) + '</div>';
-      html += '<div class="settings-account-sub">' + (a.type === 'bank' ? 'Bank account' : 'Credit card') + '</div></div></div>';
       if (a.type === 'bank') {
+        html += '<div class="settings-account-row">';
+        html += '<div class="settings-account-main">' + accountMiniIconHTML(a) + '<div><div class="settings-account-name">' + escHtml(a.name) + '</div>';
+        html += '<div class="settings-account-sub">Bank account</div></div></div>';
         html += '<button type="button" class="settings-account-action" data-balance-acct="' + escHtml(a.id) + '">Balance</button>';
-      } else {
-        html += '<span class="settings-account-sub">—</span>';
+        html += '</div>';
+      } else if (a.type === 'credit_card') {
+        showFoot = true;
+        var sub = 'Credit card';
+        if (checking) sub += ' · paid from ' + checking.name;
+        var owed = chaseSnap && chaseSnap.ok ? chaseSnap.owed : null;
+        var owedLabel = owed != null
+          ? ('Chase card, balance owed ' + formatCardOwedLabel(owed) + ' as of today')
+          : 'Chase card';
+        html += '<button type="button" class="settings-account-row settings-account-row-btn" data-open-chase-card aria-label="' + escHtml(owedLabel) + '">';
+        html += '<div class="settings-account-main">' + accountMiniIconHTML(a) + '<div><div class="settings-account-name">' + escHtml(a.name) + '</div>';
+        html += '<div class="settings-account-sub">' + escHtml(sub) + '</div></div></div>';
+        if (owed != null) {
+          html += '<div class="settings-account-owed"><span class="settings-account-owed-amt">' + formatCardOwedLabel(owed) + '</span>';
+          html += '<span class="settings-account-owed-label">owed</span></div>';
+        } else {
+          html += '<span class="settings-account-sub">Set balance</span>';
+        }
+        html += '<span class="chevron" aria-hidden="true">›</span></button>';
       }
-      html += '</div>';
     });
+    if (showFoot) {
+      html += '<p class="settings-accounts-foot">Balance owed is what you owe Chase. Card purchases raise it. A payment from Checking lowers it, and the payment isn&rsquo;t spending.</p>';
+    }
     el.innerHTML = html;
+    var foot = $('settingsAccountsFoot');
+    if (foot) foot.hidden = true;
     Array.prototype.forEach.call(el.querySelectorAll('[data-balance-acct]'), function (btn) {
       btn.addEventListener('click', function () { openBalanceSheet(btn.dataset.balanceAcct); });
+    });
+    Array.prototype.forEach.call(el.querySelectorAll('[data-open-chase-card]'), function (btn) {
+      btn.addEventListener('click', function () { openChaseCardSheet(); });
     });
   }
 
@@ -8181,6 +8612,48 @@
   });
   if ($('balanceSheetClose')) $('balanceSheetClose').addEventListener('click', closeBalanceSheet);
   if ($('balanceSaveBtn')) $('balanceSaveBtn').addEventListener('click', saveBalanceSheet);
+  if ($('chaseCardSheetClose')) $('chaseCardSheetClose').addEventListener('click', closeChaseCardSheet);
+  if ($('chaseBalanceCancelBtn')) $('chaseBalanceCancelBtn').addEventListener('click', requestDismissChaseBalanceSheet);
+  if ($('chaseBalanceSaveBtn')) $('chaseBalanceSaveBtn').addEventListener('click', saveChaseBalanceSheet);
+  if ($('chaseBalanceDiscardKeepBtn')) $('chaseBalanceDiscardKeepBtn').addEventListener('click', hideChaseBalanceDiscardPrompt);
+  if ($('chaseBalanceDiscardConfirmBtn')) {
+    $('chaseBalanceDiscardConfirmBtn').addEventListener('click', function () {
+      hideChaseBalanceDiscardPrompt();
+      closeChaseBalanceSheet();
+    });
+  }
+  if ($('chaseBalanceDiscardScrim')) {
+    $('chaseBalanceDiscardScrim').addEventListener('click', function (e) {
+      if (e.target === $('chaseBalanceDiscardScrim')) hideChaseBalanceDiscardPrompt();
+    });
+  }
+  if ($('chaseCardSheet')) {
+    $('chaseCardSheet').addEventListener('click', function (e) {
+      if (e.target === $('chaseCardSheet')) closeChaseCardSheet();
+    });
+    bindSheetSwipeDismiss($('chaseCardSheet'), closeChaseCardSheet);
+  }
+  if ($('chaseBalanceSheet')) {
+    $('chaseBalanceSheet').addEventListener('click', function (e) {
+      if (e.target === $('chaseBalanceSheet')) requestDismissChaseBalanceSheet();
+    });
+    bindSheetSwipeDismiss($('chaseBalanceSheet'), requestDismissChaseBalanceSheet);
+  }
+  if ($('chaseBalanceAmountInput')) {
+    $('chaseBalanceAmountInput').addEventListener('input', function () {
+      setChaseBalanceAmountError('');
+      updateChaseBalanceChangeLine();
+    });
+  }
+  if ($('chaseBalanceAsOfRow')) $('chaseBalanceAsOfRow').addEventListener('click', function () {
+    var inp = $('chaseBalanceAsOfInput');
+    if (inp && inp.showPicker) try { inp.showPicker(); } catch (e) { inp.focus(); }
+    else if (inp) inp.focus();
+  });
+  if ($('chaseBalanceAsOfInput')) $('chaseBalanceAsOfInput').addEventListener('change', function () {
+    if ($('chaseBalanceAsOfPreview')) $('chaseBalanceAsOfPreview').textContent = formatBalanceAsOfLabel($('chaseBalanceAsOfInput').value);
+    updateChaseBalanceChangeLine();
+  });
   if ($('balanceAmountInput')) {
     $('balanceAmountInput').addEventListener('input', function () { setBalanceAmountError(''); });
     $('balanceAmountInput').addEventListener('keydown', function (ev) {
@@ -8769,6 +9242,15 @@
     openBalanceSheet: openBalanceSheet,
     saveBalanceSheet: saveBalanceSheet,
     closeBalanceSheet: closeBalanceSheet,
+    getChaseAccount: getChaseAccount,
+    getCardBalanceSnapshot: getCardBalanceSnapshot,
+    hasCardBalanceAnchor: hasCardBalanceAnchor,
+    saveChaseBalanceSheet: saveChaseBalanceSheet,
+    openChaseCardSheet: openChaseCardSheet,
+    closeChaseCardSheet: closeChaseCardSheet,
+    openChaseBalanceSheet: openChaseBalanceSheet,
+    closeChaseBalanceSheet: closeChaseBalanceSheet,
+    chaseBalanceSheetDirty: chaseBalanceSheetDirty,
     getState: function () {
       return {
         entries: entries,

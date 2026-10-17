@@ -142,6 +142,70 @@
     return Math.round((balance + net) * 100) / 100;
   }
 
+  var CARD_ISSUER_RE = /(chase|amex|americanexpress|discover|capital\s*one|citi|citibank|barclays|wells\s*fargo|bank\s*of\s*america|usbank|synchrony|apple\s*card)/i;
+  var CARD_PAYMENT_TYPES = { payment: true, 'online payment': true };
+
+  function isCardPaymentCreditEntry(e) {
+    if (!e || !e.isTransfer) return false;
+    var n = normText(e.note || '');
+    if (CARD_PAYMENT_TYPES[normText(e.typeVal || '')]) return true;
+    if (/\bpayment\b/.test(n) && (/\bthank\b/.test(n) || /\byou\b/.test(n))) return true;
+    if (CARD_ISSUER_RE.test(n) && /\bpayment\b/.test(n)) return true;
+    return false;
+  }
+
+  function entryCardOwedDelta(e, chaseId) {
+    if (!e || e.accountId !== chaseId) return 0;
+    if (e.excluded) return 0;
+    var amt = typeof e.amount === 'number' ? e.amount : 0;
+    if (e.isTransfer) {
+      if (isCardPaymentCreditEntry(e)) return -Math.abs(amt);
+      return 0;
+    }
+    if (isDepositEntry(e)) return -Math.abs(amt);
+    return amt;
+  }
+
+  function computeCardBalanceOwed(opts) {
+    opts = opts || {};
+    var anchor = opts.anchorAmount;
+    if (anchor == null || isNaN(anchor)) return { ok: false, reason: 'no-anchor' };
+    var asOf = startOfDay(opts.anchorAsOfMs);
+    if (!validMs(asOf)) asOf = startOfDay(opts.nowMs || Date.now());
+    var nowMs = startOfDay(opts.nowMs || Date.now());
+    if (!validMs(nowMs)) return { ok: false, reason: 'bad-now' };
+    var chaseId = opts.chaseId;
+    var purchases = 0;
+    var payments = 0;
+    var net = 0;
+    (opts.entries || []).forEach(function (e) {
+      if (!e || e.accountId !== chaseId) return;
+      if (!validMs(e.ts)) return;
+      var day = startOfDay(e.ts);
+      if (!validMs(day) || day <= asOf || day > nowMs) return;
+      var d = entryCardOwedDelta(e, chaseId);
+      net += d;
+      if (d > 0) purchases += d;
+      else if (d < 0) payments += -d;
+    });
+    return {
+      ok: true,
+      owed: roundMoney(anchor + net),
+      anchorAmount: roundMoney(anchor),
+      anchorAsOfMs: asOf,
+      purchasesTotal: roundMoney(purchases),
+      paymentsTotal: roundMoney(payments)
+    };
+  }
+
+  function applyBalanceOwedToCardSchedule(sched, cardBalanceOwed) {
+    if (!sched || cardBalanceOwed == null || isNaN(cardBalanceOwed)) return sched;
+    sched.amount = roundMoney(Math.max(0, cardBalanceOwed));
+    sched.inferenceDetail = 'Balance owed today';
+    sched.fromBalanceOwed = true;
+    return sched;
+  }
+
   function descriptionKey(note) {
     var c = compactText(note);
     if (c.length < 4) return c;
@@ -1340,6 +1404,7 @@
 
     var cardSched = detectCardPaymentSchedule(input.entries, input.transferPairs, checkingId);
     if (cardSched) {
+      applyBalanceOwedToCardSchedule(cardSched, input.cardBalanceOwed);
       schedules.push(cardSched);
       events = events.concat(expandSchedule(cardSched, nowMs, untilMs, input.entries, checkingId));
     } else {
@@ -1356,6 +1421,7 @@
           inferenceDetail: 'Estimated from recent card spend',
           lastTs: cardEst.lastTs
         };
+        applyBalanceOwedToCardSchedule(fallback, input.cardBalanceOwed);
         schedules.push(fallback);
         events = events.concat(expandSchedule(fallback, nowMs, untilMs, input.entries, checkingId));
       }
@@ -2056,7 +2122,8 @@
       cushion: input.cushion,
       dailySpend: input.dailySpend,
       overrides: input.overrides,
-      countedOneOffs: input.countedOneOffs
+      countedOneOffs: input.countedOneOffs,
+      cardBalanceOwed: input.cardBalanceOwed
     });
     if (!sim.ok) return sim;
     var incomeSince = addDays(nowMs, -400);
@@ -2097,6 +2164,9 @@
     isDepositEntry: isDepositEntry,
     entryCheckingDelta: entryCheckingDelta,
     projectedStartingBalance: projectedStartingBalance,
+    computeCardBalanceOwed: computeCardBalanceOwed,
+    entryCardOwedDelta: entryCardOwedDelta,
+    isCardPaymentCreditEntry: isCardPaymentCreditEntry,
     detectRecurrences: detectRecurrences,
     detectRecurringSchedules: detectRecurringSchedules,
     detectCardPaymentSchedule: detectCardPaymentSchedule,
