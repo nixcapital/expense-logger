@@ -174,7 +174,8 @@ async function run() {
   results.push(['bank two card payments transfer', bankBuckets.transfer === 2, 'transfers=' + bankBuckets.transfer]);
   const rulesAfterBank = await page.evaluate(() => JSON.parse(localStorage.getItem('expenseLogger.importRules.v1') || '[]').length);
   results.push(['no auto rules on import', rulesAfterBank === 0, 'rules=' + rulesAfterBank]);
-  await page.locator('.import-row').filter({ hasText: 'VENMO' }).locator('.import-cat-select').selectOption('dining');
+  await page.locator('.import-row').filter({ hasText: 'VENMO' }).locator('.import-row-hit').click();
+  await page.locator('.import-row').filter({ hasText: 'VENMO' }).locator('.import-cat-chip[data-cat="dining"]').click();
   await confirmImport(page);
   const rulesListText = await page.locator('#importRulesList').innerText();
   results.push(['import rules list refreshes', !/No import rules yet/i.test(rulesListText)]);
@@ -379,7 +380,8 @@ async function run() {
   await page.click('button[data-tab="settings"]');
   await importFile(page, 'sample-card.csv');
   await page.waitForSelector('#importModal.show');
-  await page.locator('.import-row').first().locator('.import-cat-select').selectOption('groceries');
+  await page.locator('.import-row-hit').first().click();
+  await page.locator('.import-cat-chip[data-cat="groceries"]').first().click();
   await page.locator('#importModal').click({ position: { x: 20, y: 20 } });
   await page.waitForSelector('#importReviewDiscardScrim.show');
   const discardTitle = await page.locator('#importDiscardTitle').innerText();

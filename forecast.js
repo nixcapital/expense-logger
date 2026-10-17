@@ -456,6 +456,30 @@
     return merchantKey + '|a' + Math.round(amount * 100);
   }
 
+  /** Stable key for overrides — survives typical amount drift on recurring items. */
+  function scheduleOverrideKey(itemKey) {
+    if (!itemKey || typeof itemKey !== 'string') return itemKey;
+    if (itemKey.indexOf('card-payment|') === 0) return itemKey;
+    if (itemKey.indexOf('oneoff|') === 0) return itemKey;
+    if (itemKey.indexOf('recurring-') === 0) return itemKey;
+    var idx = itemKey.indexOf('|a');
+    if (idx > 0) return itemKey.slice(0, idx);
+    return itemKey;
+  }
+
+  function itemKeysMatchForOverride(evItemKey, overrideKey) {
+    if (!evItemKey || !overrideKey) return false;
+    if (evItemKey === overrideKey) return true;
+    return scheduleOverrideKey(evItemKey) === scheduleOverrideKey(overrideKey);
+  }
+
+  function shiftEventToTargetDom(origTs, targetTs) {
+    if (!validMs(origTs) || !validMs(targetTs)) return origTs;
+    var o = new Date(origTs);
+    var t = new Date(targetTs);
+    return dateMs(o.getFullYear(), o.getMonth(), t.getDate());
+  }
+
   function entryMatchesScheduleRow(e, schedule) {
     var mk = descriptionKey(e.note || '');
     if (schedule.merchantKey && mk !== schedule.merchantKey) return false;
@@ -1198,12 +1222,22 @@
   }
 
   function eventMatchesOverrideOccurrence(ev, itemKey, applyFromTs) {
-    if (!ev || ev.itemKey !== itemKey || typeof applyFromTs !== 'number') return false;
+    if (!ev || !itemKeysMatchForOverride(ev.itemKey, itemKey)) return false;
+    if (typeof applyFromTs !== 'number') return true;
     var fromTs = startOfDay(applyFromTs);
     if (!validMs(fromTs)) return false;
     var evTs = startOfDay(ev.ts);
     if (validMs(evTs) && evTs === fromTs) return true;
     if (validMs(ev.nominalTs) && startOfDay(ev.nominalTs) === fromTs) return true;
+    return false;
+  }
+
+  function overrideSkipsOccurrence(o, applyFromTs) {
+    if (!o || !o.skipped || typeof applyFromTs !== 'number') return false;
+    var fromTs = startOfDay(applyFromTs);
+    for (var i = 0; i < o.skipped.length; i++) {
+      if (startOfDay(o.skipped[i]) === fromTs) return true;
+    }
     return false;
   }
 
@@ -1225,29 +1259,56 @@
       var o = overrides[key];
       if (!o) return;
       if (typeof o.applyFromTs === 'number' && forecastOverrideIsExpired(o, afterMs)) return;
+      var storageKey = scheduleOverrideKey(key);
+      if (o.scope === 'always') {
+        for (var ai = 0; ai < out.length; ai++) {
+          if (!itemKeysMatchForOverride(out[ai].itemKey, storageKey)) continue;
+          if (out[ai].ts <= afterMs) continue;
+          if (typeof o.amount === 'number') out[ai].amount = o.amount;
+          if (typeof o.nextTs === 'number') {
+            var shifted = shiftEventToTargetDom(out[ai].nominalTs || out[ai].ts, o.nextTs);
+            out[ai].ts = startOfDay(shifted);
+            if (validMs(out[ai].nominalTs)) out[ai].nominalTs = out[ai].ts;
+          }
+          out[ai].forecastEdited = true;
+        }
+        return;
+      }
+      if (typeof o.applyFromTs === 'number' && overrideSkipsOccurrence(o, o.applyFromTs)) {
+        for (var si = out.length - 1; si >= 0; si--) {
+          if (eventMatchesOverrideOccurrence(out[si], storageKey, o.applyFromTs)) out.splice(si, 1);
+        }
+        return;
+      }
       var idx = -1;
       if (typeof o.applyFromTs === 'number') {
         for (var j = 0; j < out.length; j++) {
-          if (eventMatchesOverrideOccurrence(out[j], key, o.applyFromTs)) { idx = j; break; }
+          if (eventMatchesOverrideOccurrence(out[j], storageKey, o.applyFromTs)) { idx = j; break; }
         }
       } else {
         for (var i = 0; i < out.length; i++) {
-          if (out[i].itemKey === key && out[i].ts > afterMs) { idx = i; break; }
+          if (itemKeysMatchForOverride(out[i].itemKey, storageKey) && out[i].ts > afterMs) { idx = i; break; }
         }
       }
       if (idx >= 0) {
         if (typeof o.amount === 'number') out[idx].amount = o.amount;
-        if (typeof o.nextTs === 'number') out[idx].ts = startOfDay(o.nextTs);
+        if (typeof o.nextTs === 'number') {
+          var prevNom = out[idx].nominalTs || out[idx].ts;
+          out[idx].ts = startOfDay(o.nextTs);
+          if (validMs(prevNom) && startOfDay(prevNom) !== startOfDay(o.nextTs)) out[idx].nominalTs = prevNom;
+        }
+        out[idx].forecastEdited = true;
       } else if (typeof o.applyFromTs !== 'number' && typeof o.nextTs === 'number' && o.nextTs > afterMs) {
         out.push({
           ts: startOfDay(o.nextTs),
           amount: typeof o.amount === 'number' ? o.amount : 0,
           kind: o.kind || 'outflow',
           inflow: o.kind === 'inflow',
-          label: o.label || key,
+          label: o.label || storageKey,
           categoryId: o.categoryId || null,
           itemKey: key,
-          recurringKey: key
+          recurringKey: storageKey,
+          forecastEdited: true
         });
       }
     });
@@ -2174,6 +2235,8 @@
     pickScheduleClusters: pickScheduleClusters,
     paymentPostedInCycle: paymentPostedInCycle,
     scheduleItemKey: scheduleItemKey,
+    scheduleOverrideKey: scheduleOverrideKey,
+    itemKeysMatchForOverride: itemKeysMatchForOverride,
     isP2PNote: isP2PNote,
     isBusinessDay: isBusinessDay,
     isBankHoliday: isBankHoliday,

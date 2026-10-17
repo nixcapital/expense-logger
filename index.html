@@ -13,8 +13,8 @@
 <link rel="manifest" href="manifest.json">
 <link rel="icon" href="icon-192.png">
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
-<link rel="stylesheet" href="styles.css?v=1.8.0">
-<link rel="stylesheet" href="icon-animations.css?v=1.8.0">
+<link rel="stylesheet" href="styles.css?v=1.9.0">
+<link rel="stylesheet" href="icon-animations.css?v=1.9.0">
 <title>Expense Logger</title>
 </head>
 <body>
@@ -603,11 +603,11 @@
 
 <!-- Modal: edit expense -->
 <div class="modal-overlay sheet" id="receiptModal">
-  <div class="modal sheet-modal modal-wide">
+  <div class="modal sheet-modal modal-wide edit-entry-sheet">
     <div class="sheet-grabber" aria-hidden="true"></div>
     <div class="sheet-header">
       <button type="button" class="link-btn sheet-header-action" id="receiptModalClose">Cancel</button>
-      <h3>Edit expense</h3>
+      <h3 id="editSheetTitle">Edit expense</h3>
       <button type="button" class="link-btn sheet-header-action sheet-header-trailing" id="editSaveBtn">Save</button>
     </div>
     <div class="field">
@@ -617,9 +617,31 @@
         <input type="number" id="editAmount" inputmode="decimal" step="0.01" min="0" placeholder="0.00">
       </div>
     </div>
+    <div class="field" id="editTypeField">
+      <label>Type</label>
+      <div class="seg-control import-xfer-seg import-xfer-seg--4 edit-type-seg" role="group" aria-label="Entry type" id="editTypeSeg">
+        <button type="button" class="seg-btn is-active" data-edit-type="expense">Expense</button>
+        <button type="button" class="seg-btn" data-edit-type="income">Income</button>
+        <button type="button" class="seg-btn" data-edit-type="transfer">Transfer</button>
+        <button type="button" class="seg-btn" data-edit-type="other">Other</button>
+      </div>
+      <div class="edit-type-info callout-info" id="editTransferInfo" hidden>
+        <span class="hint-info-icon" aria-hidden="true"><svg width="16" height="16" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6.25" stroke="currentColor"/><path d="M8 7v4M8 5.2h.01" stroke="currentColor" stroke-width="1.25" stroke-linecap="round"/></svg></span>
+        <span id="editTransferInfoText"></span>
+      </div>
+      <label class="edit-remember-row" id="editRememberRow" hidden>
+        <span class="edit-remember-copy">
+          <span class="edit-remember-title">Remember for future imports</span>
+          <span class="edit-remember-sub" id="editRememberSub"></span>
+        </span>
+        <input type="checkbox" id="editRememberImports" class="toggle-switch-input">
+      </label>
+    </div>
     <div class="field">
-      <label for="editCategory">Category</label>
-      <select id="editCategory"></select>
+      <label id="editCategoryLabel">Category</label>
+      <div class="cats edit-cats" id="editCategoryGrid" role="radiogroup" aria-labelledby="editCategoryLabel"></div>
+      <p class="hint edit-category-meta" id="editCategoryMeta" hidden></p>
+      <select id="editCategory" class="visually-hidden-input" tabindex="-1" aria-hidden="true"></select>
     </div>
     <div class="field">
       <label for="editDate">Date</label>
@@ -839,12 +861,22 @@
 
 <!-- Modal: edit forecast upcoming item -->
 <div class="modal-overlay sheet modal-front" id="forecastItemEditModal">
-  <div class="modal sheet-modal">
+  <div class="modal sheet-modal forecast-item-edit-sheet">
     <div class="sheet-grabber" aria-hidden="true"></div>
     <div class="sheet-header">
       <button class="btn-secondary sheet-cancel" id="forecastItemEditCancelBtn" type="button">Cancel</button>
-      <h3 id="forecastItemEditTitle">Upcoming item</h3>
+      <h3 id="forecastItemEditTitle">Upcoming bill</h3>
       <button class="link-btn" id="forecastItemEditSaveBtn" type="button">Save</button>
+    </div>
+    <div class="forecast-edit-hero" id="forecastEditHero">
+      <div class="forecast-edit-hero-main">
+        <div class="forecast-edit-hero-title-row">
+          <span class="forecast-edit-hero-label" id="forecastEditHeroLabel"></span>
+          <span class="forecast-edited-tag" id="forecastEditedTag" hidden>Edited</span>
+        </div>
+        <p class="hint" id="forecastEditDetectedLine"></p>
+      </div>
+      <button type="button" class="btn-secondary forecast-reset-btn" id="forecastItemResetBtn" hidden>Reset</button>
     </div>
     <div class="field">
       <label for="forecastItemAmountInput">Amount</label>
@@ -857,7 +889,15 @@
       <label for="forecastItemDateInput">Next date</label>
       <input type="date" id="forecastItemDateInput">
     </div>
-    <p class="hint">Applies to this one scheduled occurrence only.</p>
+    <div class="field">
+      <label>Apply to</label>
+      <div class="seg-control forecast-apply-seg" role="group" aria-label="Apply override scope" id="forecastApplySeg">
+        <button type="button" class="seg-btn is-active" data-forecast-scope="once">Just this one</button>
+        <button type="button" class="seg-btn" data-forecast-scope="always">Every time</button>
+      </div>
+      <p class="hint" id="forecastApplyHint">Only this occurrence moves. Later months keep the usual date.</p>
+    </div>
+    <button type="button" class="btn-secondary forecast-skip-btn" id="forecastItemSkipBtn">Skip this one</button>
   </div>
 </div>
 
@@ -879,6 +919,7 @@
       <button class="link-btn" id="importConfirmBtn" type="button">Import</button>
     </div>
     <div id="importSummary"></div>
+    <div id="importReviewToolbar" class="import-review-toolbar" hidden></div>
     <div id="importRowList" class="import-row-list"></div>
   </div>
   <div id="importReviewDiscardScrim" class="import-review-discard-scrim" aria-hidden="true">
@@ -948,10 +989,10 @@
   <p class="hint wrapped-empty" id="wrappedEmpty" hidden>No spending data for this month.</p>
 </div>
 
-<script src="icon-system.js?v=1.8.0"></script>
-<script src="forecast.js?v=1.8.0"></script>
-<script src="wrapped.js?v=1.8.0"></script>
-<script src="app.js?v=1.8.0"></script>
+<script src="icon-system.js?v=1.9.0"></script>
+<script src="forecast.js?v=1.9.0"></script>
+<script src="wrapped.js?v=1.9.0"></script>
+<script src="app.js?v=1.9.0"></script>
 <script>
 (function () {
   'use strict';
