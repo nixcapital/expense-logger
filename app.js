@@ -1688,6 +1688,14 @@
     });
     if (changed) saveEntries();
     ensureDefaultAccounts();
+    accounts.forEach(function (a) {
+      if (a && a.type === 'credit_card' && a.balanceAsOf && typeof a.currentBalance !== 'number') {
+        delete a.balanceAsOf;
+        if (a.balanceHistory) delete a.balanceHistory;
+        changed = true;
+      }
+    });
+    if (changed) saveAccounts();
     entries.forEach(function (e) {
       if (e.isTransfer && !e.accountId) {
         if (e.importSource === 'card') e.accountId = DEFAULT_ACCOUNT_CHASE;
