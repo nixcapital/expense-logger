@@ -53,7 +53,7 @@
   var TRANSFER_PATTERNS_KEY = 'expenseLogger.transferPatterns.v1';
   var FORECAST_OVERRIDES_KEY = 'expenseLogger.forecastOverrides.v1';
   var FORECAST_ONEOFFS_KEY = 'expenseLogger.forecastCountedOneOffs.v1';
-  var APP_VERSION = '1.8.0';
+  var APP_VERSION = '1.9.0';
   var BACKUP_FORMAT = 2;
   var BACKUP_FORMAT_LEGACY = 1;
   var DEFAULT_ACCOUNT_CHECKING = 'acct-checking';
@@ -193,8 +193,17 @@
   var editingEntryId = null;     // id of entry being edited (modal)
   var importRules = [];
   var importSettings = { countCardPayments: false };
-  var pendingImport = null;      // { batchId, rows, fileName, accountId, layout }
-  var pendingImportAccount = null; // pre-review: { batchId, rows, fileName, layout, rowCount }
+  var pendingImport = null;      // { batchId, rows, fileName, accountId, layout, balanceOffer?, useBalanceOffer? }
+  var pendingImportAccount = null; // pre-review: { batchId, rows, fileName, layout, rowCount, balanceOffer? }
+  var importReviewFilter = 'review';
+  var importReviewExpandedIdx = null;
+  var importApplyPrompt = null;
+  var pendingBulkRecategorize = null;
+  var editSelectedCatId = null;
+  var editEntryTypeMode = 'expense';
+  var editEntrySnapshot = null;
+  var forecastEditScope = 'once';
+  var forecastEditDetected = null;
   var accounts = [];
   var transferPairs = [];
   var transferUnlinkKeys = [];
@@ -354,7 +363,16 @@
   var $importDiscardKeepBtn = $('importDiscardKeepBtn');
   var $importDiscardConfirmBtn = $('importDiscardConfirmBtn');
   var $importSummary = $('importSummary');
+  var $importReviewToolbar = $('importReviewToolbar');
   var $importRowList = $('importRowList');
+  var $editCategoryGrid = $('editCategoryGrid');
+  var $editCategoryMeta = $('editCategoryMeta');
+  var $editSheetTitle = $('editSheetTitle');
+  var $editTransferInfo = $('editTransferInfo');
+  var $editTransferInfoText = $('editTransferInfoText');
+  var $editRememberRow = $('editRememberRow');
+  var $editRememberSub = $('editRememberSub');
+  var $editRememberImports = $('editRememberImports');
   var $importConfirmBtn = $('importConfirmBtn');
   var $importCancelBtn = $('importCancelBtn');
   var $importRulesList = $('importRulesList');
@@ -2467,7 +2485,41 @@
       if (savedRow2) playCatIcon(savedRow2.querySelector('.cat-badge'));
       lastSavedEntryId = null;
     }
+    renderBulkRecategorizePrompt();
     refreshIconObservers($entriesEl);
+  }
+
+  function renderBulkRecategorizePrompt() {
+    if (!pendingBulkRecategorize || !$entriesEl) return;
+    var existing = $entriesEl.querySelector('.bulk-recat-prompt');
+    if (existing) existing.remove();
+    var anchor = $entriesEl.querySelector('.activity-row[data-id="' + pendingBulkRecategorize.anchorEntryId + '"]');
+    if (!anchor) return;
+    var p = pendingBulkRecategorize;
+    var cat = getCat(p.categoryId);
+    var card = document.createElement('div');
+    card.className = 'bulk-recat-prompt';
+    card.innerHTML = '<div class="bulk-recat-icon" aria-hidden="true"><svg width="20" height="20" viewBox="0 0 20 20" fill="none"><path d="M4 6h12M4 10h8M4 14h10" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/><path d="M14.5 13.5l2 2-3 3-2-2" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg></div>'
+      + '<div class="bulk-recat-copy"><p class="bulk-recat-title">Also change ' + p.count + ' other ' + escHtml(p.merchantLabel) + ' to ' + escHtml(cat.name) + '?</p>'
+      + '<p class="hint">And remember it for future imports. Matches any \u201c' + escHtml((p.merchantLabel || '').toUpperCase()) + ' STORE\u201d number.</p></div>'
+      + '<div class="bulk-recat-actions"><button type="button" class="btn-secondary" data-bulk-dismiss>Not now</button>'
+      + '<button type="button" class="save-btn" data-bulk-apply>Change all</button></div>';
+    anchor.insertAdjacentElement('afterend', card);
+    card.querySelector('[data-bulk-dismiss]').addEventListener('click', function () {
+      pendingBulkRecategorize = null;
+      card.remove();
+    });
+    card.querySelector('[data-bulk-apply]').addEventListener('click', function () {
+      entries.forEach(function (e) {
+        if (merchantMatchKey(e.note || e.bankText) !== p.merchantKey) return;
+        e.categoryId = p.categoryId;
+      });
+      upsertImportRule(p.merchantKey, { categoryId: p.categoryId, isTransfer: false, countAsSpending: true });
+      pendingBulkRecategorize = null;
+      saveEntries();
+      renderAll();
+      toast('Updated matching entries');
+    });
   }
 
   function closeTransferDetail() {
@@ -5243,13 +5295,110 @@
     return out.getTime();
   }
 
-  function buildEditCategorySelect(selectedId) {
-    var html = '';
-    categories.forEach(function (c) {
-      html += '<option value="' + c.id + '"' + (c.id === selectedId ? ' selected' : '') + '>' +
-        escHtml(c.name) + '</option>';
+  function merchantMatchKey(note) {
+    var s = descriptionMatchKey(note || '');
+    s = s.replace(/\b\d{4,}\b/g, '#');
+    return s;
+  }
+
+  function countEntriesWithMerchantKey(key, excludeId) {
+    if (!key) return 0;
+    var n = 0;
+    entries.forEach(function (e) {
+      if (excludeId && e.id === excludeId) return;
+      if (merchantMatchKey(e.note || e.bankText) !== key) return;
+      n++;
     });
-    $editCategory.innerHTML = html;
+    return n;
+  }
+
+  function upsertImportRule(pattern, opts) {
+    if (!pattern || pattern.length < 4) return;
+    opts = opts || {};
+    var existing = null;
+    for (var i = 0; i < importRules.length; i++) {
+      if (importRules[i].pattern === pattern) { existing = importRules[i]; break; }
+    }
+    var rule = existing || { id: uid(), pattern: pattern };
+    if (opts.categoryId) rule.categoryId = opts.categoryId;
+    if (opts.isTransfer != null) rule.isTransfer = !!opts.isTransfer;
+    if (opts.countAsSpending != null) rule.countAsSpending = !!opts.countAsSpending;
+    if (!existing) importRules.push(rule);
+    saveImportRules();
+    renderImportRulesList();
+  }
+
+  function entryEditXferMode(entry) {
+    if (!entry) return 'expense';
+    if (isDepositEntry(entry) && !entry.isTransfer) return 'income';
+    if (!entry.isTransfer) return 'expense';
+    if (entry.transferKind === 'other') return 'other';
+    return 'transfer';
+  }
+
+  function setEditEntryTypeMode(mode) {
+    editEntryTypeMode = mode || 'expense';
+    var seg = $('editTypeSeg');
+    if (seg) {
+      Array.prototype.forEach.call(seg.querySelectorAll('.seg-btn'), function (btn) {
+        btn.classList.toggle('is-active', btn.dataset.editType === editEntryTypeMode);
+      });
+    }
+    var showXferInfo = editEntryTypeMode === 'transfer' || editEntryTypeMode === 'other';
+    if ($editTransferInfo) $editTransferInfo.hidden = !showXferInfo;
+    if ($editRememberRow) $editRememberRow.hidden = false;
+    updateEditTransferInfoText();
+    if ($editSheetTitle) {
+      var titles = { expense: 'Edit expense', income: 'Edit income', transfer: 'Edit transfer', other: 'Edit transfer' };
+      $editSheetTitle.textContent = titles[editEntryTypeMode] || 'Edit expense';
+    }
+  }
+
+  function updateEditTransferInfoText() {
+    if (!$editTransferInfoText) return;
+    var amt = parseFloat($editAmount && $editAmount.value);
+    var acct = getAccount($editAccount && $editAccount.value) || getCheckingAccount();
+    var acctName = acct ? acct.name : 'Checking';
+    var amtTxt = !isNaN(amt) && amt > 0 ? fmtMoneyDisplay(amt) : 'this amount';
+    $editTransferInfoText.textContent = 'Money moving between your own accounts. It won\u2019t count as spending in Home, Reports or Wrapped. '
+      + acctName + ' still goes down ' + amtTxt + '.';
+  }
+
+  function buildEditCategoryGrid(selectedId) {
+    editSelectedCatId = selectedId || null;
+    if (!$editCategoryGrid) return;
+    $editCategoryGrid.innerHTML = '';
+    categories.forEach(function (c) {
+      if (c.id === INCOME_CATEGORY_ID && editEntryTypeMode === 'expense') return;
+      var btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'cat-btn' + (c.id === selectedId ? ' selected' : '');
+      btn.dataset.id = c.id;
+      btn.setAttribute('role', 'radio');
+      btn.setAttribute('aria-checked', c.id === selectedId ? 'true' : 'false');
+      btn.innerHTML = iconBadge(c, 'lg') + '<span></span>';
+      btn.lastChild.textContent = c.name;
+      btn.style.setProperty('--cat-ring', c.color);
+      btn.addEventListener('click', function () {
+        editSelectedCatId = c.id;
+        if ($editCategory) $editCategory.value = c.id;
+        Array.prototype.forEach.call($editCategoryGrid.children, function (el) {
+          var on = el.dataset.id === c.id;
+          el.classList.toggle('selected', on);
+          el.setAttribute('aria-checked', on ? 'true' : 'false');
+        });
+      });
+      $editCategoryGrid.appendChild(btn);
+    });
+    refreshIconObservers($editCategoryGrid);
+    if ($editCategory) {
+      var html = '';
+      categories.forEach(function (c) {
+        html += '<option value="' + c.id + '"' + (c.id === selectedId ? ' selected' : '') + '>' + escHtml(c.name) + '</option>';
+      });
+      $editCategory.innerHTML = html;
+      $editCategory.value = selectedId || '';
+    }
   }
 
   function openEntryEditor(entryId) {
@@ -5257,12 +5406,35 @@
     for (var i = 0; i < entries.length; i++) if (entries[i].id === entryId) { entry = entries[i]; break; }
     if (!entry) return;
     editingEntryId = entryId;
+    editEntrySnapshot = {
+      categoryId: entry.categoryId,
+      isTransfer: !!entry.isTransfer,
+      transferKind: entry.transferKind || null,
+      isDeposit: !!entry.isDeposit
+    };
 
     $editAmount.value = (Math.round(entry.amount * 100) / 100).toString();
     $editNote.value = entry.note || '';
     $editDate.value = toDateInputValue(entry.ts);
-    buildEditCategorySelect(entry.categoryId);
+    buildEditCategoryGrid(entry.categoryId);
     rebuildEditAccountSelect(entry.accountId || '');
+    setEditEntryTypeMode(entryEditXferMode(entry));
+    if ($editCategoryMeta) {
+      var bankTxt = entry.bankText || entry.note || '';
+      var wasCat = getCat(editEntrySnapshot.categoryId).name;
+      if (bankTxt) {
+        $editCategoryMeta.textContent = 'Was ' + wasCat + ' \u00B7 bank text \u201c' + bankTxt + '\u201d';
+        $editCategoryMeta.hidden = false;
+      } else {
+        $editCategoryMeta.hidden = true;
+      }
+    }
+    if ($editRememberSub) {
+      var pat = merchantMatchKey(entry.note || entry.bankText);
+      $editRememberSub.textContent = '\u201c' + (entry.note || pat || 'this merchant').slice(0, 42) + '\u201d imports as '
+        + (editEntryTypeMode === 'transfer' || editEntryTypeMode === 'other' ? 'Transfer' : getCat(entry.categoryId).name);
+    }
+    if ($editRememberImports) $editRememberImports.checked = false;
 
     // Receipt preview
     idbGet('receipt:' + entryId).then(function (rec) {
@@ -5284,6 +5456,28 @@
     $receiptModal.classList.add('show');
   }
 
+  function applyEditTypeToEntry(entry, mode) {
+    if (mode === 'income') {
+      entry.isTransfer = false;
+      delete entry.transferKind;
+      entry.isDeposit = true;
+      var inc = incomeCategoryIdForDeposit(entry.note) || INCOME_CATEGORY_ID;
+      entry.categoryId = inc;
+    } else if (mode === 'expense') {
+      entry.isTransfer = false;
+      delete entry.transferKind;
+      delete entry.isDeposit;
+    } else if (mode === 'other') {
+      entry.isTransfer = true;
+      entry.transferKind = 'other';
+      delete entry.isDeposit;
+    } else {
+      entry.isTransfer = true;
+      delete entry.transferKind;
+      delete entry.isDeposit;
+    }
+  }
+
   function saveEntryEdit() {
     if (!editingEntryId) return;
     var entry = null;
@@ -5292,11 +5486,15 @@
 
     var v = parseFloat($editAmount.value);
     if (isNaN(v) || v <= 0) { toast('Enter a valid amount'); return; }
-    var catId = $editCategory.value;
-    if (!catId) { toast('Pick a category'); return; }
+    var catId = editSelectedCatId || ($editCategory && $editCategory.value);
+    if (!catId && editEntryTypeMode === 'expense') { toast('Pick a category'); return; }
+
+    var prevCat = editEntrySnapshot ? editEntrySnapshot.categoryId : entry.categoryId;
+    var mKey = merchantMatchKey(entry.note || entry.bankText);
 
     entry.amount = Math.round(v * 100) / 100;
-    entry.categoryId = catId;
+    applyEditTypeToEntry(entry, editEntryTypeMode);
+    if (editEntryTypeMode === 'expense' || editEntryTypeMode === 'other') entry.categoryId = catId;
     entry.note = $editNote.value.trim();
     entry.ts = fromDateInputValue($editDate.value, entry.ts);
     if ($editAccount) {
@@ -5305,13 +5503,39 @@
       else delete entry.accountId;
     }
 
+    if ($editRememberImports && $editRememberImports.checked && mKey) {
+      upsertImportRule(mKey, {
+        categoryId: entry.categoryId,
+        isTransfer: !!entry.isTransfer,
+        countAsSpending: entry.isTransfer ? false : true
+      });
+    }
+
     saveEntries();
+    autoPairTransfers();
     renderAll();
     buildYearSelect(true);
     if (currentTab === 'report') renderReport();
     $receiptModal.classList.remove('show');
+    var savedId = editingEntryId;
     editingEntryId = null;
+    editEntrySnapshot = null;
     toast('Changes saved');
+
+    if (editEntryTypeMode === 'expense' && catId && catId !== prevCat && mKey) {
+      var others = countEntriesWithMerchantKey(mKey, savedId);
+      if (others > 0) {
+        pendingBulkRecategorize = {
+          anchorEntryId: savedId,
+          merchantKey: mKey,
+          categoryId: catId,
+          count: others,
+          merchantLabel: (entry.note || mKey).replace(/\s+#\s*$/,'').split(/\s+/).slice(0, 2).join(' ').toUpperCase()
+        };
+        if (currentTab !== 'history') switchTab('history');
+        renderEntries();
+      }
+    }
   }
 
   function deleteEntryFromEditor() {
@@ -5391,6 +5615,16 @@
   });
   if ($editSaveBtn) $editSaveBtn.addEventListener('click', saveEntryEdit);
   if ($editDeleteBtn) $editDeleteBtn.addEventListener('click', deleteEntryFromEditor);
+  if ($editAmount) $editAmount.addEventListener('input', updateEditTransferInfoText);
+  var editTypeSeg = $('editTypeSeg');
+  if (editTypeSeg) {
+    Array.prototype.forEach.call(editTypeSeg.querySelectorAll('.seg-btn'), function (btn) {
+      btn.addEventListener('click', function () {
+        setEditEntryTypeMode(btn.dataset.editType);
+        if (editEntryTypeMode === 'income') buildEditCategoryGrid(INCOME_CATEGORY_ID);
+      });
+    });
+  }
 
   // ---------- Bank / card import (CSV + XLSX) ----------
   var CARD_ISSUER_RE = /(chase|amex|americanexpress|discover|capital\s*one|citi|citibank|barclays|wells\s*fargo|bank\s*of\s*america|usbank|synchrony|apple\s*card)/i;
@@ -6173,12 +6407,87 @@
     }, { passive: true });
   }
 
+  function importRowNeedsReview(r) {
+    if (!r || (r.status !== 'import' && r.status !== 'transfer')) return false;
+    if (r.status === 'transfer') return false;
+    var cat = r.categoryId || 'other';
+    return cat === 'other';
+  }
+
+  function importFilterCounts(rows) {
+    var c = { review: 0, transfers: 0, income: 0, all: 0 };
+    rows.forEach(function (r) {
+      if (r.status !== 'import' && r.status !== 'transfer') return;
+      c.all++;
+      if (r.status === 'transfer' || r.isTransfer) c.transfers++;
+      if (r.isDeposit || r.categoryId === INCOME_CATEGORY_ID) c.income++;
+      if (importRowNeedsReview(r)) c.review++;
+    });
+    return c;
+  }
+
+  function importRowPassesFilter(r) {
+    if (r.status !== 'import' && r.status !== 'transfer') return false;
+    if (importReviewFilter === 'all') return true;
+    if (importReviewFilter === 'transfers') return r.status === 'transfer' || r.isTransfer;
+    if (importReviewFilter === 'income') return r.isDeposit || r.categoryId === INCOME_CATEGORY_ID;
+    return importRowNeedsReview(r);
+  }
+
+  function countSimilarImportRows(row, catId) {
+    if (!pendingImport || !row) return 0;
+    var key = merchantMatchKey(row.note || row.bankText);
+    if (!key) return 0;
+    var n = 0;
+    pendingImport.rows.forEach(function (r) {
+      if (r === row) return;
+      if (r.status !== 'import') return;
+      if (merchantMatchKey(r.note || r.bankText) !== key) return;
+      if ((r.categoryId || 'other') === (catId || row.categoryId)) return;
+      n++;
+    });
+    return n;
+  }
+
+  function importCategoryChipHTML(catId, idx) {
+    var html = '<div class="import-cat-chips" data-idx="' + idx + '">';
+    var shown = categories.filter(function (c) { return c.id !== INCOME_CATEGORY_ID; }).slice(0, 5);
+    shown.forEach(function (c) {
+      html += '<button type="button" class="import-cat-chip' + (c.id === catId ? ' is-selected' : '') + '" data-cat="' + escHtml(c.id) + '">'
+        + iconBadge(c, 'xs') + '<span>' + escHtml(c.name) + '</span></button>';
+    });
+    html += '<button type="button" class="import-cat-chip import-cat-chip--more" data-more="1">More\u2026</button></div>';
+    return html;
+  }
+
+  function renderImportBalanceOffer() {
+    var offer = pendingImport && pendingImport.balanceOffer;
+    if (!offer || !pendingImport.useBalanceOffer) return '';
+    return '';
+  }
+
   function renderImportReview() {
     if (!pendingImport) return;
     hideImportDiscardPrompt();
     var rows = pendingImport.rows;
     var counts = summarizeImportRows(rows);
-    var html = '<div class="import-stats">';
+    var fCounts = importFilterCounts(rows);
+    var html = '';
+    var offer = pendingImport.balanceOffer;
+    var checking = getCheckingAccount();
+    if (offer && checking && pendingImport.layout === 'bank') {
+      var asOfLbl = new Date(offer.ts).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+      var nowBal = typeof checking.currentBalance === 'number' ? fmtMoneyDisplay(checking.currentBalance) : '\u2014';
+      var nowAsOf = checking.balanceAsOf ? formatBalanceAsOfLabel(checking.balanceAsOf) : '';
+      html += '<div class="import-balance-offer' + (pendingImport.useBalanceOffer ? ' is-on' : '') + '">';
+      html += '<div class="import-balance-offer-icon" aria-hidden="true"><span data-ui-icon="ui-insight" data-ui-icon-size="sm"></span></div>';
+      html += '<div class="import-balance-offer-main"><p class="import-balance-offer-title">Balance in this file. <strong>Set Checking to '
+        + fmtMoneyDisplay(offer.amount) + ' as of ' + escHtml(asOfLbl) + '?</strong></p>';
+      html += '<p class="hint">In the app now: ' + escHtml(nowBal) + (nowAsOf ? ', set ' + escHtml(nowAsOf.replace(/^Today, /, '')) : '') + '</p>';
+      html += '<p class="import-balance-foot">Saved when you tap Import</p></div>';
+      html += '<button type="button" class="btn-secondary import-balance-use" id="importBalanceUseBtn">' + (pendingImport.useBalanceOffer ? 'Using' : 'Use') + '</button></div>';
+    }
+    html += '<div class="import-stats">';
     html += '<div class="import-stat"><strong>' + counts.import + '</strong><span> to import</span></div>';
     html += '<div class="import-stat"><strong>' + counts.duplicate + '</strong><span> duplicates</span></div>';
     html += '<div class="import-stat"><strong>' + counts.transfer + '</strong><span> transfers</span></div>';
@@ -6186,47 +6495,111 @@
     html += '<div class="import-stat"><strong>' + counts.pending + '</strong><span> pending</span></div>';
     html += '<div class="import-stat"><strong>' + counts.unreadable + '</strong><span> unreadable</span></div>';
     html += '</div>';
-    html += '<p class="hint">Transfers are payments between your accounts (e.g. card autopay). Toggle per row or change category — we remember your choices.</p>';
+    html += '<p class="hint">Transfers are payments between your accounts (e.g. card autopay). Toggle per row or change category \u2014 we remember your choices.</p>';
     $importSummary.innerHTML = html;
+    if (EI && EI.hydrateUiIcons) EI.hydrateUiIcons($importSummary);
+    var useBtn = document.getElementById('importBalanceUseBtn');
+    if (useBtn) {
+      useBtn.addEventListener('click', function () {
+        pendingImport.useBalanceOffer = !pendingImport.useBalanceOffer;
+        renderImportReview();
+      });
+    }
+
+    if ($importReviewToolbar) {
+      var showIncomeChip = fCounts.income > 0;
+      var tb = '<p class="import-file-meta">' + escHtml(String(pendingImport.rows.length)) + ' rows from '
+        + escHtml(pendingImport.fileName || 'import') + '</p>';
+      tb += '<div class="import-filter-chips" role="tablist">';
+      tb += '<button type="button" class="import-filter-chip' + (importReviewFilter === 'review' ? ' is-active' : '') + '" data-filter="review">Needs review <span class="import-filter-count">' + fCounts.review + '</span></button>';
+      tb += '<button type="button" class="import-filter-chip' + (importReviewFilter === 'transfers' ? ' is-active' : '') + '" data-filter="transfers">Transfers <span class="import-filter-count">' + fCounts.transfers + '</span></button>';
+      if (showIncomeChip) tb += '<button type="button" class="import-filter-chip' + (importReviewFilter === 'income' ? ' is-active' : '') + '" data-filter="income">Income <span class="import-filter-count">' + fCounts.income + '</span></button>';
+      tb += '<button type="button" class="import-filter-chip' + (importReviewFilter === 'all' ? ' is-active' : '') + '" data-filter="all">All <span class="import-filter-count">' + fCounts.all + '</span></button>';
+      tb += '</div>';
+      tb += '<p class="hint import-filter-hint">Needs review = rows that landed in Other.'
+        + (showIncomeChip ? '' : ' Income is hidden: this file has none.') + '</p>';
+      $importReviewToolbar.innerHTML = tb;
+      $importReviewToolbar.hidden = false;
+      Array.prototype.forEach.call($importReviewToolbar.querySelectorAll('[data-filter]'), function (btn) {
+        btn.addEventListener('click', function () {
+          importReviewFilter = btn.dataset.filter;
+          importReviewExpandedIdx = null;
+          renderImportReview();
+        });
+      });
+    }
 
     var listHtml = '';
-    var importIdx = 0;
     rows.forEach(function (r, i) {
-      if (r.status !== 'import' && r.status !== 'transfer') return;
-      importIdx++;
-      var d = r.ts ? new Date(r.ts).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : '—';
-      var catOpts = '';
-      categories.forEach(function (c) {
-        catOpts += '<option value="' + c.id + '"' + (c.id === r.categoryId ? ' selected' : '') + '>' + escHtml(c.name) + '</option>';
-      });
-      listHtml += '<div class="import-row' + (r.status === 'transfer' ? ' is-transfer' : '') + '" data-idx="' + i + '">';
-      listHtml += '<div class="import-row-top"><span class="import-row-date">' + d + '</span>';
-      listHtml += '<span class="import-row-amt">' + fmtMoneyDisplay(r.amount) + '</span></div>';
-      listHtml += '<div class="import-row-note">' + (r.note || '(no description)') + '</div>';
-      listHtml += '<div class="import-row-actions">';
-      listHtml += '<select class="import-cat-select" data-idx="' + i + '">' + catOpts + '</select>';
-      if (r.autoOtherAccount) listHtml += '<span class="import-other-tag">Auto</span>';
+      if (!importRowPassesFilter(r)) return;
+      var d = r.ts ? new Date(r.ts).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : '\u2014';
+      var cat = getCat(r.categoryId || 'other');
+      var expanded = importReviewExpandedIdx === i;
       var rowMode = importRowXferMode(r);
-      if (!r.initialIsDeposit && (r.isDeposit || r.categoryId === INCOME_CATEGORY_ID || incomeCategoryIdForDeposit(r.note))) {
-        r.initialIsDeposit = !!r.isDeposit;
+      listHtml += '<div class="import-row import-row--compact' + (r.status === 'transfer' ? ' is-transfer' : '') + (expanded ? ' is-expanded' : '') + '" data-idx="' + i + '">';
+      listHtml += '<button type="button" class="import-row-hit" data-expand="' + i + '">';
+      listHtml += '<span class="import-row-icon">' + iconBadge(cat, 'sm') + '</span>';
+      listHtml += '<span class="import-row-main"><span class="import-row-merchant">' + escHtml(r.note || '(no description)') + '</span>';
+      listHtml += '<span class="import-row-meta">' + escHtml(d) + ' \u00B7 ' + escHtml(cat.name) + '</span></span>';
+      listHtml += '<span class="import-row-amt">' + fmtMoneyDisplay(r.amount) + '</span>';
+      listHtml += '<span class="import-row-chevron" aria-hidden="true">' + (expanded ? '\u2304' : '\u203A') + '</span></button>';
+      if (expanded) {
+        listHtml += '<div class="import-row-expanded">';
+        listHtml += importCategoryChipHTML(r.categoryId, i);
+        listHtml += '<div class="seg-control import-xfer-seg import-xfer-seg--4" role="group" aria-label="Row type" data-idx="' + i + '">';
+        listHtml += '<button type="button" class="seg-btn' + (rowMode === 'expense' ? ' is-active' : '') + '" data-mode="expense">Expense</button>';
+        listHtml += '<button type="button" class="seg-btn' + (rowMode === 'income' ? ' is-active' : '') + '" data-mode="income">Income</button>';
+        listHtml += '<button type="button" class="seg-btn' + (rowMode === 'paired' ? ' is-active' : '') + '" data-mode="paired">Transfer</button>';
+        listHtml += '<button type="button" class="seg-btn' + (rowMode === 'other' ? ' is-active' : '') + '" data-mode="other">Other</button>';
+        listHtml += '</div></div>';
+        if (importApplyPrompt && importApplyPrompt.idx === i) {
+          var ap = importApplyPrompt;
+          var catName = getCat(ap.categoryId).name;
+          listHtml += '<div class="import-apply-prompt"><p><strong>Apply ' + escHtml(catName) + ' to ' + ap.count + ' more like this?</strong></p>';
+          listHtml += '<p class="hint">' + ap.count + ' other ' + escHtml(ap.merchantLabel) + ' rows in this file are in Other. Import will also remember it.</p>';
+          listHtml += '<div class="import-apply-actions"><button type="button" class="btn-secondary" data-apply-one="' + i + '">Just this row</button>';
+          listHtml += '<button type="button" class="save-btn import-apply-all" data-apply-all="' + i + '">Apply to ' + ap.count + '</button></div></div>';
+        }
       }
-      listHtml += '<div class="seg-control import-xfer-seg import-xfer-seg--4" role="group" aria-label="Row type" data-idx="' + i + '">';
-      listHtml += '<button type="button" class="seg-btn' + (rowMode === 'expense' ? ' is-active' : '') + '" data-mode="expense">Expense</button>';
-      listHtml += '<button type="button" class="seg-btn' + (rowMode === 'income' ? ' is-active' : '') + '" data-mode="income">Income</button>';
-      listHtml += '<button type="button" class="seg-btn' + (rowMode === 'paired' ? ' is-active' : '') + '" data-mode="paired">Transfer</button>';
-      listHtml += '<button type="button" class="seg-btn' + (rowMode === 'other' ? ' is-active' : '') + '" data-mode="other">Other</button>';
       listHtml += '</div>';
-      listHtml += '</div></div>';
     });
-    if (!listHtml) listHtml = '<div class="empty">No rows to import. Skipped items are counted above.</div>';
+    if (!listHtml) listHtml = '<div class="empty">No rows in this filter.</div>';
     $importRowList.innerHTML = listHtml;
+    if (EI && EI.hydrateUiIcons) EI.hydrateUiIcons($importRowList);
 
-    Array.prototype.forEach.call($importRowList.querySelectorAll('.import-cat-select'), function (sel) {
-      sel.addEventListener('change', function () {
-        var idx = parseInt(sel.dataset.idx, 10);
-        var row = pendingImport.rows[idx];
-        row.categoryId = sel.value;
-        row.userSetCategory = sel.value !== row.initialCategoryId;
+    Array.prototype.forEach.call($importRowList.querySelectorAll('[data-expand]'), function (btn) {
+      btn.addEventListener('click', function () {
+        var idx = parseInt(btn.dataset.expand, 10);
+        importReviewExpandedIdx = importReviewExpandedIdx === idx ? null : idx;
+        importApplyPrompt = null;
+        renderImportReview();
+      });
+    });
+    Array.prototype.forEach.call($importRowList.querySelectorAll('.import-cat-chip'), function (chip) {
+      chip.addEventListener('click', function () {
+        if (chip.dataset.more) {
+          var idx = parseInt(chip.closest('.import-cat-chips').dataset.idx, 10);
+          var row = pendingImport.rows[idx];
+          var pick = window.prompt('Category id', row.categoryId || 'other');
+          if (!pick) return;
+          row.categoryId = pick;
+        } else {
+          var idx = parseInt(chip.closest('.import-cat-chips').dataset.idx, 10);
+          var row = pendingImport.rows[idx];
+          row.categoryId = chip.dataset.cat;
+        }
+        var row = pendingImport.rows[parseInt(chip.closest('.import-cat-chips').dataset.idx, 10)];
+        row.userSetCategory = row.categoryId !== row.initialCategoryId;
+        var similar = countSimilarImportRows(row, row.categoryId);
+        if (similar > 0) {
+          importApplyPrompt = {
+            idx: parseInt(chip.closest('.import-cat-chips').dataset.idx, 10),
+            categoryId: row.categoryId,
+            count: similar,
+            merchantLabel: (row.note || '').split(/\s+/).slice(0, 2).join(' ').toUpperCase()
+          };
+        } else importApplyPrompt = null;
+        renderImportReview();
       });
     });
     Array.prototype.forEach.call($importRowList.querySelectorAll('.import-xfer-seg'), function (seg) {
@@ -6235,11 +6608,30 @@
         btn.addEventListener('click', function () {
           var row = pendingImport.rows[idx];
           setImportRowXferMode(row, btn.dataset.mode);
-          Array.prototype.forEach.call(seg.querySelectorAll('.seg-btn'), function (b) {
-            b.classList.toggle('is-active', b === btn);
-          });
-          seg.closest('.import-row').classList.toggle('is-transfer', row.isTransfer);
+          importApplyPrompt = null;
+          renderImportReview();
         });
+      });
+    });
+    Array.prototype.forEach.call($importRowList.querySelectorAll('[data-apply-one]'), function (btn) {
+      btn.addEventListener('click', function () { importApplyPrompt = null; renderImportReview(); });
+    });
+    Array.prototype.forEach.call($importRowList.querySelectorAll('[data-apply-all]'), function (btn) {
+      btn.addEventListener('click', function () {
+        var idx = parseInt(btn.dataset.applyAll, 10);
+        var row = pendingImport.rows[idx];
+        if (!row || !importApplyPrompt) return;
+        var key = merchantMatchKey(row.note || row.bankText);
+        var catId = importApplyPrompt.categoryId;
+        pendingImport.rows.forEach(function (r) {
+          if (r.status !== 'import') return;
+          if (merchantMatchKey(r.note || r.bankText) !== key) return;
+          r.categoryId = catId;
+          r.userSetCategory = true;
+        });
+        upsertImportRule(key, { categoryId: catId, isTransfer: false, countAsSpending: true });
+        importApplyPrompt = null;
+        renderImportReview();
       });
     });
     $importModal.classList.add('show');
@@ -6343,6 +6735,14 @@
       importAccountPrefs[layout === 'app-export' ? 'app' : layout] = accountId;
       saveImportAccountPrefs();
     }
+    if (pendingImport.balanceOffer && pendingImport.useBalanceOffer && accountId === DEFAULT_ACCOUNT_CHECKING) {
+      var chk = getCheckingAccount();
+      if (chk) {
+        chk.currentBalance = pendingImport.balanceOffer.amount;
+        chk.balanceAsOf = dayKey(pendingImport.balanceOffer.ts);
+        saveAccounts();
+      }
+    }
     saveEntries();
     saveCategories();
     autoPairTransfers();
@@ -6444,7 +6844,9 @@
         rows: rows,
         fileName: payload.fileName,
         layout: payload.layout,
-        accountId: accountId
+        accountId: accountId,
+        balanceOffer: payload.balanceOffer || null,
+        useBalanceOffer: !!(payload.balanceOffer && accountId === DEFAULT_ACCOUNT_CHECKING)
       };
       renderImportReview();
     });
@@ -6457,6 +6859,27 @@
     return table;
   }
 
+  function extractCheckingBalanceOffer(table, layout) {
+    if (layout !== 'bank' || !table || table.length < 2) return null;
+    var header = table[0];
+    var balIdx = findCol(header, ['balance']);
+    if (balIdx === -1) return null;
+    var postIdx = findCol(header, ['post date']);
+    var dateIdx = findCol(header, ['transaction date', 'post date', 'date']);
+    var best = null;
+    for (var ri = 1; ri < table.length; ri++) {
+      var cols = table[ri];
+      if (isRowEmpty(cols)) continue;
+      var bal = parseAmountCell(cols[balIdx]);
+      if (isNaN(bal)) continue;
+      var dateCell = postIdx !== -1 ? cols[postIdx] : (dateIdx !== -1 ? cols[dateIdx] : '');
+      var ts = /^\d+(\.\d+)?$/.test(String(dateCell).trim()) ? excelSerialToTs(dateCell) : parseUsDate(dateCell);
+      if (!ts) continue;
+      if (!best || ts > best.ts) best = { amount: Math.round(bal * 100) / 100, ts: ts };
+    }
+    return best;
+  }
+
   function processImportTable(table, batchId, fileName) {
     var header = table[0];
     var layout = detectImportLayout(header);
@@ -6467,7 +6890,17 @@
     var dataRows = table.slice(1);
     var dedupeAccountId = suggestImportAccountId(layout);
     var rows = rowsFromTable(dataRows, header, layout, batchId, dedupeAccountId);
-    pendingImportAccount = { batchId: batchId, rows: rows, fileName: fileName, layout: layout, dedupeAccountId: dedupeAccountId };
+    var balanceOffer = extractCheckingBalanceOffer(table, layout);
+    importReviewFilter = 'review';
+    importReviewExpandedIdx = null;
+    pendingImportAccount = {
+      batchId: batchId,
+      rows: rows,
+      fileName: fileName,
+      layout: layout,
+      dedupeAccountId: dedupeAccountId,
+      balanceOffer: balanceOffer
+    };
     importAccountPickId = suggestImportAccountId(layout);
     renderImportAccountSheet();
   }
@@ -6519,7 +6952,7 @@
     importRules.forEach(function (r) {
       var cat = r.categoryId ? getCat(r.categoryId).name : '—';
       html += '<div class="entry import-rule" style="padding:10px 0;">';
-      html += '<div class="entry-info"><div class="top"><span style="font-weight:600;font-size:13px;">' + r.pattern + '</span></div>';
+      html += '<div class="entry-info"><div class="top"><span style="font-weight:600;font-size:13px;">' + escHtml(r.pattern) + '</span></div>';
       html += '<div class="note">' + (r.isTransfer ? 'Transfer' : cat) + '</div></div>';
       html += '<button class="del-btn" type="button" data-del-rule="' + r.id + '">✕</button></div>';
     });
@@ -8063,19 +8496,67 @@
     return v.toFixed(2);
   }
 
-  function openForecastItemEditor(itemKey, label, amount, ts, kind, categoryId) {
+  function forecastOverrideStorageKey(itemKey) {
+    return FC && FC.scheduleOverrideKey ? FC.scheduleOverrideKey(itemKey) : itemKey;
+  }
+
+  function forecastItemHasOverride(itemKey, occTs) {
+    var key = forecastOverrideStorageKey(itemKey);
+    var o = forecastOverrides[key];
+    if (!o) return false;
+    if (FC && FC.forecastOverrideIsExpired && FC.forecastOverrideIsExpired(o, Date.now())) return false;
+    if (typeof o.applyFromTs === 'number' && occTs != null && FC.startOfDay(o.applyFromTs) !== FC.startOfDay(occTs)) {
+      return o.scope === 'always';
+    }
+    return true;
+  }
+
+  function openForecastItemEditor(itemKey, label, amount, ts, kind, categoryId, detectedAmount, detectedTs) {
     if (!itemKey || itemKey === 'daily-spend') return;
     editingForecastItemKey = itemKey;
     editingForecastOccurrenceTs = ts;
     editingForecastItemMeta = { label: label, kind: kind, categoryId: categoryId };
+    forecastEditScope = 'once';
+    forecastEditDetected = {
+      amount: detectedAmount != null ? detectedAmount : amount,
+      ts: detectedTs != null ? detectedTs : ts,
+      label: label
+    };
+    var storageKey = forecastOverrideStorageKey(itemKey);
+    var existing = forecastOverrides[storageKey];
+    if (existing && existing.scope === 'always') forecastEditScope = 'always';
     var title = $('forecastItemEditTitle');
-    if (title) title.textContent = label || 'Upcoming item';
+    if (title) title.textContent = kind === 'inflow' ? 'Upcoming deposit' : 'Upcoming bill';
+    var heroLabel = $('forecastEditHeroLabel');
+    if (heroLabel) heroLabel.textContent = label || '';
+    var detectedLine = $('forecastEditDetectedLine');
+    if (detectedLine && forecastEditDetected) {
+      detectedLine.textContent = 'Detected: ' + fmtMoneyDisplay(forecastEditDetected.amount) + ' on '
+        + formatForecastWeekdayDate(forecastEditDetected.ts);
+    }
+    var editedTag = $('forecastEditedTag');
+    var resetBtn = $('forecastItemResetBtn');
+    var hasEdit = forecastItemHasOverride(itemKey, ts);
+    if (editedTag) editedTag.hidden = !hasEdit;
+    if (resetBtn) resetBtn.hidden = !hasEdit;
     var amtIn = $('forecastItemAmountInput');
     if (amtIn) amtIn.value = formatForecastEditAmount(amount);
     var dateIn = $('forecastItemDateInput');
     if (dateIn) {
       var d = new Date(ts);
       dateIn.value = d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate());
+    }
+    var seg = $('forecastApplySeg');
+    if (seg) {
+      Array.prototype.forEach.call(seg.querySelectorAll('.seg-btn'), function (btn) {
+        btn.classList.toggle('is-active', btn.dataset.forecastScope === forecastEditScope);
+      });
+    }
+    var hint = $('forecastApplyHint');
+    if (hint) {
+      hint.textContent = forecastEditScope === 'always'
+        ? 'Future months use this date and amount until you reset.'
+        : 'Only this occurrence moves. Later months keep the usual date.';
     }
     var m = $('forecastItemEditModal');
     if (m) m.classList.add('show');
@@ -8090,14 +8571,17 @@
     var parts = dateVal.split('-');
     var nextTs = new Date(parseInt(parts[0], 10), parseInt(parts[1], 10) - 1, parseInt(parts[2], 10)).getTime();
     var meta = editingForecastItemMeta || {};
-    forecastOverrides[editingForecastItemKey] = {
+    var storageKey = forecastOverrideStorageKey(editingForecastItemKey);
+    var payload = {
       amount: Math.round(amt * 100) / 100,
       nextTs: nextTs,
-      applyFromTs: editingForecastOccurrenceTs,
       label: meta.label,
       kind: meta.kind,
-      categoryId: meta.categoryId
+      categoryId: meta.categoryId,
+      scope: forecastEditScope
     };
+    if (forecastEditScope === 'once') payload.applyFromTs = editingForecastOccurrenceTs;
+    forecastOverrides[storageKey] = payload;
     saveForecastOverrides();
     editingForecastItemKey = null;
     editingForecastOccurrenceTs = null;
@@ -8106,6 +8590,45 @@
     renderHomeForecastCard();
     if (forecastScreenOpen) renderForecastScreen();
     toast('Forecast updated');
+  }
+
+  function resetForecastItemOverride() {
+    if (!editingForecastItemKey) return;
+    var storageKey = forecastOverrideStorageKey(editingForecastItemKey);
+    delete forecastOverrides[storageKey];
+    saveForecastOverrides();
+    editingForecastItemKey = null;
+    editingForecastOccurrenceTs = null;
+    var m = $('forecastItemEditModal');
+    if (m) m.classList.remove('show');
+    renderHomeForecastCard();
+    if (forecastScreenOpen) renderForecastScreen();
+    toast('Reset to detected schedule');
+  }
+
+  function skipForecastOccurrence() {
+    if (!editingForecastItemKey || editingForecastOccurrenceTs == null) return;
+    var storageKey = forecastOverrideStorageKey(editingForecastItemKey);
+    var o = forecastOverrides[storageKey] || {
+      label: (editingForecastItemMeta || {}).label,
+      kind: (editingForecastItemMeta || {}).kind,
+      categoryId: (editingForecastItemMeta || {}).categoryId,
+      scope: 'once',
+      applyFromTs: editingForecastOccurrenceTs
+    };
+    o.scope = 'once';
+    o.applyFromTs = editingForecastOccurrenceTs;
+    o.skipped = o.skipped || [];
+    if (o.skipped.indexOf(editingForecastOccurrenceTs) === -1) o.skipped.push(editingForecastOccurrenceTs);
+    forecastOverrides[storageKey] = o;
+    saveForecastOverrides();
+    editingForecastItemKey = null;
+    editingForecastOccurrenceTs = null;
+    var m = $('forecastItemEditModal');
+    if (m) m.classList.remove('show');
+    renderHomeForecastCard();
+    if (forecastScreenOpen) renderForecastScreen();
+    toast('Skipped this occurrence');
   }
 
   function renderForecastUpcoming(sim, cushion) {
@@ -8171,7 +8694,11 @@
       }
       html += '<button type="button" class="' + rowClass + '"' + tap + '>';
       html += '<div class="forecast-up-icon" style="background:' + iconBg + ';color:' + iconColor + '">' + iconSvg + '</div>';
-      html += '<div><p class="forecast-up-title">' + escHtml(u.label) + '</p><p class="forecast-up-sub">' + sub + '</p>';
+      html += '<div><p class="forecast-up-title">' + escHtml(u.label);
+      if (u.itemKey && forecastItemHasOverride(u.itemKey, u.nominalTs || u.ts)) {
+        html += ' <span class="forecast-edited-tag">Edited</span>';
+      }
+      html += '</p><p class="forecast-up-sub">' + sub + '</p>';
       if (u.kind === 'card-payment') html += '<span class="forecast-up-not-spending-chip">Not spending</span>';
       if (u.nominalTs && u.nominalTs !== u.ts) html += forecastMovedFromHTML(u.nominalTs, u.ts);
       html += '</div>';
@@ -8209,7 +8736,7 @@
         items.forEach(function (u) {
           if (u.itemKey === key && u.ts === occTs) match = u;
         });
-        if (match) openForecastItemEditor(key, match.label, match.amount, match.ts, match.kind, match.categoryId);
+        if (match) openForecastItemEditor(key, match.label, match.amount, match.ts, match.kind, match.categoryId, match.detectedAmount, match.detectedTs);
       });
     });
   }
@@ -8678,6 +9205,25 @@
     if (m) m.classList.remove('show');
   });
   if ($('forecastItemEditSaveBtn')) $('forecastItemEditSaveBtn').addEventListener('click', saveForecastItemOverride);
+  if ($('forecastItemResetBtn')) $('forecastItemResetBtn').addEventListener('click', resetForecastItemOverride);
+  if ($('forecastItemSkipBtn')) $('forecastItemSkipBtn').addEventListener('click', skipForecastOccurrence);
+  var forecastApplySeg = $('forecastApplySeg');
+  if (forecastApplySeg) {
+    Array.prototype.forEach.call(forecastApplySeg.querySelectorAll('.seg-btn'), function (btn) {
+      btn.addEventListener('click', function () {
+        forecastEditScope = btn.dataset.forecastScope || 'once';
+        Array.prototype.forEach.call(forecastApplySeg.querySelectorAll('.seg-btn'), function (b) {
+          b.classList.toggle('is-active', b === btn);
+        });
+        var hint = $('forecastApplyHint');
+        if (hint) {
+          hint.textContent = forecastEditScope === 'always'
+            ? 'Future months use this date and amount until you reset.'
+            : 'Only this occurrence moves. Later months keep the usual date.';
+        }
+      });
+    });
+  }
   if ($('otherTransferSheet')) $('otherTransferSheet').addEventListener('click', function (ev) {
     if (ev.target === $('otherTransferSheet')) closeOtherTransferSheet();
   });
@@ -9214,6 +9760,22 @@
     reapplyImportDedupe: reapplyImportDedupe,
     importReviewHasUnsavedChanges: importReviewHasUnsavedChanges,
     requestDismissImportReview: requestDismissImportReview,
+    merchantMatchKey: merchantMatchKey,
+    countSimilarImportRows: countSimilarImportRows,
+    countSimilarImportRowsForRows: function (rows, row, catId) {
+      pendingImport = { rows: rows };
+      return countSimilarImportRows(row, catId);
+    },
+    upsertImportRule: upsertImportRule,
+    extractCheckingBalanceOffer: extractCheckingBalanceOffer,
+    setPendingBulkRecategorize: function (p) { pendingBulkRecategorize = p; },
+    renderEntries: renderEntries,
+    saveEntryEdit: saveEntryEdit,
+    openEntryEditor: openEntryEditor,
+    forecastOverrides: function () { return forecastOverrides; },
+    setForecastOverrides: function (o) { forecastOverrides = o || {}; saveForecastOverrides(); },
+    resetForecastItemOverride: resetForecastItemOverride,
+    skipForecastOccurrence: skipForecastOccurrence,
     buildExistingContentCounts: buildExistingContentCounts,
     descriptionMatchKey: descriptionMatchKey,
     dayKey: dayKey,
