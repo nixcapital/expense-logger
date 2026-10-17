@@ -41,17 +41,6 @@
 })();
 </script>
 
-<!-- LOCK SCREEN -->
-<div id="lockScreen" class="lock-screen" hidden>
-  <div class="lock-inner">
-    <img src="apple-touch-icon.png" alt="" class="lock-app-icon" width="80" height="80">
-    <p class="lock-sub">Enter passcode</p>
-    <div class="pin-dots" id="pinDots"></div>
-    <div class="pin-pad" id="pinPad"></div>
-    <button class="link-btn" id="forgotPinBtn" type="button">Forgot passcode?</button>
-  </div>
-</div>
-
 <!-- APP -->
 <div id="app" hidden>
 
@@ -398,17 +387,6 @@
   </div>
 
   <div class="inset-group">
-    <h3 class="group-label">Security</h3>
-    <div class="inset-card">
-      <div class="settings-row">
-        <span>Passcode lock</span>
-        <button class="link-btn" id="togglePinBtn" type="button">Off</button>
-      </div>
-      <p class="hint inset-hint">Passcode is stored hashed (SHA-256) on this device.</p>
-    </div>
-  </div>
-
-  <div class="inset-group">
     <h3 class="group-label">Data</h3>
     <div class="inset-card">
       <div class="backup-nudge settings-nudge" id="backupReminderLine" hidden>
@@ -661,28 +639,6 @@
       <button class="btn-secondary danger" id="receiptModalDelete" type="button" hidden>Delete receipt</button>
     </div>
     <button class="btn-secondary danger full-destructive" id="editDeleteBtn" type="button">Delete expense</button>
-  </div>
-</div>
-
-<!-- Modal: passcode -->
-<div class="modal-overlay sheet" id="pinModal">
-  <div class="modal sheet-modal">
-    <div class="sheet-grabber" aria-hidden="true"></div>
-    <h3 id="pinModalTitle">Set Passcode</h3>
-    <form id="pinForm" onsubmit="return false;">
-      <div class="field">
-        <label for="pinInput1">Passcode (4–8 digits)</label>
-        <input type="password" id="pinInput1" inputmode="numeric" pattern="[0-9]*" maxlength="8" autocomplete="new-password">
-      </div>
-      <div class="field">
-        <label for="pinInput2">Confirm passcode</label>
-        <input type="password" id="pinInput2" inputmode="numeric" pattern="[0-9]*" maxlength="8" autocomplete="new-password">
-      </div>
-      <div class="btn-row">
-        <button class="btn-secondary" id="pinCancelBtn" type="button">Cancel</button>
-        <button class="save-btn flex1" id="pinSaveBtn" type="button">Save</button>
-      </div>
-    </form>
   </div>
 </div>
 
@@ -1007,9 +963,7 @@
       var err = document.getElementById('homeBootError');
       var txt = document.getElementById('homeBootErrorText');
       var app = document.getElementById('app');
-      var lock = document.getElementById('lockScreen');
       if (app) app.hidden = false;
-      if (lock) lock.hidden = true;
       if (err) err.hidden = false;
       if (txt) {
         txt.textContent = 'The app did not finish starting (often a cached update). Force-quit and reopen, or refresh once on a connection.';

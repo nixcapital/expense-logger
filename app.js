@@ -239,9 +239,6 @@
   var $ = function (id) { return document.getElementById(id); };
 
   var $app = $('app');
-  var $lockScreen = $('lockScreen');
-  var $pinDots = $('pinDots');
-  var $pinPad = $('pinPad');
 
   var $amount = $('amount');
   var $note = $('note');
@@ -345,14 +342,6 @@
   var $editSaveBtn = $('editSaveBtn');
   var $editDeleteBtn = $('editDeleteBtn');
 
-  var $pinModal = $('pinModal');
-  var $pinModalTitle = $('pinModalTitle');
-  var $pinInput1 = $('pinInput1');
-  var $pinInput2 = $('pinInput2');
-  var $pinCancelBtn = $('pinCancelBtn');
-  var $pinSaveBtn = $('pinSaveBtn');
-  var $togglePinBtn = $('togglePinBtn');
-  var $forgotPinBtn = $('forgotPinBtn');
 
   var $versionLine = $('versionLine');
   var $storageStatusLine = $('storageStatusLine');
@@ -1293,7 +1282,7 @@
     try {
       for (var i = 0; i < localStorage.length; i++) {
         var k = localStorage.key(i);
-        if (k && k.indexOf('expenseLogger.') === 0) out[k] = localStorage.getItem(k);
+        if (k && k.indexOf('expenseLogger.') === 0 && k !== PIN_KEY) out[k] = localStorage.getItem(k);
       }
     } catch (e) {}
     return out;
@@ -1357,7 +1346,7 @@
   function applyBackupStorageReplacingAppData(backupStorage, deviceMetaKeep) {
     var filtered = {};
     Object.keys(backupStorage || {}).forEach(function (k) {
-      if (k.indexOf('expenseLogger.') === 0 && k !== META_KEY) {
+      if (k.indexOf('expenseLogger.') === 0 && k !== META_KEY && k !== PIN_KEY) {
         filtered[k] = backupStorage[k];
       }
     });
@@ -9284,144 +9273,6 @@
     }
   });
 
-  // ---------- Passcode lock ----------
-  var pinBuffer = '';
-  var pinExpectedLength = 4;
-
-  function hashPin(pin) {
-    if (window.crypto && crypto.subtle && crypto.subtle.digest) {
-      var enc = new TextEncoder().encode('expenseLogger:' + pin);
-      return crypto.subtle.digest('SHA-256', enc).then(function (buf) {
-        var arr = Array.from(new Uint8Array(buf));
-        return arr.map(function (b) { return b.toString(16).padStart(2, '0'); }).join('');
-      });
-    }
-    // Fallback: very weak, only used if SubtleCrypto unavailable
-    var h = 0;
-    var s = 'expenseLogger:' + pin;
-    for (var i = 0; i < s.length; i++) { h = ((h << 5) - h) + s.charCodeAt(i); h |= 0; }
-    return Promise.resolve('weak:' + h);
-  }
-
-  function getStoredPin() {
-    try { return localStorage.getItem(PIN_KEY); } catch (e) { return null; }
-  }
-  function setStoredPin(hash) {
-    try { localStorage.setItem(PIN_KEY, hash); } catch (e) {}
-  }
-  function clearStoredPin() {
-    try { localStorage.removeItem(PIN_KEY); } catch (e) {}
-  }
-
-  function buildPinPad() {
-    var layout = ['1','2','3','4','5','6','7','8','9','','0','⌫'];
-    $pinPad.innerHTML = '';
-    layout.forEach(function (key) {
-      var btn = document.createElement('button');
-      btn.type = 'button';
-      btn.className = 'pin-key' + (key === '' ? ' empty' : '');
-      btn.textContent = key;
-      if (key !== '') {
-        btn.addEventListener('click', function () {
-          if (key === '⌫') pinBuffer = pinBuffer.slice(0, -1);
-          else if (pinBuffer.length < 8) pinBuffer += key;
-          updatePinDots();
-          if (pinBuffer.length >= pinExpectedLength) tryUnlock();
-        });
-      }
-      $pinPad.appendChild(btn);
-    });
-  }
-
-  function updatePinDots() {
-    var stored = getStoredPin();
-    // We don't know length; show dots for current buffer
-    $pinDots.innerHTML = '';
-    var len = Math.max(pinBuffer.length, 4);
-    for (var i = 0; i < len; i++) {
-      var d = document.createElement('span');
-      d.className = 'pin-dot' + (i < pinBuffer.length ? ' filled' : '');
-      $pinDots.appendChild(d);
-    }
-  }
-
-  function tryUnlock() {
-    var stored = getStoredPin();
-    if (!stored) { showApp(); return; }
-    hashPin(pinBuffer).then(function (h) {
-      if (h === stored) {
-        pinBuffer = '';
-        showApp();
-      } else {
-        toast('Wrong passcode');
-        pinBuffer = '';
-        updatePinDots();
-      }
-    });
-  }
-
-  function showLock() {
-    $app.hidden = true;
-    $lockScreen.hidden = false;
-    pinBuffer = '';
-    updatePinDots();
-    buildPinPad();
-  }
-  function showApp() {
-    $lockScreen.hidden = true;
-    $app.hidden = false;
-  }
-
-  $togglePinBtn.addEventListener('click', function () {
-    if (getStoredPin()) {
-      // Turn off
-      if (!window.confirm('Remove passcode lock?')) return;
-      clearStoredPin();
-      $togglePinBtn.textContent = 'Off';
-      toast('Passcode removed');
-    } else {
-      // Turn on
-      $pinModalTitle.textContent = 'Set Passcode';
-      $pinInput1.value = ''; $pinInput2.value = '';
-      $pinModal.classList.add('show');
-    }
-  });
-
-  $pinCancelBtn.addEventListener('click', function () { $pinModal.classList.remove('show'); });
-  $pinSaveBtn.addEventListener('click', function () {
-    var p1 = $pinInput1.value.trim();
-    var p2 = $pinInput2.value.trim();
-    if (!/^\d{4,8}$/.test(p1)) { toast('Passcode must be 4–8 digits'); return; }
-    if (p1 !== p2) { toast('Passcodes do not match'); return; }
-    hashPin(p1).then(function (h) {
-      setStoredPin(h);
-      $pinModal.classList.remove('show');
-      $togglePinBtn.textContent = 'On';
-      toast('Passcode set');
-    });
-  });
-
-  $forgotPinBtn.addEventListener('click', function () {
-    var msg = 'Forgot passcode?\n\nThis will erase all app data on this device (expenses, budgets, receipts) so you can start fresh. Backups you exported are not affected.';
-    if (!window.confirm(msg)) return;
-    if (!window.confirm('Really erase everything?')) return;
-    entries = []; budgets = {}; recurringItems = [];
-    categories = DEFAULT_CATEGORIES.slice();
-    try {
-      localStorage.removeItem(STORAGE_KEY);
-      localStorage.removeItem(CATS_KEY);
-      localStorage.removeItem(BUDGETS_KEY);
-      localStorage.removeItem(RECURRING_KEY);
-      localStorage.removeItem(PIN_KEY);
-    } catch (e) {}
-    idbClear().catch(function () {});
-    buildCategoryButtons(); rebuildFilterDropdowns();
-    renderAll(); renderCategoryList(); renderBudgetSettings(); renderRecurringList();
-    $togglePinBtn.textContent = 'Off';
-    showApp();
-    toast('Data erased. Passcode removed.');
-  });
-
   // ---------- Event wiring ----------
   $amount.addEventListener('input', updateSaveState);
   $saveBtn.addEventListener('click', addEntry);
@@ -9514,7 +9365,7 @@
     });
   });
 
-  [$budgetModal, $catModal, $receiptModal, $pinModal, $importAccountModal, $addAccountModal, $wrappedModal, $backupRestoreModal].forEach(function (ov) {
+  [$budgetModal, $catModal, $receiptModal, $importAccountModal, $addAccountModal, $wrappedModal, $backupRestoreModal].forEach(function (ov) {
     if (!ov) return;
     ov.addEventListener('click', function (e) {
       if (e.target === ov) {
@@ -9673,6 +9524,8 @@
 
   function bootApp() {
     var bootFailed = false;
+    // Passcode lock was removed; drop any stale hash left by older versions.
+    try { localStorage.removeItem(PIN_KEY); } catch (e) {}
     try {
       // ---------- Boot ----------
       initPersistentStorage();
@@ -9720,10 +9573,7 @@
       renderDataMetaLines();
       renderBackupReminder();
 
-      if ($togglePinBtn) $togglePinBtn.textContent = getStoredPin() ? 'On' : 'Off';
-
-      if (getStoredPin()) showLock();
-      else showApp();
+      if ($app) $app.hidden = false;
 
       initScreenTitleObservers();
       wireActivityFilters();
@@ -9741,13 +9591,7 @@
       bootFailed = true;
       logBootSectionError('boot', err);
       showHomeBootError('Something went wrong while opening the app. Your saved entries and settings on this device were not changed.');
-      try {
-        if (getStoredPin()) showLock();
-        else showApp();
-      } catch (e2) {
-        if ($app) $app.hidden = false;
-        if ($lockScreen) $lockScreen.hidden = true;
-      }
+      if ($app) $app.hidden = false;
       try {
         if ($('tab-summary')) $('tab-summary').hidden = false;
       } catch (e3) {}
@@ -9764,7 +9608,6 @@
     showHomeBootError('Something went wrong while opening the app. Your saved entries and settings on this device were not changed.');
     try {
       if ($app) $app.hidden = false;
-      if ($lockScreen) $lockScreen.hidden = true;
       if ($('tab-summary')) $('tab-summary').hidden = false;
     } catch (e2) {}
     hideSplashVisualOnly();
