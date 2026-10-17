@@ -53,7 +53,7 @@
   var TRANSFER_PATTERNS_KEY = 'expenseLogger.transferPatterns.v1';
   var FORECAST_OVERRIDES_KEY = 'expenseLogger.forecastOverrides.v1';
   var FORECAST_ONEOFFS_KEY = 'expenseLogger.forecastCountedOneOffs.v1';
-  var APP_VERSION = '1.7.5';
+  var APP_VERSION = '1.7.6';
   var BACKUP_FORMAT = 2;
   var BACKUP_FORMAT_LEGACY = 1;
   var DEFAULT_ACCOUNT_CHECKING = 'acct-checking';
@@ -4649,8 +4649,9 @@
 
   function initScreenTitleObservers() {
     Array.prototype.forEach.call(document.querySelectorAll('.screen-header-wrap'), function (wrap) {
-      var sentinel = wrap.querySelector('.title-sentinel');
-      if (!sentinel || !window.IntersectionObserver) return;
+      var sentinel = wrap.previousElementSibling;
+      if (!sentinel || !sentinel.classList || !sentinel.classList.contains('title-sentinel')) return;
+      if (!window.IntersectionObserver) return;
       new IntersectionObserver(function (entries) {
         entries.forEach(function (en) {
           wrap.classList.toggle('compact', !en.isIntersecting);

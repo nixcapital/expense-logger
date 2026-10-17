@@ -13,8 +13,8 @@
 <link rel="manifest" href="manifest.json">
 <link rel="icon" href="icon-192.png">
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
-<link rel="stylesheet" href="styles.css?v=1.7.5">
-<link rel="stylesheet" href="icon-animations.css?v=1.7.5">
+<link rel="stylesheet" href="styles.css?v=1.7.6">
+<link rel="stylesheet" href="icon-animations.css?v=1.7.6">
 <title>Expense Logger</title>
 </head>
 <body>
@@ -59,8 +59,8 @@
 
 <!-- TAB: HOME (Summary) -->
 <section id="tab-summary" class="screen" hidden>
+  <div class="title-sentinel" aria-hidden="true"></div>
   <div class="screen-header-wrap">
-    <div class="title-sentinel" aria-hidden="true"></div>
     <h1 class="screen-title">Home</h1>
     <p class="screen-title-compact">Home</p>
   </div>
@@ -191,7 +191,10 @@
 <section id="tab-forecast" class="screen forecast-screen" hidden>
   <div class="forecast-nav" id="forecastNav">
     <div class="forecast-nav-row">
-      <button type="button" class="link-btn forecast-back-btn" id="forecastBackBtn">&lt; Home</button>
+      <button type="button" class="link-btn forecast-back-btn" id="forecastBackBtn" aria-label="Home">
+        <svg class="forecast-back-chev" width="11" height="18" viewBox="0 0 11 18" fill="none" aria-hidden="true"><path d="M9.5 2L2.5 9l7 7" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        <span>Home</span>
+      </button>
       <h1 class="forecast-nav-title">Forecast</h1>
       <button type="button" class="forecast-info-btn" id="forecastInfoBtn" aria-label="Forecast info">
         <svg width="22" height="22" viewBox="0 0 22 22" fill="none" aria-hidden="true"><circle cx="11" cy="11" r="9" stroke="currentColor" stroke-width="1.5"/><path d="M11 10v6M11 7h.01" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"/></svg>
@@ -298,8 +301,8 @@
 
 <!-- TAB: ACTIVITY (History) -->
 <section id="tab-history" class="screen" hidden>
+  <div class="title-sentinel" aria-hidden="true"></div>
   <div class="screen-header-wrap">
-    <div class="title-sentinel" aria-hidden="true"></div>
     <h1 class="screen-title">Activity</h1>
     <p class="screen-title-compact">Activity</p>
   </div>
@@ -359,8 +362,8 @@
 
 <!-- TAB: REPORTS -->
 <section id="tab-report" class="screen" hidden>
+  <div class="title-sentinel" aria-hidden="true"></div>
   <div class="screen-header-wrap">
-    <div class="title-sentinel" aria-hidden="true"></div>
     <h1 class="screen-title">Reports</h1>
     <p class="screen-title-compact">Reports</p>
   </div>
@@ -382,8 +385,8 @@
 
 <!-- TAB: SETTINGS -->
 <section id="tab-settings" class="screen" hidden>
+  <div class="title-sentinel" aria-hidden="true"></div>
   <div class="screen-header-wrap">
-    <div class="title-sentinel" aria-hidden="true"></div>
     <h1 class="screen-title">Settings</h1>
     <p class="screen-title-compact">Settings</p>
   </div>
@@ -886,10 +889,10 @@
   <p class="hint wrapped-empty" id="wrappedEmpty" hidden>No spending data for this month.</p>
 </div>
 
-<script src="icon-system.js?v=1.7.5"></script>
-<script src="forecast.js?v=1.7.5"></script>
-<script src="wrapped.js?v=1.7.5"></script>
-<script src="app.js?v=1.7.5"></script>
+<script src="icon-system.js?v=1.7.6"></script>
+<script src="forecast.js?v=1.7.6"></script>
+<script src="wrapped.js?v=1.7.6"></script>
+<script src="app.js?v=1.7.6"></script>
 <script>
 (function () {
   'use strict';
