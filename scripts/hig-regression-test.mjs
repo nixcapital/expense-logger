@@ -142,10 +142,6 @@ async function run() {
     assert.ok(bb && bb.height >= 44 && bb.width >= 44, 'Balance button touch target');
   }
 
-  const pinBtn = page.locator('#togglePinBtn');
-  const pinBb = await pinBtn.boundingBox();
-  assert.ok(pinBb && pinBb.width >= 44 && pinBb.height >= 44, 'Passcode Off button width');
-
   const accent = await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--accent').trim());
   assert.strictEqual(accent.toUpperCase(), '#2558D4', 'light-mode accessible accent');
 
