@@ -124,7 +124,21 @@ for (const scheme of ['light', 'dark']) {
 
   await page.evaluate(() => window.ExpenseLoggerTest.openForecastScreen());
   await page.waitForSelector('#tab-forecast:not([hidden])');
-  await page.waitForTimeout(600);
+  await page.waitForFunction(() => {
+    const el = document.getElementById('forecastBreakdownTotal');
+    return el && /1,284/.test(el.textContent || '');
+  }, { timeout: 15000 });
+  await page.evaluate(() => {
+    const scrollEl = document.getElementById('tab-forecast');
+    const titles = Array.from(document.querySelectorAll('#forecastUpcomingList .forecast-up-title'));
+    const chase = titles.find((t) => /chase card payment/i.test(t.textContent || ''));
+    if (!chase || !scrollEl) return;
+    const row = chase.closest('.forecast-up-row');
+    if (!row) return;
+    const rowTop = row.getBoundingClientRect().top + scrollEl.scrollTop;
+    scrollEl.scrollTop = Math.max(0, rowTop - 100);
+  });
+  await page.waitForTimeout(500);
   await shot(page, `4-forecast-${scheme}.png`);
 
   await browser.close();
@@ -161,21 +175,30 @@ const ctxSafe = await browserSafe.newContext({
   serviceWorkers: 'block'
 });
 await installFixtureInitScript(ctxSafe, payload);
-await ctxSafe.addInitScript(() => {
-  const style = document.createElement('style');
-  style.id = 'screenshot-safe-area';
-  style.textContent = `
-    .app-main { padding-top: 47px !important; padding-bottom: 34px !important; }
-    .bottom-tab-bar { padding-bottom: calc(34px + env(safe-area-inset-bottom, 0px)) !important; }
-  `;
-  document.head.appendChild(style);
-});
 const pageSafe = await ctxSafe.newPage();
 await pageSafe.goto(`http://127.0.0.1:${PORT}/index.html`, { waitUntil: 'networkidle' });
 await waitBoot(pageSafe);
 await openSettings(pageSafe);
 await pageSafe.evaluate(() => window.ExpenseLoggerTest.openChaseCardSheet());
 await pageSafe.waitForSelector('#chaseCardSheet.show');
+await pageSafe.evaluate(() => {
+  const sheet = document.getElementById('chaseCardSheet');
+  if (sheet) {
+    sheet.style.boxSizing = 'border-box';
+    sheet.style.paddingTop = '47px';
+    sheet.style.paddingBottom = '34px';
+  }
+  const topInset = document.createElement('div');
+  topInset.setAttribute('data-qa', 'safe-area-top');
+  topInset.style.cssText =
+    'position:fixed;top:0;left:0;right:0;height:47px;background:rgba(0,0,0,0.08);z-index:10000;pointer-events:none;';
+  const homeBar = document.createElement('div');
+  homeBar.setAttribute('data-qa', 'safe-area-home');
+  homeBar.style.cssText =
+    'position:fixed;left:50%;bottom:10px;transform:translateX(-50%);width:134px;height:5px;border-radius:3px;background:rgba(0,0,0,0.35);z-index:10000;pointer-events:none;';
+  document.body.appendChild(topInset);
+  document.body.appendChild(homeBar);
+});
 await pageSafe.waitForTimeout(400);
 await shot(pageSafe, '2-card-sheet-safe-area-light.png');
 await browserSafe.close();

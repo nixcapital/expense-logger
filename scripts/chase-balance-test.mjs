@@ -8,6 +8,7 @@ import { chromium } from 'playwright';
 import { createServer } from 'http';
 import { readFileSync, existsSync } from 'fs';
 import { join, extname } from 'path';
+import { buildChaseBalanceFixture, CHECKING as FX_CHECKING, CHASE as FX_CHASE, FIXTURE_NOW } from './chase-balance-fixture.mjs';
 
 const require = createRequire(import.meta.url);
 const FC = require('../forecast.js');
@@ -134,6 +135,35 @@ assert.ok(run.ok);
 var upChase = (run.upcoming || []).find(function (u) { return u.label === 'Chase card payment'; });
 assert.ok(upChase);
 assert.strictEqual(upChase.amount, 1284.17);
+
+console.log('chase-balance-test: computeWindowBreakdown uses balance owed');
+var fx = buildChaseBalanceFixture();
+var fxOwed = FC.computeCardBalanceOwed({
+  anchorAmount: 2410.55,
+  anchorAsOfMs: ts(2026, 9, 1),
+  entries: fx.entries,
+  chaseId: FX_CHASE,
+  nowMs: FIXTURE_NOW
+});
+assert.ok(fxOwed.ok);
+assert.strictEqual(fxOwed.owed, 1284.17);
+var windowBr = FC.computeWindowBreakdown({
+  nowMs: FIXTURE_NOW,
+  windowDays: 30,
+  startingBalance: 3560,
+  entries: fx.entries,
+  checkingId: FX_CHECKING,
+  chaseId: FX_CHASE,
+  transferPairs: fx.transferPairs,
+  recurringItems: [],
+  overrides: {},
+  countedOneOffs: [],
+  maxLookaheadDays: 365,
+  cardBalanceOwed: fxOwed.owed
+});
+assert.ok(windowBr.ok);
+assert.strictEqual(windowBr.cardPayments, 1284.17);
+assert.strictEqual(windowBr.net, -1284.17);
 
 console.log('chase-balance-test: browser migration + neutral correction');
 

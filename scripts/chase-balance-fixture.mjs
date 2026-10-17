@@ -91,7 +91,20 @@ export function buildChaseBalanceFixture() {
   const targetPurchases = 1312.42;
   let purchaseSum = namedPurchases.reduce((s, x) => s + x[0], 0);
   const remainder = Math.round((targetPurchases - purchaseSum) * 100) / 100;
-  const extraCount = 11;
+  const extraMerchants = [
+    'Sweetgreen',
+    'CVS Pharmacy',
+    'Uber Eats',
+    'Apple.com/bill',
+    'Netflix',
+    'Spotify',
+    'DoorDash',
+    'Walgreens',
+    'Chipotle',
+    'Costco Wholesale',
+    'Patagonia'
+  ];
+  const extraCount = extraMerchants.length;
   let allocated = 0;
   for (let i = 0; i < extraCount; i++) {
     const isLast = i === extraCount - 1;
@@ -103,7 +116,7 @@ export function buildChaseBalanceFixture() {
       id: 'px' + i,
       amount: amt,
       categoryId: 'dining',
-      note: 'Card purchase ' + (i + 1),
+      note: extraMerchants[i],
       ts: ts(2026, 9, 4 + (i % 12)),
       accountId: CHASE
     });

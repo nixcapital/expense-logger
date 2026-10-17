@@ -7847,7 +7847,8 @@
       countedOneOffs: forecastCountedOneOffsList(),
       chartDays: forecastChartDays,
       maxLookaheadDays: 365,
-      cushion: getForecastCushion()
+      cushion: getForecastCushion(),
+      cardBalanceOwed: payload.cardBalanceOwed
     });
     if (sim.schedules) lastForecastSchedules = sim.schedules;
     lastForecastSim = sim;
@@ -7872,7 +7873,8 @@
       recurringItems: recurringItems,
       overrides: forecastOverrides,
       countedOneOffs: forecastCountedOneOffsList(),
-      maxLookaheadDays: 365
+      maxLookaheadDays: 365,
+      cardBalanceOwed: payload.cardBalanceOwed
     });
     lastForecastBreakdown = breakdown.ok ? breakdown : null;
     if (breakdown.ok) renderForecastBreakdownCard(breakdown, result, sim.schedules);
