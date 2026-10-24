@@ -40,6 +40,48 @@ const incomeLike = { id: 'x', amount: 50, categoryId: 'other', note: 'Refund', t
 assert.strictEqual(EW.entryCountsAsSpending(transfer), false);
 assert.strictEqual(EW.entryCountsAsSpending(incomeLike), false);
 
+const paycheckDeposit = {
+  id: 'pay',
+  amount: 3200,
+  categoryId: 'income',
+  note: 'Paycheck',
+  ts: ts(2026, 9, 1),
+  isDeposit: true
+};
+const groceriesSpend = {
+  id: 'groc',
+  amount: 42.1,
+  categoryId: 'groceries',
+  note: 'Groceries',
+  ts: ts(2026, 9, 5)
+};
+const xfer = {
+  id: 'xfer',
+  amount: 500,
+  categoryId: 'bills',
+  note: 'Transfer',
+  ts: ts(2026, 9, 10),
+  isTransfer: true
+};
+const zeroDeposit = {
+  id: 'zdep',
+  amount: 0,
+  categoryId: 'income',
+  note: 'Zero',
+  ts: ts(2026, 9, 2),
+  isDeposit: true
+};
+assert.strictEqual(EW.entryCountsAsSpending(paycheckDeposit), false);
+assert.strictEqual(EW.entryCountsAsSpending(xfer), false);
+assert.strictEqual(EW.entryCountsAsSpending(groceriesSpend), true);
+assert.strictEqual(EW.entryCountsAsSpending(zeroDeposit), false);
+const depositMonthTotal = EW.monthTotal(
+  [paycheckDeposit, groceriesSpend, xfer, zeroDeposit],
+  2026,
+  9
+);
+assert.strictEqual(depositMonthTotal, 42.1);
+
 const entries = [
   { id: '1', amount: 5.61, categoryId: 'dining', note: 'STARBUCKS #4412', ts: ts(2026, 8, 2), accountId: 'acct-chase' },
   { id: '2', amount: 5.61, categoryId: 'dining', note: 'Starbucks Store 12', ts: ts(2026, 8, 5), accountId: 'acct-chase' },
