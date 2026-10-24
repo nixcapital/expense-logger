@@ -1,5 +1,5 @@
 /**
- * Simulates 1.9.1 → 1.9.2 deploy on the same origin (port).
+ * Simulates 1.9.5 → 1.9.6 deploy on the same origin (port).
  * Run: node scripts/sw-upgrade-test.mjs [--baseline]
  * --baseline uses main-branch sw.js/app (reproduces mixed-cache issues).
  */
@@ -12,8 +12,8 @@ import { execSync } from 'child_process';
 const PORT = 8877;
 const ROOT_OLD = '/tmp/el-upgrade-old';
 const ROOT_NEW = '/workspace';
-/** Pinned 1.9.1 release (before 1.9.2). */
-const UPGRADE_FROM_REF = 'a52bdc8';
+/** Pinned 1.9.5 release (before 1.9.6). */
+const UPGRADE_FROM_REF = 'da57ab0';
 
 function prepareOldTree() {
   execSync(`rm -rf ${ROOT_OLD} && mkdir -p ${ROOT_OLD}`);
@@ -80,8 +80,8 @@ async function run(useBaseline) {
     return el ? el.textContent : '';
   });
   console.log('After install:', v1);
-  if (!v1.includes('1.9.1')) {
-    console.error('Expected 1.9.1 before upgrade, got:', v1);
+  if (!v1.includes('1.9.5')) {
+    console.error('Expected 1.9.5 before upgrade, got:', v1);
   }
 
   if (useBaseline) {
@@ -96,7 +96,7 @@ async function run(useBaseline) {
     const deployNew = '/tmp/el-upgrade-new';
     execSync(`rm -rf ${deployNew} && cp -a ${ROOT_NEW} ${deployNew}`);
     currentRoot = deployNew;
-    console.log('Switching server files to full 1.9.2');
+    console.log('Switching server files to full 1.9.6');
   }
 
   await page.reload({ waitUntil: 'networkidle' });
@@ -107,7 +107,7 @@ async function run(useBaseline) {
   console.log('After deploy reload:', v2, 'caches:', caches, 'entries preserved:', !!entries);
 
   let reloads = 0;
-  while (!v2.includes('1.9.2') && reloads < 2) {
+  while (!v2.includes('1.9.6') && reloads < 2) {
     await page.reload({ waitUntil: 'networkidle' });
     await page.waitForTimeout(2500);
     v2 = await page.evaluate(() => document.getElementById('versionLine')?.textContent || '');
@@ -116,7 +116,7 @@ async function run(useBaseline) {
     console.log('Extra reload', reloads + ':', v2, 'caches:', caches);
   }
 
-  const ok = v1.includes('1.9.1') && v2.includes('1.9.2') && entries && entries.includes('12.5') && errors.length === 0;
+  const ok = v1.includes('1.9.5') && v2.includes('1.9.6') && entries && entries.includes('12.5') && errors.length === 0;
   console.log('page errors:', errors);
   console.log(ok ? 'PASS' : 'FAIL');
 
