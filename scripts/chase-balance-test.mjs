@@ -225,7 +225,7 @@ const migrated = await page.evaluate(() => {
     accountsLen: T.getState().accounts.length
   };
 });
-assert.strictEqual(migrated.version, '1.9.1');
+assert.strictEqual(migrated.version, '1.9.2');
 assert.strictEqual(migrated.chaseName, 'Chase card');
 assert.strictEqual(migrated.hasAnchor, false);
 assert.strictEqual(migrated.accountsLen, 2);
