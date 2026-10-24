@@ -53,7 +53,7 @@
   var TRANSFER_PATTERNS_KEY = 'expenseLogger.transferPatterns.v1';
   var FORECAST_OVERRIDES_KEY = 'expenseLogger.forecastOverrides.v1';
   var FORECAST_ONEOFFS_KEY = 'expenseLogger.forecastCountedOneOffs.v1';
-  var APP_VERSION = '1.9.1';
+  var APP_VERSION = '1.9.2';
   var BACKUP_FORMAT = 2;
   var BACKUP_FORMAT_LEGACY = 1;
   var DEFAULT_ACCOUNT_CHECKING = 'acct-checking';
@@ -581,23 +581,77 @@
   }
 
   // ---------- Load / save (localStorage) ----------
+  var storageGuard = { entries: false, categories: false, accounts: false };
+
+  function resetStorageGuard() {
+    storageGuard.entries = false;
+    storageGuard.categories = false;
+    storageGuard.accounts = false;
+  }
+
+  function storageKeyHasData(key) {
+    try {
+      var raw = localStorage.getItem(key);
+      return typeof raw === 'string' && raw.length > 0;
+    } catch (e) { return false; }
+  }
+
+  function markStorageCorrupt(kind) {
+    if (kind === 'entries' || kind === 'categories' || kind === 'accounts') {
+      storageGuard[kind] = true;
+    }
+  }
+
+  function storageGuardBlocksSave(key) {
+    if (key === STORAGE_KEY) return storageGuard.entries;
+    if (key === CATS_KEY) return storageGuard.categories;
+    if (key === ACCOUNTS_KEY) return storageGuard.accounts;
+    return false;
+  }
+
+  function showStorageGuardBootError() {
+    if (!storageGuard.entries && !storageGuard.categories && !storageGuard.accounts) return;
+    showHomeBootError('Some saved data on this device could not be read and was not changed. Try restoring from a backup.');
+  }
+
   function loadCategories() {
     try {
       var raw = localStorage.getItem(CATS_KEY);
-      if (raw) {
-        var parsed = JSON.parse(raw);
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          var valid = parsed.filter(function (c) {
-            return c && typeof c.id === 'string' && typeof c.name === 'string';
-          });
-          if (valid.length > 0) return valid;
-        }
+      if (!raw) return DEFAULT_CATEGORIES.slice();
+      var parsed;
+      try {
+        parsed = JSON.parse(raw);
+      } catch (parseErr) {
+        markStorageCorrupt('categories');
+        return DEFAULT_CATEGORIES.slice();
       }
-    } catch (e) {}
-    return DEFAULT_CATEGORIES.slice();
+      if (!Array.isArray(parsed)) {
+        markStorageCorrupt('categories');
+        return DEFAULT_CATEGORIES.slice();
+      }
+      if (parsed.length > 0) {
+        var valid = parsed.filter(function (c) {
+          return c && typeof c.id === 'string' && typeof c.name === 'string';
+        });
+        if (valid.length > 0) return valid;
+        markStorageCorrupt('categories');
+        return DEFAULT_CATEGORIES.slice();
+      }
+      return DEFAULT_CATEGORIES.slice();
+    } catch (e) {
+      if (storageKeyHasData(CATS_KEY)) markStorageCorrupt('categories');
+      return DEFAULT_CATEGORIES.slice();
+    }
   }
   function saveCategories() {
-    try { localStorage.setItem(CATS_KEY, JSON.stringify(categories)); } catch (e) { toast('Could not save categories'); }
+    if (storageGuardBlocksSave(CATS_KEY)) return false;
+    try {
+      localStorage.setItem(CATS_KEY, JSON.stringify(categories));
+      return true;
+    } catch (e) {
+      toast('Could not save categories');
+      return false;
+    }
   }
   function loadBudgets() {
     try {
@@ -659,12 +713,25 @@
     try {
       var raw = localStorage.getItem(STORAGE_KEY);
       if (!raw) return [];
-      var p = JSON.parse(raw);
-      if (!Array.isArray(p)) return [];
+      var p;
+      try {
+        p = JSON.parse(raw);
+      } catch (parseErr) {
+        markStorageCorrupt('entries');
+        return [];
+      }
+      if (!Array.isArray(p)) {
+        markStorageCorrupt('entries');
+        return [];
+      }
       return p.filter(function (e) { return e && typeof e.amount === 'number' && e.categoryId; });
-    } catch (e) { return []; }
+    } catch (e) {
+      if (storageKeyHasData(STORAGE_KEY)) markStorageCorrupt('entries');
+      return [];
+    }
   }
   function saveEntries() {
+    if (storageGuardBlocksSave(STORAGE_KEY)) return false;
     try { localStorage.setItem(STORAGE_KEY, JSON.stringify(entries)); return true; }
     catch (e) { toast('Could not save — storage full or blocked'); return false; }
   }
@@ -725,6 +792,7 @@
 
   function ensureDefaultAccounts() {
     if (accounts.length > 0) return;
+    if (storageGuard.accounts) return;
     accounts = DEFAULT_ACCOUNTS.slice();
     saveAccounts();
   }
@@ -752,20 +820,39 @@
   function loadAccounts() {
     try {
       var raw = localStorage.getItem(ACCOUNTS_KEY);
-      if (raw) {
-        var p = JSON.parse(raw);
-        if (Array.isArray(p) && p.length > 0) {
-          return p.filter(function (a) {
-            return a && a.id && a.name && (a.type === 'bank' || a.type === 'credit_card');
-          });
-        }
+      if (!raw) return [];
+      var p;
+      try {
+        p = JSON.parse(raw);
+      } catch (parseErr) {
+        markStorageCorrupt('accounts');
+        return [];
       }
-    } catch (e) {}
-    return [];
+      if (!Array.isArray(p)) {
+        markStorageCorrupt('accounts');
+        return [];
+      }
+      if (p.length > 0) {
+        var valid = p.filter(function (a) {
+          return a && a.id && a.name && (a.type === 'bank' || a.type === 'credit_card');
+        });
+        if (valid.length > 0) return valid;
+        markStorageCorrupt('accounts');
+        return [];
+      }
+      return [];
+    } catch (e) {
+      if (storageKeyHasData(ACCOUNTS_KEY)) markStorageCorrupt('accounts');
+      return [];
+    }
   }
 
   function saveAccounts() {
-    try { localStorage.setItem(ACCOUNTS_KEY, JSON.stringify(accounts)); } catch (e) {}
+    if (storageGuardBlocksSave(ACCOUNTS_KEY)) return false;
+    try {
+      localStorage.setItem(ACCOUNTS_KEY, JSON.stringify(accounts));
+      return true;
+    } catch (e) { return false; }
   }
 
   function loadTransferPatterns() {
@@ -1448,6 +1535,7 @@
   }
 
   function reloadAllStateFromStorage() {
+    resetStorageGuard();
     categories = loadCategories();
     budgets = loadBudgets();
     recurringItems = loadRecurring();
@@ -9526,6 +9614,7 @@
     var bootFailed = false;
     // Passcode lock was removed; drop any stale hash left by older versions.
     try { localStorage.removeItem(PIN_KEY); } catch (e) {}
+    resetStorageGuard();
     try {
       // ---------- Boot ----------
       initPersistentStorage();
@@ -9559,6 +9648,7 @@
       })();
 
       migrate();
+      showStorageGuardBootError();
       buildCategoryButtons();
       rebuildFilterDropdowns();
       renderAll();
@@ -9743,7 +9833,18 @@
       saveForecastCountedOneOffs();
     },
     getTransferPatterns: function () { return transferPatterns; },
-    setTransferPatterns: function (p) { transferPatterns = p; saveTransferPatterns(); }
+    setTransferPatterns: function (p) { transferPatterns = p; saveTransferPatterns(); },
+    storageGuardStatus: function () {
+      return {
+        entries: storageGuard.entries,
+        categories: storageGuard.categories,
+        accounts: storageGuard.accounts
+      };
+    },
+    getLocalStorageRaw: function (key) { return localStorage.getItem(key); },
+    trySaveEntries: function () { return saveEntries(); },
+    trySaveCategories: function () { return saveCategories(); },
+    trySaveAccounts: function () { return saveAccounts(); }
   };
 
 })();
