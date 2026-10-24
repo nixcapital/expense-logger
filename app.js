@@ -53,7 +53,7 @@
   var TRANSFER_PATTERNS_KEY = 'expenseLogger.transferPatterns.v1';
   var FORECAST_OVERRIDES_KEY = 'expenseLogger.forecastOverrides.v1';
   var FORECAST_ONEOFFS_KEY = 'expenseLogger.forecastCountedOneOffs.v1';
-  var APP_VERSION = '1.9.4';
+  var APP_VERSION = '1.9.5';
   var BACKUP_FORMAT = 2;
   var BACKUP_FORMAT_LEGACY = 1;
   var DEFAULT_ACCOUNT_CHECKING = 'acct-checking';
@@ -5320,7 +5320,7 @@
         amount: entry.amount,
         categoryId: entry.categoryId,
         note: entry.note,
-        dayOfMonth: new Date().getDate()
+        dayOfMonth: new Date(ts).getDate()
       };
       recurringItems.push(rec);
       saveRecurring();
