@@ -31,6 +31,7 @@
 
   function entryCountsAsSpending(e) {
     if (!e || typeof e.amount !== 'number') return false;
+    if (e.isDeposit) return false;
     if (e.isTransfer) return false;
     if (e.excluded) return false;
     if (e.countAsSpending === false) return false;
