@@ -653,4 +653,44 @@ assert.ok(br165.income > 0, '165 income fixture has in-window payroll');
 assert.ok(br165.details.incomeCount >= 1, 'at least one paycheck in 90d');
 assert.strictEqual(br165.income, br165.details.incomeCount * br165.details.incomeEach);
 
+console.log('forecast-test: manual recurring skips month when ledger row exists (no accountId)');
+const nowOct20 = ts(2026, 9, 20);
+const recGymId = 'rec-gym-196';
+const recOtherId = 'rec-other-196';
+const entries196 = [
+  { id: 'gym-oct', amount: 50, note: 'Gym', ts: ts(2026, 9, 10), recurringId: recGymId }
+];
+const recurring196 = [
+  { id: recGymId, amount: 50, dayOfMonth: 15, note: 'Gym', categoryId: 'bills' },
+  { id: recOtherId, amount: 30, dayOfMonth: 25, note: 'Streaming', categoryId: 'fun' }
+];
+const proj196 = FC.projectedStartingBalance(1000, ts(2026, 9, 1), entries196, CHECKING, [], nowOct20);
+assert.strictEqual(proj196, 1000, 'ledger row without accountId does not move checking');
+const built196 = FC.buildScheduledEvents({
+  nowMs: nowOct20,
+  checkingId: CHECKING,
+  entries: entries196,
+  transferPairs: [],
+  recurringItems: recurring196,
+  maxLookaheadDays: 60,
+  dailySpend: 0
+});
+function eventInMonth(ev, y, mo) {
+  const d = new Date(ev.ts);
+  return d.getFullYear() === y && d.getMonth() === mo;
+}
+const octGym = built196.events.filter(function (e) {
+  return e.itemKey === 'recurring-' + recGymId && eventInMonth(e, 2026, 9);
+});
+assert.strictEqual(octGym.length, 0, 'no second gym outflow in October');
+const novGym = built196.events.filter(function (e) {
+  return e.itemKey === 'recurring-' + recGymId && eventInMonth(e, 2026, 10);
+});
+assert.strictEqual(novGym.length, 1, 'November still has gym');
+assert.strictEqual(novGym[0].amount, 50);
+const octOther = built196.events.filter(function (e) {
+  return e.itemKey === 'recurring-' + recOtherId && eventInMonth(e, 2026, 9);
+});
+assert.ok(octOther.length >= 1, 'second recurring without ledger row still in October');
+
 console.log('PASS');

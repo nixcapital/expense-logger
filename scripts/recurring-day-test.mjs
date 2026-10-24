@@ -91,7 +91,7 @@ async function run() {
 
   const page = await context.newPage();
   await page.goto(`http://127.0.0.1:${PORT}/index.html`, { waitUntil: 'networkidle' });
-  await page.waitForFunction(() => window.ExpenseLoggerTest && window.ExpenseLoggerTest.APP_VERSION === '1.9.5');
+  await page.waitForFunction(() => window.ExpenseLoggerTest && window.ExpenseLoggerTest.APP_VERSION === '1.9.6');
 
   console.log('recurring-day-test: new recurring uses entry calendar day');
   await seedFresh(page);
