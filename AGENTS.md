@@ -28,9 +28,18 @@ Expense Logger is a personal expense tracker: a static PWA with no build step, n
 - Keep PRs small, ideally under 400 changed lines. One task per PR; don't widen scope.
 - Tests run as `node scripts/<name>.mjs`. Add or update a test for any behavior change. Many scripts expect the repo at `/workspace` or `EL_ROOT`; set `EL_ROOT` if yours lives elsewhere. QA viewport is 428×926.
 
+## Plan first
+
+Tri's asks get a shared plan before anyone codes.
+
+1. **Plan issue.** For each new ask from Tri, Claude opens an issue labeled `plan` with the ask in Tri's words and a draft approach.
+2. **Ideas.** PA / Cursor adds its own ideas as comments on that issue. Claude does the same where it disagrees or sees gaps.
+3. **Final plan.** Claude merges both into one plan in the issue body and splits it into task issues, each labeled `claude` or `cursor` and sized for one PR. Independent tasks are marked **parallel**; tasks that touch the same files or the version strings are marked **after #N**.
+4. **Tri approves the split.** No task starts until Tri says yes on the plan issue or in chat. Small obvious fixes with an existing issue can skip this.
+
 ## Working together
 
-Tasks live in GitHub issues. The label says who has it: `claude` or `cursor`. No label means unclaimed.
+Tasks live in GitHub issues. The label says who has it: `claude` or `cursor`. No label means unclaimed. Plan issues carry `plan` and are not tasks.
 
 1. **Claim.** Before starting, put your label on the issue and comment "starting" with your branch name. Don't take an issue that already has the other agent's label. If two agents want the same issue, the one that labeled first keeps it.
 2. **Branch per task.** `claude/<issue>-slug` or `cursor/<issue>-slug`, for example `cursor/12-csv-export-fix`. Never commit to `main`. Never push to the other agent's branch.
