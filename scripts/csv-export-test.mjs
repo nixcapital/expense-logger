@@ -156,8 +156,10 @@ async function run() {
     const captured = await page.evaluate(async () => {
       const blob = window.__elExport.blobs[0];
       const bytes = new Uint8Array(await blob.arrayBuffer());
+      // blob.text() uses UTF-8 decode, which strips a leading BOM. Keep the character.
+      const text = new TextDecoder('utf-8', { ignoreBOM: true }).decode(bytes);
       return {
-        text: await blob.text(),
+        text: text,
         type: blob.type,
         bom: [bytes[0], bytes[1], bytes[2]],
         files: window.__elExport.files,
