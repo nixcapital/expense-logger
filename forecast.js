@@ -517,6 +517,21 @@
     return found;
   }
 
+  function manualRecurringPostedInMonth(entries, recurringId, projectedTs) {
+    if (!recurringId || !entries || !entries.length) return false;
+    var proj = new Date(startOfDay(projectedTs));
+    var py = proj.getFullYear();
+    var pm = proj.getMonth();
+    var found = false;
+    entries.forEach(function (e) {
+      if (found) return;
+      if (e.recurringId !== recurringId) return;
+      var ed = new Date(startOfDay(e.ts));
+      if (ed.getFullYear() === py && ed.getMonth() === pm) found = true;
+    });
+    return found;
+  }
+
   function domDaySpread(doms) {
     if (!doms.length) return 99;
     var min = doms[0];
@@ -1186,6 +1201,7 @@
       var ts = adjustToBusinessDay(nom, schedule.shiftRule || 'next');
       if (ts <= afterMs || ts > untilMs) return;
       if (entries && checkingId && paymentPostedInCycle(entries, checkingId, schedule, ts, afterMs)) return;
+      if (schedule.recurringId && manualRecurringPostedInMonth(entries, schedule.recurringId, ts)) return;
       var ev = {
         ts: ts,
         amount: schedule.amount,
@@ -1502,7 +1518,8 @@
         dayOfMonth: dom,
         shiftRule: 'next',
         inferenceDetail: 'Recurring expense on day ' + dom,
-        lastTs: nowMs
+        lastTs: nowMs,
+        recurringId: item.id
       };
       schedules.push(s);
       events = events.concat(expandSchedule(s, nowMs, untilMs, input.entries, checkingId));

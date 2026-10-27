@@ -5346,7 +5346,7 @@
         amount: entry.amount,
         categoryId: entry.categoryId,
         note: entry.note,
-        dayOfMonth: new Date().getDate()
+        dayOfMonth: new Date(ts).getDate()
       };
       recurringItems.push(rec);
       saveRecurring();
@@ -6765,7 +6765,6 @@
     rule.isTransfer = !!row.isTransfer;
     rule.countAsSpending = row.isTransfer ? false : !!rule.countAsSpending;
     if (!existing) importRules.push(rule);
-    saveImportRules();
   }
 
   function backfillEntryAccount(entryId, accountId) {
@@ -6812,8 +6811,27 @@
     entries.push(entry);
   }
 
+  function restoreImportCommitSnapshot(snap) {
+    entries = snap.entries;
+    accounts = snap.accounts;
+    importRules = snap.importRules;
+    importAccountPrefs = snap.importAccountPrefs;
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(entries));
+      localStorage.setItem(ACCOUNTS_KEY, JSON.stringify(accounts));
+      localStorage.setItem(IMPORT_RULES_KEY, JSON.stringify(importRules));
+      localStorage.setItem(IMPORT_ACCOUNT_PREFS_KEY, JSON.stringify(importAccountPrefs));
+    } catch (e) {}
+  }
+
   function commitImport() {
     if (!pendingImport) return;
+    var commitSnap = {
+      entries: JSON.parse(JSON.stringify(entries)),
+      accounts: JSON.parse(JSON.stringify(accounts)),
+      importRules: JSON.parse(JSON.stringify(importRules)),
+      importAccountPrefs: JSON.parse(JSON.stringify(importAccountPrefs))
+    };
     var batchId = pendingImport.batchId;
     var rows = pendingImport.rows;
     var accountId = pendingImport.accountId || '';
@@ -6845,19 +6863,34 @@
       pushImportedEntry(r, batchId, accountId);
       added++;
     });
-    if (layout && accountId) {
+    var prefsKey = layout && accountId;
+    if (prefsKey) {
       importAccountPrefs[layout === 'app-export' ? 'app' : layout] = accountId;
-      saveImportAccountPrefs();
     }
+    var accountsBalanceTouched = false;
     if (pendingImport.balanceOffer && pendingImport.useBalanceOffer && accountId === DEFAULT_ACCOUNT_CHECKING) {
       var chk = getCheckingAccount();
       if (chk) {
         chk.currentBalance = pendingImport.balanceOffer.amount;
         chk.balanceAsOf = dayKey(pendingImport.balanceOffer.ts);
-        saveAccounts();
+        accountsBalanceTouched = true;
       }
     }
-    saveEntries();
+    var importStored = false;
+    try {
+      if (!saveEntries()) throw new Error('entries');
+      if (accountsBalanceTouched && !saveAccounts()) throw new Error('accounts');
+      if (prefsKey) saveImportAccountPrefs();
+      saveImportRules();
+      importStored = true;
+    } catch (storeErr) {
+      importStored = false;
+    }
+    if (!importStored) {
+      restoreImportCommitSnapshot(commitSnap);
+      toast('Import not saved — could not store your data');
+      return;
+    }
     saveCategories();
     autoPairTransfers();
     renderAll(); rebuildFilterDropdowns();

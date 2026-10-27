@@ -332,7 +332,7 @@ async function run() {
     try {
       result = await B.commitBackupRestore({
         backupFormat: 2,
-        appVersion: '1.9.5',
+        appVersion: '1.9.9',
         createdAt: new Date().toISOString(),
         storage: {
           'expenseLogger.entries.v1': JSON.stringify([{ id: 'q1', amount: 1, categoryId: 'groceries', ts: Date.now() }]),
