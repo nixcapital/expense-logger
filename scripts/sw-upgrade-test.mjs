@@ -1,5 +1,5 @@
 /**
- * Simulates 1.9.1 → 1.9.2 deploy on the same origin (port).
+ * Simulates 1.9.1 → current deploy on the same origin (port).
  * Run: node scripts/sw-upgrade-test.mjs [--baseline]
  * --baseline uses main-branch sw.js/app (reproduces mixed-cache issues).
  */
@@ -96,7 +96,7 @@ async function run(useBaseline) {
     const deployNew = '/tmp/el-upgrade-new';
     execSync(`rm -rf ${deployNew} && cp -a ${ROOT_NEW} ${deployNew}`);
     currentRoot = deployNew;
-    console.log('Switching server files to full 1.9.2');
+    console.log('Switching server files to full 1.9.3');
   }
 
   await page.reload({ waitUntil: 'networkidle' });
@@ -107,7 +107,7 @@ async function run(useBaseline) {
   console.log('After deploy reload:', v2, 'caches:', caches, 'entries preserved:', !!entries);
 
   let reloads = 0;
-  while (!v2.includes('1.9.2') && reloads < 2) {
+  while (!v2.includes('1.9.3') && reloads < 2) {
     await page.reload({ waitUntil: 'networkidle' });
     await page.waitForTimeout(2500);
     v2 = await page.evaluate(() => document.getElementById('versionLine')?.textContent || '');

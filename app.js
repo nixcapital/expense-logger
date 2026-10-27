@@ -53,7 +53,7 @@
   var TRANSFER_PATTERNS_KEY = 'expenseLogger.transferPatterns.v1';
   var FORECAST_OVERRIDES_KEY = 'expenseLogger.forecastOverrides.v1';
   var FORECAST_ONEOFFS_KEY = 'expenseLogger.forecastCountedOneOffs.v1';
-  var APP_VERSION = '1.9.2';
+  var APP_VERSION = '1.9.3';
   var BACKUP_FORMAT = 2;
   var BACKUP_FORMAT_LEGACY = 1;
   var DEFAULT_ACCOUNT_CHECKING = 'acct-checking';
@@ -1703,7 +1703,6 @@
       };
       applyBackupStorageReplacingAppData(doc.storage, deviceMetaKeep);
       reloadAllStateFromStorage();
-      idbClear().catch(function () {});
       buildCategoryButtons();
       rebuildFilterDropdowns();
       renderAll();
@@ -1911,7 +1910,12 @@
         openReceipt(e.id);
       });
       idbGet('receipt:' + e.id).then(function (rec) {
-        if (rec && rec.dataURL) thumb.src = rec.dataURL;
+        if (rec && rec.dataURL) { thumb.src = rec.dataURL; return; }
+        // Flag kept on purpose: a restored entry should still say a receipt existed.
+        var missing = document.createElement('span');
+        missing.className = 'receipt-missing';
+        missing.textContent = 'Photo missing';
+        if (thumb.parentNode) thumb.parentNode.replaceChild(missing, thumb);
       }).catch(function () {});
       right.appendChild(thumb);
     }
