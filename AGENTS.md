@@ -24,7 +24,7 @@ Expense Logger is a personal expense tracker: a static PWA with no build step, n
 - Data is stored under `expenseLogger.*` keys. Never rename a key; migrate if a shape changes. Old backup formats (`BACKUP_FORMAT` 1 and 2) must still restore. New fields are optional.
 - Passcode lock was removed on purpose. Do not bring it back.
 - No server, analytics, or account sync.
-- A user-visible release bumps the version everywhere it appears (`sw.js` `CACHE_VERSION`, `?v=` in `index.html`, header of `styles.css`): patch for a fix, minor for a feature. Docs-only and workflow-only PRs do not bump it.
+- A user-visible release bumps the version everywhere it appears (`APP_VERSION` in `app.js`, `sw.js` `CACHE_VERSION` and `ASSET_V`, every `?v=` in `index.html`, header of `styles.css`, and the pinned version in `scripts/*-test.mjs`): patch for a fix, minor for a feature. Docs-only and workflow-only PRs do not bump it.
 - Keep PRs small, ideally under 400 changed lines. One task per PR; don't widen scope.
 - Tests run as `node scripts/<name>.mjs`. Add or update a test for any behavior change. Many scripts expect the repo at `/workspace` or `EL_ROOT`; set `EL_ROOT` if yours lives elsewhere. QA viewport is 428×926.
 
