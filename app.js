@@ -53,7 +53,7 @@
   var TRANSFER_PATTERNS_KEY = 'expenseLogger.transferPatterns.v1';
   var FORECAST_OVERRIDES_KEY = 'expenseLogger.forecastOverrides.v1';
   var FORECAST_ONEOFFS_KEY = 'expenseLogger.forecastCountedOneOffs.v1';
-  var APP_VERSION = '1.9.3';
+  var APP_VERSION = '1.9.4';
   var BACKUP_FORMAT = 2;
   var BACKUP_FORMAT_LEGACY = 1;
   var DEFAULT_ACCOUNT_CHECKING = 'acct-checking';
@@ -1420,16 +1420,15 @@
     return out;
   }
 
-  function mergeDeviceBackupMeta(deviceFields) {
-    if (!deviceFields || typeof deviceFields !== 'object') return;
-    var meta = loadMetaObj();
-    if (deviceFields.lastBackupAt) meta.lastBackupAt = deviceFields.lastBackupAt;
-    else delete meta.lastBackupAt;
-    if (deviceFields.backupNudgeHiddenUntil) meta.backupNudgeHiddenUntil = deviceFields.backupNudgeHiddenUntil;
-    else delete meta.backupNudgeHiddenUntil;
-    saveMetaObj(meta);
+  /** Meta for a restored data set: only the device-owned backup fields survive. */
+  function deviceBackupMetaJson(deviceFields) {
+    var meta = {};
+    if (deviceFields && deviceFields.lastBackupAt) meta.lastBackupAt = deviceFields.lastBackupAt;
+    if (deviceFields && deviceFields.backupNudgeHiddenUntil) meta.backupNudgeHiddenUntil = deviceFields.backupNudgeHiddenUntil;
+    return JSON.stringify(meta);
   }
 
+  /** Returns true when the backup was applied; false leaves existing data untouched. */
   function applyBackupStorageReplacingAppData(backupStorage, deviceMetaKeep) {
     var filtered = {};
     Object.keys(backupStorage || {}).forEach(function (k) {
@@ -1437,8 +1436,8 @@
         filtered[k] = backupStorage[k];
       }
     });
-    applyStorageSnapshot(filtered);
-    mergeDeviceBackupMeta(deviceMetaKeep);
+    filtered[META_KEY] = deviceBackupMetaJson(deviceMetaKeep);
+    return applyStorageSnapshot(filtered);
   }
 
   function summarizeBackupStorage(storage) {
@@ -1516,22 +1515,36 @@
     return { ok: true, summary: summarizeBackupStorage(data.storage) };
   }
 
+  /**
+   * Replaces every expenseLogger.* key with `storage`. All-or-nothing: if any write fails
+   * (e.g. storage full) the previous values are put back and false is returned.
+   */
   function applyStorageSnapshot(storage) {
-    var remove = [];
+    var old = {};
     try {
       for (var i = 0; i < localStorage.length; i++) {
         var k = localStorage.key(i);
-        if (k && k.indexOf('expenseLogger.') === 0) remove.push(k);
+        if (k && k.indexOf('expenseLogger.') === 0) old[k] = localStorage.getItem(k);
       }
-    } catch (e) {}
-    remove.forEach(function (k) {
-      try { localStorage.removeItem(k); } catch (e) {}
-    });
+    } catch (e) { return false; }
+    var next = [];
     Object.keys(storage).forEach(function (k) {
-      if (k.indexOf('expenseLogger.') === 0 && storage[k] != null) {
-        try { localStorage.setItem(k, storage[k]); } catch (e) {}
-      }
+      if (k.indexOf('expenseLogger.') === 0 && storage[k] != null) next.push(k);
     });
+    try {
+      // Old keys go first so a restore never needs more room than the data it replaces.
+      Object.keys(old).forEach(function (k) { localStorage.removeItem(k); });
+      next.forEach(function (k) { localStorage.setItem(k, storage[k]); });
+      return true;
+    } catch (e) {
+      next.forEach(function (k) {
+        try { localStorage.removeItem(k); } catch (e2) {}
+      });
+      Object.keys(old).forEach(function (k) {
+        try { localStorage.setItem(k, old[k]); } catch (e2) {}
+      });
+      return false;
+    }
   }
 
   function reloadAllStateFromStorage() {
@@ -1697,11 +1710,15 @@
   function commitBackupRestore(doc) {
     return idbAll().then(function (receipts) {
       var deviceMetaKeep = pickDeviceBackupMeta(loadMetaObj());
-      pendingRestoreUndo = {
+      var undoSnapshot = {
         storage: collectExpenseLoggerKeys(),
         receipts: receipts || []
       };
-      applyBackupStorageReplacingAppData(doc.storage, deviceMetaKeep);
+      if (!applyBackupStorageReplacingAppData(doc.storage, deviceMetaKeep)) {
+        toast('Restore failed: storage is full. Your data is unchanged');
+        return false;
+      }
+      pendingRestoreUndo = undoSnapshot;
       reloadAllStateFromStorage();
       buildCategoryButtons();
       rebuildFilterDropdowns();
@@ -1718,8 +1735,10 @@
       pendingBackupRestore = null;
       toast('Data restored from backup');
       showRestoreUndoToast();
+      return true;
     }).catch(function () {
       toast('Could not finish restore');
+      return false;
     });
   }
 
@@ -2768,7 +2787,10 @@
   }
   if ($undoBtn) $undoBtn.addEventListener('click', function () {
     if (pendingRestoreUndo) {
-      applyStorageSnapshot(pendingRestoreUndo.storage);
+      if (!applyStorageSnapshot(pendingRestoreUndo.storage)) {
+        toast('Undo failed: storage is full. Restored data kept');
+        return;
+      }
       reloadAllStateFromStorage();
       var receiptList = pendingRestoreUndo.receipts || [];
       idbClear().then(function () {

@@ -257,7 +257,7 @@ async function run() {
     const now = Date.now();
     await window.ExpenseLoggerBackup.commitBackupRestore({
       backupFormat: 2,
-      appVersion: '1.9.3',
+      appVersion: '1.9.4',
       createdAt: new Date().toISOString(),
       storage: {
         'expenseLogger.entries.v1': JSON.stringify([
@@ -282,6 +282,48 @@ async function run() {
   await page.waitForFunction(() => document.querySelectorAll('.receipt-missing').length === 1, null, { timeout: 5000 })
     .catch(() => { throw new Error('expected exactly one "Photo missing" label'); });
   assert.strictEqual(await page.locator('.receipt-missing').innerText(), 'Photo missing');
+
+  // A write failing part-way through a restore (storage full) must leave the old data
+  // exactly as it was, show an error toast, and never show the success toast (#38).
+  await page.evaluate(() => document.getElementById('undoToast').classList.remove('show'));
+  const quotaCheck = await page.evaluate(async () => {
+    const B = window.ExpenseLoggerBackup;
+    const before = B.collectExpenseLoggerKeys();
+    const realSet = Storage.prototype.setItem;
+    let calls = 0;
+    // Allow the restore's second write, then fail like a full quota; stop failing once rolled back.
+    Storage.prototype.setItem = function (k, v) {
+      calls++;
+      if (calls === 3) throw new DOMException('quota', 'QuotaExceededError');
+      return realSet.call(this, k, v);
+    };
+    let result;
+    let toastText = '';
+    try {
+      result = await B.commitBackupRestore({
+        backupFormat: 2,
+        appVersion: '1.9.4',
+        createdAt: new Date().toISOString(),
+        storage: {
+          'expenseLogger.entries.v1': JSON.stringify([{ id: 'q1', amount: 1, categoryId: 'groceries', ts: Date.now() }]),
+          'expenseLogger.categories.v1': JSON.stringify([{ id: 'groceries', name: 'Groceries', icon: 'shopping-cart', color: '#4dabf7' }]),
+          'expenseLogger.budgets.v1': JSON.stringify({ groceries: 1 }),
+          'expenseLogger.ui.v1': JSON.stringify({ tab: 'summary' })
+        }
+      });
+      toastText = document.getElementById('toast').textContent;
+    } finally {
+      Storage.prototype.setItem = realSet;
+    }
+    const after = B.collectExpenseLoggerKeys();
+    const same = Object.keys(before).length === Object.keys(after).length
+      && Object.keys(before).every((k) => after[k] === before[k]);
+    return { result, toastText, same, calls };
+  });
+  assert.strictEqual(quotaCheck.result, false, 'failed restore must report failure');
+  assert.strictEqual(quotaCheck.same, true, 'failed restore must leave all data unchanged');
+  assert.ok(/Restore failed/.test(quotaCheck.toastText), 'error toast expected, got: ' + quotaCheck.toastText);
+  assert.ok(!(await page.locator('#undoToast.show').count()), 'no restore-undo toast after a failed restore');
 
   rmSync(tmpDir, { recursive: true, force: true });
   await browser.close();
