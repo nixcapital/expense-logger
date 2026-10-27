@@ -462,7 +462,11 @@
   }
   function csvField(s) {
     s = String(s == null ? '' : s);
-    if (/[",\r\n]/.test(s)) return '"' + s.replace(/"/g, '""') + '"';
+    // Text cells only. A leading = + - @ tab or CR is a formula in Excel. Amount never comes through here.
+    if (s && '=+-@\t\r'.indexOf(s.charAt(0)) !== -1) s = "'" + s;
+    if (/[",\r\n]/.test(s) || s.charAt(0) === ' ' || s.charAt(s.length - 1) === ' ') {
+      return '"' + s.replace(/"/g, '""') + '"';
+    }
     return s;
   }
   function getCat(id) {
@@ -7100,10 +7104,7 @@
         e.hasReceipt ? 'Yes' : 'No'
       ].join(','));
     });
-    var total = sorted.reduce(function (s, e) { return s + e.amount; }, 0);
-    lines.push('');
-    lines.push(['TOTAL','','', total.toFixed(2), '', '', ''].join(','));
-    var csv = lines.join('\r\n');
+    var csv = '\uFEFF' + lines.join('\r\n');
     var blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
     var filename = 'expenses-' + localDateStamp() + '.csv';
     shareOrDownload(blob, filename, 'text/csv');
