@@ -255,6 +255,7 @@ async function run() {
       tx.onerror = () => rej(tx.error);
     });
     const now = Date.now();
+    const prevIds = JSON.parse(localStorage.getItem('expenseLogger.entries.v1') || '[]').map((e) => e.id);
     await window.ExpenseLoggerBackup.commitBackupRestore({
       backupFormat: 2,
       appVersion: '1.9.4',
@@ -274,14 +275,43 @@ async function run() {
       r.onsuccess = () => res(!!(r.result && r.result.dataURL));
     });
     const flags = JSON.parse(localStorage.getItem('expenseLogger.entries.v1')).map((e) => e.hasReceipt === true);
-    return { kept, flags };
+    return { kept, flags, prevIds };
   });
   assert.strictEqual(receiptCheck.kept, true, 'restore must not delete receipt photos');
   assert.deepStrictEqual(receiptCheck.flags, [true, true], 'restore must keep hasReceipt flags');
-  await page.click('button[data-tab="history"]').catch(() => {});
-  await page.waitForFunction(() => document.querySelectorAll('.receipt-missing').length === 1, null, { timeout: 5000 })
-    .catch(() => { throw new Error('expected exactly one "Photo missing" label'); });
-  assert.strictEqual(await page.locator('.receipt-missing').innerText(), 'Photo missing');
+  // "Photo missing" shows on the Home recent list for the entry without a photo.
+  await page.waitForFunction(
+    () => document.querySelectorAll('#recentEntries .receipt-missing').length === 1,
+    null,
+    { timeout: 5000 }
+  );
+  assert.strictEqual(await page.locator('#recentEntries .receipt-missing').innerText(), 'Photo missing');
+
+  // Undo brings back the previous entries and the photo set from before the restore.
+  await page.evaluate(() => new Promise((res, rej) => {
+    const r = indexedDB.open('expenseLogger', 1);
+    r.onsuccess = () => {
+      const tx = r.result.transaction('receipts', 'readwrite');
+      tx.objectStore('receipts').delete('receipt:has-photo');
+      tx.oncomplete = res;
+      tx.onerror = () => rej(tx.error);
+    };
+  }));
+  await page.click('#undoBtn');
+  await page.waitForTimeout(500);
+  const afterUndo = await page.evaluate(async () => {
+    const photo = await new Promise((res) => {
+      const r = indexedDB.open('expenseLogger', 1);
+      r.onsuccess = () => {
+        const g = r.result.transaction('receipts', 'readonly').objectStore('receipts').get('receipt:has-photo');
+        g.onsuccess = () => res(!!(g.result && g.result.dataURL));
+      };
+    });
+    const ids = JSON.parse(localStorage.getItem('expenseLogger.entries.v1') || '[]').map((e) => e.id);
+    return { photo, ids };
+  });
+  assert.strictEqual(afterUndo.photo, true, 'undo must put the pre-restore photos back');
+  assert.deepStrictEqual(afterUndo.ids, receiptCheck.prevIds, 'undo must put the previous entries back');
 
   // A write failing part-way through a restore (storage full) must leave the old data
   // exactly as it was, show an error toast, and never show the success toast (#38).

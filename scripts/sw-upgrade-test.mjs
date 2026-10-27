@@ -116,7 +116,7 @@ async function run(useBaseline) {
     console.log('Extra reload', reloads + ':', v2, 'caches:', caches);
   }
 
-  const ok = v1.includes('1.9.1') && v2.includes('1.9.2') && entries && entries.includes('12.5') && errors.length === 0;
+  const ok = v1.includes('1.9.1') && v2.includes('1.9.4') && entries && entries.includes('12.5') && errors.length === 0;
   console.log('page errors:', errors);
   console.log(ok ? 'PASS' : 'FAIL');
 
