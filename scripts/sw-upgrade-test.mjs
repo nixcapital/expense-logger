@@ -96,7 +96,7 @@ async function run(useBaseline) {
     const deployNew = '/tmp/el-upgrade-new';
     execSync(`rm -rf ${deployNew} && cp -a ${ROOT_NEW} ${deployNew}`);
     currentRoot = deployNew;
-    console.log('Switching server files to full 1.9.3');
+    console.log('Switching server files to full 1.9.4');
   }
 
   await page.reload({ waitUntil: 'networkidle' });
@@ -107,7 +107,7 @@ async function run(useBaseline) {
   console.log('After deploy reload:', v2, 'caches:', caches, 'entries preserved:', !!entries);
 
   let reloads = 0;
-  while (!v2.includes('1.9.3') && reloads < 2) {
+  while (!v2.includes('1.9.4') && reloads < 2) {
     await page.reload({ waitUntil: 'networkidle' });
     await page.waitForTimeout(2500);
     v2 = await page.evaluate(() => document.getElementById('versionLine')?.textContent || '');
@@ -116,7 +116,7 @@ async function run(useBaseline) {
     console.log('Extra reload', reloads + ':', v2, 'caches:', caches);
   }
 
-  const ok = v1.includes('1.9.1') && v2.includes('1.9.2') && entries && entries.includes('12.5') && errors.length === 0;
+  const ok = v1.includes('1.9.1') && v2.includes('1.9.4') && entries && entries.includes('12.5') && errors.length === 0;
   console.log('page errors:', errors);
   console.log(ok ? 'PASS' : 'FAIL');
 
