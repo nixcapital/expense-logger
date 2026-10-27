@@ -237,6 +237,82 @@ async function run() {
   }, metaIso);
   assert.strictEqual(metaKept, metaIso, 'device last-backup time must survive restore');
 
+  // Restore must keep receipt photos already on the device (#37) and keep the
+  // hasReceipt flag on entries whose photo is missing, showing "Photo missing".
+  const receiptCheck = await page.evaluate(async () => {
+    const db = await new Promise((res, rej) => {
+      const r = indexedDB.open('expenseLogger', 1);
+      r.onupgradeneeded = () => {
+        if (!r.result.objectStoreNames.contains('receipts')) r.result.createObjectStore('receipts', { keyPath: 'id' });
+      };
+      r.onsuccess = () => res(r.result);
+      r.onerror = () => rej(r.error);
+    });
+    await new Promise((res, rej) => {
+      const tx = db.transaction('receipts', 'readwrite');
+      tx.objectStore('receipts').put({ id: 'receipt:has-photo', dataURL: 'data:image/png;base64,AAAA', ts: 1 });
+      tx.oncomplete = res;
+      tx.onerror = () => rej(tx.error);
+    });
+    const now = Date.now();
+    const prevIds = JSON.parse(localStorage.getItem('expenseLogger.entries.v1') || '[]').map((e) => e.id);
+    await window.ExpenseLoggerBackup.commitBackupRestore({
+      backupFormat: 2,
+      appVersion: '1.9.8',
+      createdAt: new Date().toISOString(),
+      storage: {
+        'expenseLogger.entries.v1': JSON.stringify([
+          { id: 'has-photo', amount: 5, categoryId: 'groceries', ts: now, hasReceipt: true },
+          { id: 'no-photo', amount: 6, categoryId: 'groceries', ts: now - 1000, hasReceipt: true }
+        ]),
+        'expenseLogger.categories.v1': JSON.stringify([
+          { id: 'groceries', name: 'Groceries', icon: 'shopping-cart', color: '#4dabf7' }
+        ])
+      }
+    });
+    const kept = await new Promise((res) => {
+      const r = db.transaction('receipts', 'readonly').objectStore('receipts').get('receipt:has-photo');
+      r.onsuccess = () => res(!!(r.result && r.result.dataURL));
+    });
+    const flags = JSON.parse(localStorage.getItem('expenseLogger.entries.v1')).map((e) => e.hasReceipt === true);
+    return { kept, flags, prevIds };
+  });
+  assert.strictEqual(receiptCheck.kept, true, 'restore must not delete receipt photos');
+  assert.deepStrictEqual(receiptCheck.flags, [true, true], 'restore must keep hasReceipt flags');
+  // "Photo missing" shows on the Home recent list for the entry without a photo.
+  await page.waitForFunction(
+    () => document.querySelectorAll('#recentEntries .receipt-missing').length === 1,
+    null,
+    { timeout: 5000 }
+  );
+  assert.strictEqual(await page.locator('#recentEntries .receipt-missing').innerText(), 'Photo missing');
+
+  // Undo brings back the previous entries and the photo set from before the restore.
+  await page.evaluate(() => new Promise((res, rej) => {
+    const r = indexedDB.open('expenseLogger', 1);
+    r.onsuccess = () => {
+      const tx = r.result.transaction('receipts', 'readwrite');
+      tx.objectStore('receipts').delete('receipt:has-photo');
+      tx.oncomplete = res;
+      tx.onerror = () => rej(tx.error);
+    };
+  }));
+  await page.click('#undoBtn');
+  await page.waitForTimeout(500);
+  const afterUndo = await page.evaluate(async () => {
+    const photo = await new Promise((res) => {
+      const r = indexedDB.open('expenseLogger', 1);
+      r.onsuccess = () => {
+        const g = r.result.transaction('receipts', 'readonly').objectStore('receipts').get('receipt:has-photo');
+        g.onsuccess = () => res(!!(g.result && g.result.dataURL));
+      };
+    });
+    const ids = JSON.parse(localStorage.getItem('expenseLogger.entries.v1') || '[]').map((e) => e.id);
+    return { photo, ids };
+  });
+  assert.strictEqual(afterUndo.photo, true, 'undo must put the pre-restore photos back');
+  assert.deepStrictEqual(afterUndo.ids, receiptCheck.prevIds, 'undo must put the previous entries back');
+
   rmSync(tmpDir, { recursive: true, force: true });
   await browser.close();
   server.close();

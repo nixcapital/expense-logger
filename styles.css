@@ -1,4 +1,4 @@
-/* Expense Logger 1.9.6 — dark-first, iOS-style */
+/* Expense Logger 1.9.8 — dark-first, iOS-style */
 
 :root {
   --bg: #0B0C10;
@@ -1451,6 +1451,7 @@ button.legend-row.legend-btn.active { background: color-mix(in srgb, var(--accen
 .entry-info .date { font-size: 13px; color: var(--text-dim); }
 .entry-right { display: flex; align-items: center; gap: var(--sp-2); }
 .entry-amt { font-variant-numeric: tabular-nums; font-weight: 600; }
+.receipt-missing { font-size: 12px; color: var(--text-dim); }
 .cat-pill { font-size: 12px; padding: 2px 8px; border-radius: var(--radius-pill); background: var(--raised); border: 1px solid var(--sep); }
 
 .del-btn {
