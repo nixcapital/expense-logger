@@ -5,19 +5,24 @@
  */
 import { chromium } from 'playwright';
 import { createServer } from 'http';
-import { readFileSync, existsSync } from 'fs';
-import { join, extname } from 'path';
-import { execSync } from 'child_process';
+import { readFileSync, existsSync, mkdirSync, rmSync, cpSync, writeFileSync } from 'fs';
+import { join, extname, dirname, resolve } from 'path';
+import { execFileSync } from 'child_process';
+import { fileURLToPath } from 'url';
+import { tmpdir } from 'os';
 
 const PORT = 8877;
-const ROOT_OLD = '/tmp/el-upgrade-old';
-const ROOT_NEW = '/workspace';
+// Repo root: EL_ROOT if set, else the folder above scripts/ (works on Windows and Linux).
+const ROOT_NEW = process.env.EL_ROOT || resolve(dirname(fileURLToPath(import.meta.url)), '..');
+const ROOT_OLD = join(tmpdir(), 'el-upgrade-old');
 /** Pinned 1.9.8 release (before 1.9.9). */
 const UPGRADE_FROM_REF = 'd05b2aa';
 
 function prepareOldTree() {
-  execSync(`rm -rf ${ROOT_OLD} && mkdir -p ${ROOT_OLD}`);
-  execSync(`git archive ${UPGRADE_FROM_REF} | tar -x -C ${ROOT_OLD}`);
+  rmSync(ROOT_OLD, { recursive: true, force: true });
+  mkdirSync(ROOT_OLD, { recursive: true });
+  const tarball = execFileSync('git', ['archive', '--format=tar', UPGRADE_FROM_REF], { cwd: ROOT_NEW, maxBuffer: 256 * 1024 * 1024 });
+  execFileSync('tar', ['-x', '-C', ROOT_OLD], { input: tarball });
 }
 
 const MIME = {
@@ -85,16 +90,17 @@ async function run(useBaseline) {
   }
 
   if (useBaseline) {
-    const { writeFileSync, mkdirSync, cpSync } = await import('fs');
-    const mix = '/tmp/el-upgrade-mixed';
-    execSync(`rm -rf ${mix} && cp -a ${ROOT_NEW} ${mix}`);
+    const mix = join(tmpdir(), 'el-upgrade-mixed');
+    rmSync(mix, { recursive: true, force: true });
+    cpSync(ROOT_NEW, mix, { recursive: true });
     writeFileSync(join(mix, 'sw.js'), readFileSync(join(ROOT_OLD, 'sw.js')));
     writeFileSync(join(mix, 'app.js'), readFileSync(join(ROOT_OLD, 'app.js')));
     currentRoot = mix;
     console.log('Switching to mixed deploy (new index/charts HTML + old sw/app.js)');
   } else {
-    const deployNew = '/tmp/el-upgrade-new';
-    execSync(`rm -rf ${deployNew} && cp -a ${ROOT_NEW} ${deployNew}`);
+    const deployNew = join(tmpdir(), 'el-upgrade-new');
+    rmSync(deployNew, { recursive: true, force: true });
+    cpSync(ROOT_NEW, deployNew, { recursive: true });
     currentRoot = deployNew;
     console.log('Switching server files to full 1.9.9');
   }

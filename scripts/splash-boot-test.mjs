@@ -6,13 +6,16 @@ import assert from 'assert';
 import { chromium, webkit, devices } from 'playwright';
 import { createServer } from 'http';
 import { readFileSync, existsSync, mkdirSync, cpSync, rmSync } from 'fs';
-import { join, extname } from 'path';
-import { execSync } from 'child_process';
+import { join, extname, dirname, resolve } from 'path';
+import { execFileSync } from 'child_process';
+import { fileURLToPath } from 'url';
+import { tmpdir } from 'os';
 
 const PORT = 8902;
-const ROOT = '/workspace';
+// Repo root: EL_ROOT if set, else the folder above scripts/ (works on Windows and Linux).
+const ROOT = process.env.EL_ROOT || resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const VIEWPORT = { width: 428, height: 926 };
-const ARTIFACT_DIR = '/cursor/stores/self/artifacts/hotfix-163';
+const ARTIFACT_DIR = process.env.EL_ARTIFACT_DIR || join(tmpdir(), 'el-artifacts', 'hotfix-163');
 
 const MIME = {
   '.html': 'text/html',
@@ -281,9 +284,11 @@ async function runFixtures(browserName, launch) {
 }
 
 async function runSwUpgrade(fromTag, label, launch, standalone) {
-  const ROOT_OLD = '/tmp/el-sw-' + fromTag.replace(/\W/g, '');
-  execSync(`rm -rf ${ROOT_OLD} && mkdir -p ${ROOT_OLD}`);
-  execSync(`git archive ${fromTag} | tar -x -C ${ROOT_OLD}`);
+  const ROOT_OLD = join(tmpdir(), 'el-sw-' + fromTag.replace(/\W/g, ''));
+  rmSync(ROOT_OLD, { recursive: true, force: true });
+  mkdirSync(ROOT_OLD, { recursive: true });
+  const tarball = execFileSync('git', ['archive', '--format=tar', fromTag], { cwd: ROOT, maxBuffer: 256 * 1024 * 1024 });
+  execFileSync('tar', ['-x', '-C', ROOT_OLD], { input: tarball });
   let currentRoot = ROOT_OLD;
   const srv = server(() => currentRoot);
   await new Promise((r) => srv.listen(PORT + 1, r));
