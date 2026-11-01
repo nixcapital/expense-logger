@@ -1,5 +1,5 @@
 /**
- * Simulates 2.0.0 → 2.1.0 deploy on the same origin (port).
+ * Simulates 2.1.0 → 2.2.0 deploy on the same origin (port).
  * Run: node scripts/sw-upgrade-test.mjs [--baseline]
  * --baseline uses main-branch sw.js/app (reproduces mixed-cache issues).
  */
@@ -12,8 +12,8 @@ import { execSync } from 'child_process';
 const PORT = 8877;
 const ROOT_OLD = '/tmp/el-upgrade-old';
 const ROOT_NEW = '/workspace';
-/** Pinned 2.0.0 release (before 2.1.0). */
-const UPGRADE_FROM_REF = 'd46f7d3ee0ed78a48745c76a78a8a76f5ce1122f';
+/** Pinned 2.1.0 release (before 2.2.0). */
+const UPGRADE_FROM_REF = '5e06af6c1dfd3f0dbfe39dc904d26e953eae6df4';
 
 function prepareOldTree() {
   execSync(`rm -rf ${ROOT_OLD} && mkdir -p ${ROOT_OLD}`);
@@ -80,8 +80,8 @@ async function run(useBaseline) {
     return el ? el.textContent : '';
   });
   console.log('After install:', v1);
-  if (!v1.includes('2.0.0')) {
-    console.error('Expected 2.0.0 before upgrade, got:', v1);
+  if (!v1.includes('2.1.0')) {
+    console.error('Expected 2.1.0 before upgrade, got:', v1);
   }
 
   if (useBaseline) {
@@ -96,7 +96,7 @@ async function run(useBaseline) {
     const deployNew = '/tmp/el-upgrade-new';
     execSync(`rm -rf ${deployNew} && cp -a ${ROOT_NEW} ${deployNew}`);
     currentRoot = deployNew;
-    console.log('Switching server files to full 2.1.0');
+    console.log('Switching server files to full 2.2.0');
   }
 
   await page.reload({ waitUntil: 'networkidle' });
@@ -107,7 +107,7 @@ async function run(useBaseline) {
   console.log('After deploy reload:', v2, 'caches:', caches, 'entries preserved:', !!entries);
 
   let reloads = 0;
-  while (!v2.includes('2.1.0') && reloads < 2) {
+  while (!v2.includes('2.2.0') && reloads < 2) {
     await page.reload({ waitUntil: 'networkidle' });
     await page.waitForTimeout(2500);
     v2 = await page.evaluate(() => document.getElementById('versionLine')?.textContent || '');
@@ -116,7 +116,7 @@ async function run(useBaseline) {
     console.log('Extra reload', reloads + ':', v2, 'caches:', caches);
   }
 
-  const ok = v1.includes('2.0.0') && v2.includes('2.1.0') && entries && entries.includes('12.5') && errors.length === 0;
+  const ok = v1.includes('2.1.0') && v2.includes('2.2.0') && entries && entries.includes('12.5') && errors.length === 0;
   console.log('page errors:', errors);
   console.log(ok ? 'PASS' : 'FAIL');
 

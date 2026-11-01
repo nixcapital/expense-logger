@@ -54,7 +54,7 @@
   var FORECAST_OVERRIDES_KEY = 'expenseLogger.forecastOverrides.v1';
   var FORECAST_ONEOFFS_KEY = 'expenseLogger.forecastCountedOneOffs.v1';
   var SYNC_KEY      = 'expenseLogger.sync.v1'; // device token only: never in a backup or export
-  var APP_VERSION = '2.1.0';
+  var APP_VERSION = '2.2.0';
   var BACKUP_FORMAT = 2;
   var BACKUP_FORMAT_LEGACY = 1;
   var DEFAULT_ACCOUNT_CHECKING = 'acct-checking';
@@ -1886,6 +1886,29 @@
     return isBuiltInTransfer(bankText || note || '', '', 'card');
   }
 
+  // Plaid personal_finance_category -> an existing app category, used only as
+  // the default for a row that would otherwise land in Other. A saved import
+  // rule always wins over the hint; unknown categories fall back to the
+  // existing default. Conservative on purpose: no hint, no change.
+  function plaidCategoryHint(txn) {
+    var pfc = txn && txn.personal_finance_category;
+    if (!pfc) return null;
+    var primary = String(pfc.primary || '');
+    var detailed = String(pfc.detailed || '');
+    var hint = null;
+    if (detailed.indexOf('FOOD_AND_DRINK_GROCERIES') === 0) hint = 'groceries';
+    else if (detailed.indexOf('TRANSPORTATION_GAS') === 0) hint = 'gas';
+    else if (primary === 'FOOD_AND_DRINK') hint = 'dining';
+    else if (primary === 'RENT_AND_UTILITIES' || primary === 'BANK_FEES') hint = 'bills';
+    else if (primary === 'ENTERTAINMENT') hint = 'fun';
+    else if (primary === 'INCOME') hint = INCOME_CATEGORY_ID;
+    if (!hint) return null;
+    for (var i = 0; i < categories.length; i++) {
+      if (categories[i].id === hint) return hint;
+    }
+    return null;
+  }
+
   function plaidTxnToRow(txn, appAccountId, layout) {
     if (!txn || txn.pending) return null;
     if (typeof txn.amount !== 'number' || !isFinite(txn.amount) || txn.amount === 0) return null;
@@ -1929,6 +1952,11 @@
       if (depCatId) catId = depCatId;
     }
 
+    if (!isTransfer && !(rule && rule.categoryId && !rule.isTransfer) && catId === 'other') {
+      var hinted = plaidCategoryHint(txn);
+      if (hinted && (hinted !== INCOME_CATEGORY_ID || isDeposit)) catId = hinted;
+    }
+
     var sign = isTransfer ? 'xfer' : (isDeposit ? 'in' : 'out');
     return {
       status: isTransfer ? 'transfer' : 'import',
@@ -1952,24 +1980,68 @@
     (pull.accounts || []).forEach(function (a) {
       if (a && a.account_id && a.appAccountId) byApp[a.account_id] = a.appAccountId;
     });
+    var byRowKey = {};
+    entries.forEach(function (e) { if (e && e.importRowKey) byRowKey[e.importRowKey] = e; });
     var groups = {};
     var order = [];
+    function groupFor(appId) {
+      if (!groups[appId]) {
+        groups[appId] = { accountId: appId, layout: appId === DEFAULT_ACCOUNT_CHASE ? 'card' : 'bank', rows: [] };
+        order.push(appId);
+      }
+      return groups[appId];
+    }
     (pull.added || []).forEach(function (txn) {
       var appId = txn && byApp[txn.account_id];
       if (!appId) return;
-      var layout = appId === DEFAULT_ACCOUNT_CHASE ? 'card' : 'bank';
-      if (!groups[appId]) { groups[appId] = { accountId: appId, layout: layout, rows: [] }; order.push(appId); }
-      var row = plaidTxnToRow(txn, appId, layout);
-      if (row) groups[appId].rows.push(row);
+      var row = plaidTxnToRow(txn, appId, groupFor(appId).layout);
+      if (row) groupFor(appId).rows.push(row);
     });
-    var byRowKey = {};
-    entries.forEach(function (e) { if (e && e.importRowKey) byRowKey[e.importRowKey] = e; });
+    // Modified rows already in the ledger are flagged, never silently
+    // rewritten: the row carries the old values and starts unaccepted.
+    (pull.modified || []).forEach(function (txn) {
+      var appId = txn && byApp[txn.account_id];
+      if (!appId) return;
+      var existing = byRowKey['plaid:' + txn.transaction_id];
+      if (!existing) return;
+      var g = groupFor(appId);
+      var row = plaidTxnToRow(txn, appId, g.layout);
+      if (!row || row.status === 'credit') return;
+      row.plaidModified = true;
+      row.existingEntryId = existing.id;
+      row.oldAmount = existing.amount;
+      row.oldNote = existing.note || '';
+      row.oldTs = existing.ts;
+      row.plaidAcceptChange = false;
+      row.include = false;
+      g.rows.push(row);
+    });
+    // Removed rows already in the ledger are flagged; deletion is the user's
+    // tap in review, never automatic.
+    (pull.removed || []).forEach(function (rem) {
+      var appId = rem && byApp[rem.account_id];
+      if (!appId) return;
+      var existing = byRowKey['plaid:' + rem.transaction_id];
+      if (!existing) return;
+      var g = groupFor(appId);
+      g.rows.push({
+        status: 'import', plaidRemoved: true, plaidDelete: false,
+        existingEntryId: existing.id,
+        note: existing.note || '', amount: existing.amount, ts: existing.ts,
+        categoryId: existing.categoryId, importRowKey: 'plaid:' + rem.transaction_id,
+        layout: g.layout, isTransfer: !!existing.isTransfer, isDeposit: !!existing.isDeposit,
+        include: false, bankText: existing.bankText || ''
+      });
+    });
     return order.map(function (appId) {
       var g = groups[appId];
+      // Dedupe applies to fresh rows only; flagged rows are already in the
+      // ledger by definition and must stay visible in review.
+      var fresh = g.rows.filter(function (r) { return !r.plaidModified && !r.plaidRemoved; });
       // Existing dedupe first (catches rows already imported from CSV), then the
       // Plaid id itself (catches rows whose ledger entry was edited afterwards).
-      reapplyImportDedupe(g.rows, g.layout, g.accountId);
-      g.rows.forEach(function (r) {
+      reapplyImportDedupe(fresh, g.layout, g.accountId);
+      fresh.forEach(function (r) {
         if (r.status === 'duplicate' || r.status === 'credit') return;
         var hit = byRowKey[r.importRowKey];
         if (hit) {
@@ -6821,6 +6893,7 @@
 
   function importRowNeedsReview(r) {
     if (!r || (r.status !== 'import' && r.status !== 'transfer')) return false;
+    if (r.plaidModified || r.plaidRemoved) return true;
     if (r.status === 'transfer') return false;
     var cat = r.categoryId || 'other';
     return cat === 'other';
@@ -6954,7 +7027,13 @@
       listHtml += '<button type="button" class="import-row-hit" data-expand="' + i + '">';
       listHtml += '<span class="import-row-icon">' + iconBadge(cat, 'sm') + '</span>';
       listHtml += '<span class="import-row-main"><span class="import-row-merchant">' + escHtml(r.note || '(no description)') + '</span>';
-      listHtml += '<span class="import-row-meta">' + escHtml(d) + ' \u00B7 ' + escHtml(cat.name) + '</span></span>';
+      listHtml += '<span class="import-row-meta">' + escHtml(d) + ' \u00B7 ' + escHtml(cat.name) + '</span>';
+      if (r.plaidModified) {
+        listHtml += '<span class="import-row-meta">Changed since import \u00B7 was ' + fmtMoneyDisplay(r.oldAmount)
+          + (r.oldTs ? ' \u00B7 ' + escHtml(new Date(r.oldTs).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })) : '') + '</span>';
+      }
+      if (r.plaidRemoved) listHtml += '<span class="import-row-meta">Bank removed this</span>';
+      listHtml += '</span>';
       listHtml += '<span class="import-row-amt">' + fmtMoneyDisplay(r.amount) + '</span>';
       listHtml += '<span class="import-row-chevron" aria-hidden="true">' + (expanded ? '\u2304' : '\u203A') + '</span></button>';
       if (expanded) {
@@ -6965,7 +7044,21 @@
         listHtml += '<button type="button" class="seg-btn' + (rowMode === 'income' ? ' is-active' : '') + '" data-mode="income">Income</button>';
         listHtml += '<button type="button" class="seg-btn' + (rowMode === 'paired' ? ' is-active' : '') + '" data-mode="paired">Transfer</button>';
         listHtml += '<button type="button" class="seg-btn' + (rowMode === 'other' ? ' is-active' : '') + '" data-mode="other">Other</button>';
-        listHtml += '</div></div>';
+        listHtml += '</div>';
+        if (r.plaidModified) {
+          listHtml += '<div class="import-apply-prompt"><p><strong>Changed since import.</strong></p>';
+          listHtml += '<p class="hint">Was ' + fmtMoneyDisplay(r.oldAmount) + ' \u00B7 ' + escHtml(r.oldNote || '(no description)')
+            + '. Nothing is rewritten unless you tap below.</p>';
+          listHtml += '<div class="import-apply-actions"><button type="button" class="save-btn" data-plaid-accept="' + i + '">'
+            + (r.plaidAcceptChange ? 'Using bank values \u2713' : 'Use bank values') + '</button></div></div>';
+        }
+        if (r.plaidRemoved) {
+          listHtml += '<div class="import-apply-prompt"><p><strong>Bank removed this.</strong></p>';
+          listHtml += '<p class="hint">It stays in your log unless you tap below.</p>';
+          listHtml += '<div class="import-apply-actions"><button type="button" class="save-btn" data-plaid-delete="' + i + '">'
+            + (r.plaidDelete ? 'Will delete from log \u2713' : 'Delete from log') + '</button></div></div>';
+        }
+        listHtml += '</div>';
         if (importApplyPrompt && importApplyPrompt.idx === i) {
           var ap = importApplyPrompt;
           var catName = getCat(ap.categoryId).name;
@@ -7045,6 +7138,23 @@
         });
         upsertImportRule(key, { categoryId: catId, isTransfer: false, countAsSpending: true });
         importApplyPrompt = null;
+        renderImportReview();
+      });
+    });
+    Array.prototype.forEach.call($importRowList.querySelectorAll('[data-plaid-accept]'), function (btn) {
+      btn.addEventListener('click', function () {
+        var row = pendingImport.rows[parseInt(btn.dataset.plaidAccept, 10)];
+        if (!row) return;
+        row.plaidAcceptChange = !row.plaidAcceptChange;
+        row.include = row.plaidAcceptChange;
+        renderImportReview();
+      });
+    });
+    Array.prototype.forEach.call($importRowList.querySelectorAll('[data-plaid-delete]'), function (btn) {
+      btn.addEventListener('click', function () {
+        var row = pendingImport.rows[parseInt(btn.dataset.plaidDelete, 10)];
+        if (!row) return;
+        row.plaidDelete = !row.plaidDelete;
         renderImportReview();
       });
     });
@@ -7144,6 +7254,34 @@
     var skippedPending = 0;
     var skippedBad = 0;
     rows.forEach(function (r) {
+      if (r.plaidRemoved) {
+        if (r.plaidDelete && r.existingEntryId) {
+          for (var di = entries.length - 1; di >= 0; di--) {
+            if (entries[di].id === r.existingEntryId) { entries.splice(di, 1); break; }
+          }
+        }
+        return;
+      }
+      if (r.plaidModified) {
+        if (r.plaidAcceptChange && r.existingEntryId) {
+          for (var mi = 0; mi < entries.length; mi++) {
+            if (entries[mi].id !== r.existingEntryId) continue;
+            entries[mi].amount = r.amount;
+            entries[mi].note = r.note;
+            entries[mi].ts = r.ts;
+            entries[mi].categoryId = r.categoryId;
+            entries[mi].isDeposit = !!r.isDeposit;
+            entries[mi].isTransfer = !!r.isTransfer;
+            if (r.bankText) entries[mi].bankText = r.bankText;
+            entries[mi].importDedupeSnapshot = {
+              ts: r.ts, amount: r.amount, note: r.note || '', categoryId: r.categoryId,
+              accountId: accountId, sign: importRowSignFromRow(r)
+            };
+            break;
+          }
+        }
+        return;
+      }
       if (r.status === 'duplicate') {
         dup++;
         if (r.existingEntryId && accountId && backfillEntryAccount(r.existingEntryId, accountId)) tagged++;
@@ -10256,6 +10394,7 @@
     renderSyncStatus: renderSyncStatus,
     syncNow: syncNow,
     plaidTxnToRow: plaidTxnToRow,
+    plaidCategoryHint: plaidCategoryHint,
     plaidImportGroups: plaidImportGroups,
     ackSyncBatch: ackSyncBatch,
     syncCutoverFor: syncCutoverFor,

@@ -258,7 +258,7 @@ async function run() {
     const prevIds = JSON.parse(localStorage.getItem('expenseLogger.entries.v1') || '[]').map((e) => e.id);
     await window.ExpenseLoggerBackup.commitBackupRestore({
       backupFormat: 2,
-      appVersion: '2.1.0',
+      appVersion: '2.2.0',
       createdAt: new Date().toISOString(),
       storage: {
         'expenseLogger.entries.v1': JSON.stringify([
@@ -332,7 +332,7 @@ async function run() {
     try {
       result = await B.commitBackupRestore({
         backupFormat: 2,
-        appVersion: '2.1.0',
+        appVersion: '2.2.0',
         createdAt: new Date().toISOString(),
         storage: {
           'expenseLogger.entries.v1': JSON.stringify([{ id: 'q1', amount: 1, categoryId: 'groceries', ts: Date.now() }]),

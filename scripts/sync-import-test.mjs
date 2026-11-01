@@ -139,7 +139,7 @@ async function run() {
   await page.reload({ waitUntil: 'networkidle' });
 
   const version = await page.evaluate(() => window.ExpenseLoggerTest.APP_VERSION);
-  check('app version is 2.1.0', version === '2.1.0', version);
+  check('app version is 2.2.0', version === '2.2.0', version);
 
   async function entries() {
     return page.evaluate(() => JSON.parse(localStorage.getItem('expenseLogger.entries.v1') || '[]'));
