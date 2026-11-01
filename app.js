@@ -56,7 +56,8 @@
   // Device token for the bank sync Worker. Device-only: never in a backup or export, and a
   // restore or undo leaves it in place (pair again only after Clear All Data or Disconnect).
   var SYNC_KEY = 'expenseLogger.sync.v1';
-  var APP_VERSION = '2.0.0';
+  var SYNC_CUTOVER_KEY = 'expenseLogger.syncCutover.v1'; // { accountId: 'YYYY-MM-DD' }; bank rows before it are dropped
+  var APP_VERSION = '2.1.0';
   var BACKUP_FORMAT = 2;
   var BACKUP_FORMAT_LEGACY = 1;
   var DEFAULT_ACCOUNT_CHECKING = 'acct-checking';
@@ -6483,6 +6484,7 @@
   function dismissImportReview() {
     hideImportDiscardPrompt();
     pendingImport = null;
+    plaidSyncRun = null; // discarding a bank review never acks
     if ($importModal) $importModal.classList.remove('show');
   }
 
@@ -6810,7 +6812,7 @@
     entry.importDedupeSnapshot = {
       ts: r.ts,
       amount: r.amount,
-      note: r.note || '',
+      note: r.dedupeNote || r.note || '',
       categoryId: r.categoryId,
       accountId: r.layout === 'app-export' ? (accountId || '') : (accountId || ''),
       sign: importRowSignFromRow(r)
@@ -6833,6 +6835,7 @@
 
   function commitImport() {
     if (!pendingImport) return;
+    var fromPlaid = !!pendingImport.plaidSync;
     var commitSnap = {
       entries: JSON.parse(JSON.stringify(entries)),
       accounts: JSON.parse(JSON.stringify(accounts)),
@@ -6914,6 +6917,7 @@
     if (skippedPending) parts.push(skippedPending + ' pending');
     if (skippedBad) parts.push(skippedBad + ' unreadable');
     toast('Imported ' + parts.join(', '));
+    if (fromPlaid) setTimeout(nextPlaidReview, modalTransitionMs());
   }
 
   function modalTransitionMs() {
@@ -7481,6 +7485,7 @@
     }
     if ($bankSyncPairForm) $bankSyncPairForm.hidden = !!s;
     if ($bankSyncDisconnectBtn) $bankSyncDisconnectBtn.hidden = !s;
+    if ($('bankSyncPaired')) $('bankSyncPaired').hidden = !s;
   }
 
   function pairBankSync() {
@@ -7531,6 +7536,144 @@
       disconnectBankSync();
     });
   }
+
+  // ---------- Bank sync: pull into import review (Plaid E) ----------
+  // GET /pull -> one import review per account (existing rowsFromTable + dedupe) -> POST /ack
+  // only after every review was saved. Discard or a failed save never acks, so the Worker
+  // re-serves the same rows next time.
+  var SYNC_DEFAULT_CUTOVER = '2025-01-01';
+  var plaidSyncRun = null; // { batchId, queue: [pendingImport, ...], dropped }
+
+  function syncCutoverFor(accountId) {
+    var c = null;
+    try { c = (JSON.parse(localStorage.getItem(SYNC_CUTOVER_KEY) || '{}') || {})[accountId]; } catch (e) {}
+    return /^\d{4}-\d{2}-\d{2}$/.test(c || '') ? c : SYNC_DEFAULT_CUTOVER;
+  }
+
+  function saveSyncCutover(accountId, day) {
+    var all = {};
+    try { all = JSON.parse(localStorage.getItem(SYNC_CUTOVER_KEY) || '{}') || {}; } catch (e) {}
+    if (/^\d{4}-\d{2}-\d{2}$/.test(day || '')) all[accountId] = day; else delete all[accountId];
+    try { localStorage.setItem(SYNC_CUTOVER_KEY, JSON.stringify(all)); } catch (e) { toast('Could not save the start date'); }
+  }
+
+  /** Plaid row -> CSV-shaped table row. Plaid sign: positive = money out. */
+  function plaidTableRow(t, layout) {
+    var amt = Number(t.amount);
+    var desc = t.original_description || t.name || '';
+    if (layout === 'bank') return [t.date, desc, amt > 0 ? amt.toFixed(2) : '', amt < 0 ? (-amt).toFixed(2) : ''];
+    var pfc = t.personal_finance_category || {};
+    var type = amt > 0 ? 'Sale' : (/CREDIT_CARD_PAYMENT/.test(pfc.detailed || '') ? 'Payment' : 'Return');
+    return [t.authorized_date || t.date, desc, type, (-amt).toFixed(2)];  // CSV sign: purchases negative
+  }
+
+  function plaidTxnDay(t, layout) {
+    return String((layout === 'card' && t.authorized_date) || t.date || '');
+  }
+
+  function buildPlaidImports(pull, accountMap) {
+    var groups = {};
+    var dropped = 0;
+    var txns = (pull.added || []).concat(pull.modified || []);
+    for (var i = 0; i < txns.length; i++) {
+      var t = txns[i];
+      if (!t || t.pending) continue;
+      var acct = getAccount(accountMap[t.account_id]);
+      if (!acct) return { error: 'Bank sent rows for an account this phone does not know. Nothing saved' };
+      var layout = acct.type === 'credit_card' ? 'card' : 'bank';
+      if (plaidTxnDay(t, layout) < syncCutoverFor(acct.id)) { dropped++; continue; }
+      var g = groups[acct.id] || (groups[acct.id] = { acct: acct, layout: layout, txns: [] });
+      g.txns.push(t);
+    }
+    var inLedger = {};
+    entries.forEach(function (e) { if (e.importRowKey) inLedger[e.importRowKey] = e; });
+    var imports = [];
+    Object.keys(groups).forEach(function (id) {
+      var g = groups[id];
+      var header = g.layout === 'bank' ? ['Date', 'Description', 'Debit', 'Credit'] : ['Transaction Date', 'Description', 'Type', 'Amount'];
+      var batchId = 'plaid:' + pull.batchId;
+      var rows = rowsFromTable(g.txns.map(function (t) { return plaidTableRow(t, g.layout); }), header, g.layout, batchId, id);
+      rows.forEach(function (r, ri) {
+        var t = g.txns[ri];
+        r.importRowKey = 'plaid:' + t.transaction_id;
+        if (r.status === 'import' || r.status === 'transfer') {
+          // Dedupe keys stay on the bank text (matches CSV rows); the note shows the merchant.
+          r.dedupeNote = r.note;
+          r.note = cleanImportNote(t.merchant_name || t.name || r.note);
+          r.bankText = t.original_description || t.name || '';
+        }
+        var had = inLedger[r.importRowKey];
+        if (had && r.status !== 'duplicate') {
+          r.dedupeBaseStatus = r.status === 'transfer' ? 'transfer' : 'import';
+          r.status = 'duplicate';
+          r.reason = 'Already imported from bank sync';
+          r.existingEntryId = had.id;
+        }
+      });
+      var hasNew = rows.some(function (r) { return r.status === 'import' || r.status === 'transfer'; });
+      if (hasNew) {
+        imports.push({ batchId: batchId, rows: rows, fileName: 'Bank sync \u00B7 ' + g.acct.name, layout: g.layout,
+          accountId: id, balanceOffer: null, useBalanceOffer: false, plaidSync: true });
+      }
+    });
+    return { imports: imports, dropped: dropped };
+  }
+
+  function nextPlaidReview() {
+    if (!plaidSyncRun) return;
+    if (!plaidSyncRun.queue.length) { ackPlaidBatch(); return; }
+    pendingImport = plaidSyncRun.queue.shift();
+    plaidSyncRun.reviewed = true;
+    importReviewFilter = 'review';
+    importReviewExpandedIdx = null;
+    renderImportReview();
+  }
+
+  function ackPlaidBatch() {
+    var run = plaidSyncRun;
+    plaidSyncRun = null;
+    var s = loadSyncState();
+    if (!run || !s) return Promise.resolve(false);
+    return workerRequest(s.workerUrl, '/ack', 'POST', 'Bearer ' + s.deviceToken, { batchId: run.batchId }).then(function (r) {
+      var note = run.dropped ? ' (' + run.dropped + ' before the start date skipped)' : '';
+      if (r.status === 200) { if (!run.reviewed || note) toast((run.reviewed ? 'Bank sync done' : 'Nothing new from the bank') + note); }
+      else if (r.status === 409) toast('Saved. More bank rows arrived, sync again');
+      else toast('Saved, but the Worker did not confirm. Next sync shows these as duplicates');
+      return r.status === 200;
+    });
+  }
+
+  function syncBankNow() {
+    var s = loadSyncState();
+    if (!s) { toast('Pair bank sync first'); return Promise.resolve(false); }
+    if (plaidSyncRun || pendingImport) { toast('Finish the open import review first'); return Promise.resolve(false); }
+    return workerRequest(s.workerUrl, '/pull', 'GET', 'Bearer ' + s.deviceToken).then(function (r) {
+      if (r.status !== 200) {
+        toast(r.status === 0 ? 'Could not reach the Worker' : (r.status === 401 ? 'This phone is no longer paired' : 'Sync failed (' + r.status + ')'));
+        return false;
+      }
+      var d = r.data;
+      var map = s.accountMap || {};
+      (d.accounts || []).forEach(function (a) { if (a && a.account_id && a.appAccountId) map[a.account_id] = a.appAccountId; });
+      s.accountMap = map;
+      try { localStorage.setItem(SYNC_KEY, JSON.stringify(s)); } catch (e) {}
+      if (!d.batchId) { toast('Bank is up to date'); return true; }
+      var plan = buildPlaidImports(d, map);
+      if (plan.error) { toast(plan.error); return false; }
+      plaidSyncRun = { batchId: d.batchId, queue: plan.imports, dropped: plan.dropped };
+      nextPlaidReview();
+      return true;
+    });
+  }
+
+  var $bankSyncNowBtn = $('bankSyncNowBtn');
+  if ($bankSyncNowBtn) $bankSyncNowBtn.addEventListener('click', syncBankNow);
+  [['bankSyncCutoverChecking', DEFAULT_ACCOUNT_CHECKING], ['bankSyncCutoverChase', DEFAULT_ACCOUNT_CHASE]].forEach(function (p) {
+    var el = $(p[0]);
+    if (!el) return;
+    el.value = syncCutoverFor(p[1]);
+    el.addEventListener('change', function () { saveSyncCutover(p[1], el.value); el.value = syncCutoverFor(p[1]); });
+  });
 
   // ---------- Clear all ----------
   $('clearAllBtn').addEventListener('click', function () {
@@ -9912,6 +10055,7 @@
     dayKey: dayKey,
     fmtMoney: fmtMoney,
     rowsFromTable: rowsFromTable,
+    pendingImportRows: function () { return pendingImport ? pendingImport.rows : null; },
     detectImportLayout: detectImportLayout,
     autoPairTransfers: autoPairTransfers,
     unlinkTransferPair: unlinkTransferPair,

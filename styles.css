@@ -1,4 +1,4 @@
-/* Expense Logger 2.0.0 — dark-first, iOS-style */
+/* Expense Logger 2.1.0 — dark-first, iOS-style */
 
 :root {
   --bg: #0B0C10;
@@ -1815,6 +1815,7 @@ button.legend-row.legend-btn.active { background: color-mix(in srgb, var(--accen
 .bank-sync-form { display: grid; gap: var(--sp-2); padding: 0 var(--sp-4); }
 .bank-sync-form .settings-row-btn { padding-left: 0; padding-right: 0; }
 a.settings-row-btn { text-decoration: none; }
+.settings-row .bank-sync-date { width: auto; padding: 8px 10px; font-size: 15px; }
 .group-action { margin-left: var(--sp-2); }
 .full-destructive { margin-top: var(--sp-4); }
 
