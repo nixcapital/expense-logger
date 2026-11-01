@@ -1,17 +1,5 @@
 /**
-<<<<<<< HEAD
-<<<<<<< HEAD
- * Simulates 1.9.5 → 1.9.9 deploy on the same origin (port).
-=======
-<<<<<<< HEAD
- * Simulates 1.9.7 → 1.9.8 deploy on the same origin (port).
-=======
- * Simulates 1.9.5 → 1.9.8 deploy on the same origin (port).
->>>>>>> origin/claude/37-restore-keeps-receipts
->>>>>>> origin/claude/37-restore-keeps-receipts
-=======
- * Simulates 1.9.7 → 1.9.8 deploy on the same origin (port).
->>>>>>> origin/claude/37-restore-keeps-receipts
+ * Simulates 1.9.8 → 1.9.9 deploy on the same origin (port).
  * Run: node scripts/sw-upgrade-test.mjs [--baseline]
  * --baseline uses main-branch sw.js/app (reproduces mixed-cache issues).
  */
@@ -24,22 +12,8 @@ import { execSync } from 'child_process';
 const PORT = 8877;
 const ROOT_OLD = '/tmp/el-upgrade-old';
 const ROOT_NEW = '/workspace';
-<<<<<<< HEAD
-<<<<<<< HEAD
-/** Pinned 1.9.5 release (before 1.9.9). */
-=======
-<<<<<<< HEAD
-/** Pinned 1.9.7 release (before 1.9.8). */
-const UPGRADE_FROM_REF = 'b90ce0f';
-=======
-/** Pinned 1.9.5 release (before 1.9.8). */
->>>>>>> origin/claude/37-restore-keeps-receipts
-const UPGRADE_FROM_REF = 'da57ab0';
->>>>>>> origin/claude/37-restore-keeps-receipts
-=======
-/** Pinned 1.9.7 release (before 1.9.8). */
-const UPGRADE_FROM_REF = 'b90ce0f';
->>>>>>> origin/claude/37-restore-keeps-receipts
+/** Pinned 1.9.8 release (before 1.9.9). */
+const UPGRADE_FROM_REF = 'd05b2aa';
 
 function prepareOldTree() {
   execSync(`rm -rf ${ROOT_OLD} && mkdir -p ${ROOT_OLD}`);
@@ -106,8 +80,8 @@ async function run(useBaseline) {
     return el ? el.textContent : '';
   });
   console.log('After install:', v1);
-  if (!v1.includes('1.9.7')) {
-    console.error('Expected 1.9.7 before upgrade, got:', v1);
+  if (!v1.includes('1.9.8')) {
+    console.error('Expected 1.9.8 before upgrade, got:', v1);
   }
 
   if (useBaseline) {
@@ -142,19 +116,7 @@ async function run(useBaseline) {
     console.log('Extra reload', reloads + ':', v2, 'caches:', caches);
   }
 
-<<<<<<< HEAD
-<<<<<<< HEAD
-  const ok = v1.includes('1.9.5') && v2.includes('1.9.9') && entries && entries.includes('12.5') && errors.length === 0;
-=======
-<<<<<<< HEAD
-  const ok = v1.includes('1.9.7') && v2.includes('1.9.8') && entries && entries.includes('12.5') && errors.length === 0;
-=======
-  const ok = v1.includes('1.9.5') && v2.includes('1.9.8') && entries && entries.includes('12.5') && errors.length === 0;
->>>>>>> origin/claude/37-restore-keeps-receipts
->>>>>>> origin/claude/37-restore-keeps-receipts
-=======
-  const ok = v1.includes('1.9.7') && v2.includes('1.9.8') && entries && entries.includes('12.5') && errors.length === 0;
->>>>>>> origin/claude/37-restore-keeps-receipts
+  const ok = v1.includes('1.9.8') && v2.includes('1.9.9') && entries && entries.includes('12.5') && errors.length === 0;
   console.log('page errors:', errors);
   console.log(ok ? 'PASS' : 'FAIL');
 
