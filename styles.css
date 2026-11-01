@@ -1,4 +1,4 @@
-/* Expense Logger 1.9.9 — dark-first, iOS-style */
+/* Expense Logger 2.0.0 — dark-first, iOS-style */
 
 :root {
   --bg: #0B0C10;
@@ -403,7 +403,7 @@ label.field-label, .field label {
   margin-bottom: var(--sp-2);
 }
 
-input[type="number"], input[type="text"], input[type="password"],
+input[type="number"], input[type="text"], input[type="password"], input[type="url"],
 input[type="month"], input[type="date"], select {
   width: 100%;
   background: var(--raised);
@@ -1810,6 +1810,7 @@ button.legend-row.legend-btn.active { background: color-mix(in srgb, var(--accen
   cursor: pointer;
 }
 .settings-row:last-child, .settings-row-btn:last-child { border-bottom: none; }
+a.settings-row-btn { text-decoration: none; }
 .inset-hint { padding: 0 var(--sp-4) var(--sp-3); margin: 0; }
 .check-settings { gap: var(--sp-3); }
 .group-action { margin-left: var(--sp-2); }

@@ -13,8 +13,8 @@
 <link rel="manifest" href="manifest.json">
 <link rel="icon" href="icon-192.png">
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
-<link rel="stylesheet" href="styles.css?v=1.9.9">
-<link rel="stylesheet" href="icon-animations.css?v=1.9.9">
+<link rel="stylesheet" href="styles.css?v=2.0.0">
+<link rel="stylesheet" href="icon-animations.css?v=2.0.0">
 <title>Expense Logger</title>
 </head>
 <body>
@@ -384,6 +384,25 @@
     <h3 class="group-label">Accounts</h3>
     <div class="inset-card" id="settingsAccountsList"></div>
     <p class="hint inset-hint" id="settingsAccountsFoot" hidden>Balance owed is what you owe on your card. Purchases raise it; a payment from Checking lowers it, and the payment isn&rsquo;t spending.</p>
+  </div>
+
+  <div class="inset-group">
+    <h3 class="group-label">Bank sync</h3>
+    <div class="inset-card">
+      <p class="hint inset-hint" id="syncStatusLine">Not paired</p>
+      <div class="field budget-settings-field">
+        <label for="syncWorkerUrl">Worker URL</label>
+        <input type="url" id="syncWorkerUrl" placeholder="https://your-worker.workers.dev" autocomplete="off" spellcheck="false">
+      </div>
+      <div class="field budget-settings-field">
+        <label for="syncSetupCode">Setup code</label>
+        <input type="password" id="syncSetupCode" autocomplete="off">
+      </div>
+      <button class="settings-row-btn" id="syncPairBtn" type="button">Pair this phone <span class="chevron">›</span></button>
+      <a class="settings-row-btn" id="syncLinkPage" href="link.html">Link a bank in Safari <span class="chevron">›</span></a>
+      <button class="settings-row-btn danger-text" id="syncDisconnectBtn" type="button" hidden>Disconnect this phone</button>
+    </div>
+    <p class="hint inset-hint">Pairing stays on this phone only: it is never in a backup or export, and restoring a backup never removes it. A new phone pairs with the setup code.</p>
   </div>
 
   <div class="inset-group">
@@ -945,10 +964,10 @@
   <p class="hint wrapped-empty" id="wrappedEmpty" hidden>No spending data for this month.</p>
 </div>
 
-<script src="icon-system.js?v=1.9.9"></script>
-<script src="forecast.js?v=1.9.9"></script>
-<script src="wrapped.js?v=1.9.9"></script>
-<script src="app.js?v=1.9.9"></script>
+<script src="icon-system.js?v=2.0.0"></script>
+<script src="forecast.js?v=2.0.0"></script>
+<script src="wrapped.js?v=2.0.0"></script>
+<script src="app.js?v=2.0.0"></script>
 <script>
 (function () {
   'use strict';

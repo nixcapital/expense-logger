@@ -3,8 +3,10 @@
    Offline: fall back to the current release cache only.
    Install precache uses network no-store (not HTTP cache / addAll).
 */
-const CACHE_VERSION = 'expense-logger-v1.9.9';
-const ASSET_V = '1.9.9';
+const CACHE_VERSION = 'expense-logger-v2.0.0';
+const ASSET_V = '2.0.0';
+// link.html is deliberately NOT precached: it runs Plaid Link in Safari with a
+// one-time setup code and must always load fresh from the network.
 const SHELL_URLS = [
   './',
   './index.html',

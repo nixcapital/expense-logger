@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Link a bank — Expense Logger</title>
+<!--
+  Plaid Link page for Expense Logger (plan: issue #46, step D / #50).
+
+  Static page: no app code, no secrets in this file. The user types the sync
+  Worker's URL and the one-time setup code here in Safari; the code is held in
+  memory only, plus sessionStorage across the bank's OAuth redirect (Plaid
+  reloads this page with ?oauth_state_id=...), and is cleared as soon as the
+  link finishes or fails. The Worker exchanges the Plaid public_token; no
+  Plaid secret or access_token ever touches this page.
+
+  This page is deliberately not in the service worker precache (see sw.js):
+  it must always load fresh.
+-->
+<style>
+  :root { color-scheme: dark light; }
+  body { font-family: -apple-system, system-ui, sans-serif; margin: 0; padding: 24px 18px 48px; background: #0b0c10; color: #f2f3f5; }
+  @media (prefers-color-scheme: light) { body { background: #f6f2e8; color: #14161a; } }
+  main { max-width: 480px; margin: 0 auto; }
+  h1 { font-size: 22px; margin: 8px 0 4px; }
+  p { line-height: 1.45; color: inherit; opacity: .85; font-size: 15px; }
+  label { display: block; font-size: 13px; font-weight: 600; margin: 18px 0 6px; opacity: .8; }
+  input, select { width: 100%; box-sizing: border-box; font-size: 17px; padding: 12px; border-radius: 10px; border: 1px solid rgba(140,140,150,.4); background: transparent; color: inherit; }
+  button { width: 100%; margin-top: 22px; font-size: 17px; font-weight: 600; padding: 14px; border: 0; border-radius: 12px; background: #5b8cff; color: #fff; }
+  button[disabled] { opacity: .5; }
+  .acct { border: 1px solid rgba(140,140,150,.35); border-radius: 12px; padding: 12px 14px; margin-top: 12px; }
+  .acct strong { display: block; margin-bottom: 8px; }
+  #status { margin-top: 18px; font-size: 15px; }
+  .err { color: #ff8787; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Link a bank</h1>
+  <p>Connect your checking account and Chase card to Expense Logger through Plaid. Linking happens here in Safari; the app itself never sees your bank login.</p>
+
+  <form id="setupForm">
+    <label for="workerUrl">Worker URL</label>
+    <input id="workerUrl" type="url" placeholder="https://your-worker.workers.dev" autocomplete="off" spellcheck="false" required>
+    <label for="setupCode">Setup code</label>
+    <input id="setupCode" type="password" autocomplete="off" required>
+    <button id="connectBtn" type="submit">Connect a bank</button>
+  </form>
+
+  <div id="accountsBox" hidden>
+    <p>Choose where each account belongs:</p>
+    <div id="accountsList"></div>
+    <button id="finishBtn" type="button">Finish linking</button>
+  </div>
+
+  <p id="status" role="status"></p>
+</main>
+
+<script src="https://cdn.plaid.com/link/v2/stable/link-initialize.js"></script>
+<script>
+(function () {
+  'use strict';
+  var SESSION_KEY = 'expenseLogger.linkSession.v1';
+  var pending = null;        // { workerUrl, setupCode } — memory + sessionStorage (OAuth round-trip only)
+  var pendingSuccess = null; // { tok, metadata } waiting for the account map
+
+  function $(id) { return document.getElementById(id); }
+  function setStatus(msg, isErr) {
+    var el = $('status');
+    el.textContent = msg || '';
+    el.className = isErr ? 'err' : '';
+  }
+  function saveSession() {
+    try {
+      if (pending) sessionStorage.setItem(SESSION_KEY, JSON.stringify(pending));
+      else sessionStorage.removeItem(SESSION_KEY);
+    } catch (e) {}
+  }
+  function loadSession() {
+    try {
+      var raw = sessionStorage.getItem(SESSION_KEY);
+      return raw ? JSON.parse(raw) : null;
+    } catch (e) { return null; }
+  }
+  function clearSession() { pending = null; saveSession(); }
+
+  function workerPost(path, body) {
+    return fetch(pending.workerUrl + path, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: 'Setup ' + pending.setupCode },
+      body: JSON.stringify(body || {})
+    }).then(function (res) {
+      return res.json().catch(function () { return {}; }).then(function (data) {
+        if (!res.ok) throw new Error((data && data.error) || ('HTTP ' + res.status));
+        return data;
+      });
+    });
+  }
+
+  function guessAppAccount(acct) {
+    var sub = String((acct && acct.subtype) || '').toLowerCase();
+    var type = String((acct && acct.type) || '').toLowerCase();
+    if (type === 'credit' || sub === 'credit card') return 'acct-chase';
+    if (type === 'depository') return 'acct-checking';
+    return '';
+  }
+
+  function onSuccess(publicToken, metadata) {
+    pendingSuccess = { tok: publicToken, metadata: metadata || {} };
+    var accounts = (metadata && metadata.accounts) || [];
+    var list = $('accountsList');
+    list.innerHTML = '';
+    accounts.forEach(function (acct) {
+      var box = document.createElement('div');
+      box.className = 'acct';
+      var title = document.createElement('strong');
+      title.textContent = (acct.name || 'Account') + (acct.mask ? ' •••' + acct.mask : '');
+      var sel = document.createElement('select');
+      sel.setAttribute('data-plaid-account', acct.id);
+      [['', 'Do not sync'], ['acct-checking', 'Checking'], ['acct-chase', 'Chase card']].forEach(function (pair) {
+        var opt = document.createElement('option');
+        opt.value = pair[0];
+        opt.textContent = pair[1];
+        sel.appendChild(opt);
+      });
+      sel.value = guessAppAccount(acct);
+      box.appendChild(title);
+      box.appendChild(sel);
+      list.appendChild(box);
+    });
+    $('setupForm').hidden = true;
+    $('accountsBox').hidden = accounts.length === 0;
+    if (!accounts.length) finishLink();
+    else setStatus('Bank connected. Assign each account, then finish.');
+  }
+
+  function finishLink() {
+    if (!pendingSuccess) return;
+    var accountMap = {};
+    var selects = document.querySelectorAll('[data-plaid-account]');
+    Array.prototype.forEach.call(selects, function (sel) {
+      if (sel.value) accountMap[sel.getAttribute('data-plaid-account')] = sel.value;
+    });
+    var md = pendingSuccess.metadata || {};
+    $('finishBtn').disabled = true;
+    workerPost('/link/exchange', {
+      public_token: pendingSuccess.tok,
+      institution: md.institution ? (md.institution.name || '') : '',
+      accountMap: accountMap
+    }).then(function () {
+      clearSession();
+      pendingSuccess = null;
+      $('accountsBox').hidden = true;
+      setStatus('Linked. You can close this tab and sync from Expense Logger Settings.');
+    }).catch(function (err) {
+      $('finishBtn').disabled = false;
+      setStatus('Linking failed: ' + err.message, true);
+    });
+  }
+
+  function startLink(receivedRedirectUri) {
+    setStatus('Contacting the sync Worker…');
+    return workerPost('/link/token', {}).then(function (data) {
+      if (!window.Plaid) throw new Error('Plaid Link did not load');
+      var config = {
+        token: data.linkToken,
+        onSuccess: onSuccess,
+        onExit: function (err) {
+          if (err) setStatus('Link closed: ' + (err.error_message || err.error_code || 'unknown error'), true);
+          else setStatus('Link closed. Nothing was connected.');
+        }
+      };
+      // OAuth banks reload this page with ?oauth_state_id=...; Plaid needs the
+      // full URL handed back to Link to resume the same session.
+      if (receivedRedirectUri) config.receivedRedirectUri = receivedRedirectUri;
+      window.Plaid.create(config).open();
+      setStatus('');
+    });
+  }
+
+  $('setupForm').addEventListener('submit', function (ev) {
+    ev.preventDefault();
+    pending = {
+      workerUrl: String($('workerUrl').value || '').trim().replace(/\/+$/, ''),
+      setupCode: String($('setupCode').value || '')
+    };
+    if (!pending.workerUrl || !pending.setupCode) { setStatus('Enter the Worker URL and setup code.', true); return; }
+    saveSession();
+    $('connectBtn').disabled = true;
+    startLink(null).catch(function (err) {
+      $('connectBtn').disabled = false;
+      setStatus('Could not start Link: ' + err.message, true);
+    });
+  });
+  $('finishBtn').addEventListener('click', finishLink);
+
+  // Resume after an OAuth redirect back to this page.
+  if (/[?&]oauth_state_id=/.test(window.location.search)) {
+    pending = loadSession();
+    if (pending && pending.workerUrl && pending.setupCode) {
+      $('setupForm').hidden = true;
+      setStatus('Returning from your bank…');
+      startLink(window.location.href).catch(function (err) {
+        $('setupForm').hidden = false;
+        setStatus('Could not resume Link: ' + err.message, true);
+      });
+    } else {
+      setStatus('This link session expired. Enter the Worker URL and setup code to start again.', true);
+    }
+  }
+})();
+</script>
+</body>
+</html>

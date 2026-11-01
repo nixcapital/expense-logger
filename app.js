@@ -53,7 +53,8 @@
   var TRANSFER_PATTERNS_KEY = 'expenseLogger.transferPatterns.v1';
   var FORECAST_OVERRIDES_KEY = 'expenseLogger.forecastOverrides.v1';
   var FORECAST_ONEOFFS_KEY = 'expenseLogger.forecastCountedOneOffs.v1';
-  var APP_VERSION = '1.9.9';
+  var SYNC_KEY      = 'expenseLogger.sync.v1'; // device token only: never in a backup or export
+  var APP_VERSION = '2.0.0';
   var BACKUP_FORMAT = 2;
   var BACKUP_FORMAT_LEGACY = 1;
   var DEFAULT_ACCOUNT_CHECKING = 'acct-checking';
@@ -1373,7 +1374,7 @@
     try {
       for (var i = 0; i < localStorage.length; i++) {
         var k = localStorage.key(i);
-        if (k && k.indexOf('expenseLogger.') === 0 && k !== PIN_KEY) out[k] = localStorage.getItem(k);
+        if (k && k.indexOf('expenseLogger.') === 0 && k !== PIN_KEY && k !== SYNC_KEY) out[k] = localStorage.getItem(k);
       }
     } catch (e) {}
     return out;
@@ -1436,7 +1437,7 @@
   function applyBackupStorageReplacingAppData(backupStorage, deviceMetaKeep) {
     var filtered = {};
     Object.keys(backupStorage || {}).forEach(function (k) {
-      if (k.indexOf('expenseLogger.') === 0 && k !== META_KEY && k !== PIN_KEY) {
+      if (k.indexOf('expenseLogger.') === 0 && k !== META_KEY && k !== PIN_KEY && k !== SYNC_KEY) {
         filtered[k] = backupStorage[k];
       }
     });
@@ -1525,6 +1526,10 @@
    */
   function applyStorageSnapshot(storage) {
     var old = {};
+    // The bank-sync pairing is device-owned, like the meta backup fields: a
+    // restore (or its Undo) must never delete it or take a value from a backup.
+    var syncRaw = null;
+    try { syncRaw = localStorage.getItem(SYNC_KEY); } catch (e0) {}
     try {
       for (var i = 0; i < localStorage.length; i++) {
         var k = localStorage.key(i);
@@ -1533,12 +1538,19 @@
     } catch (e) { return false; }
     var next = [];
     Object.keys(storage).forEach(function (k) {
-      if (k.indexOf('expenseLogger.') === 0 && storage[k] != null) next.push(k);
+      if (k.indexOf('expenseLogger.') === 0 && storage[k] != null && k !== SYNC_KEY) next.push(k);
     });
+    function restoreSyncKey() {
+      try {
+        if (syncRaw != null) localStorage.setItem(SYNC_KEY, syncRaw);
+        else localStorage.removeItem(SYNC_KEY);
+      } catch (e3) {}
+    }
     try {
       // Old keys go first so a restore never needs more room than the data it replaces.
       Object.keys(old).forEach(function (k) { localStorage.removeItem(k); });
       next.forEach(function (k) { localStorage.setItem(k, storage[k]); });
+      restoreSyncKey();
       return true;
     } catch (e) {
       next.forEach(function (k) {
@@ -1547,6 +1559,7 @@
       Object.keys(old).forEach(function (k) {
         try { localStorage.setItem(k, old[k]); } catch (e2) {}
       });
+      restoreSyncKey();
       return false;
     }
   }
@@ -1744,6 +1757,96 @@
       toast('Could not finish restore');
       return false;
     });
+  }
+
+  // ---------- Bank sync (Plaid Worker, plan #46) ----------
+  // Pairing lives in SYNC_KEY (expenseLogger.sync.v1): {workerUrl, deviceToken,
+  // pairedAt}. It is device-only state. It is never written into a backup or an
+  // export (collectExpenseLoggerKeys skips it; exportJSON/exportCSV never read
+  // it), and a restore never deletes or replaces it (applyStorageSnapshot
+  // preserves it). Restoring a backup on a NEW phone therefore leaves that
+  // phone unpaired: pair it there with the setup code.
+  function loadSyncState() {
+    try {
+      var raw = localStorage.getItem(SYNC_KEY);
+      if (raw) {
+        var p = JSON.parse(raw);
+        if (p && typeof p === 'object' && typeof p.deviceToken === 'string' && p.deviceToken) {
+          return {
+            workerUrl: typeof p.workerUrl === 'string' ? p.workerUrl : '',
+            deviceToken: p.deviceToken,
+            pairedAt: p.pairedAt || null
+          };
+        }
+      }
+    } catch (e) {}
+    return null;
+  }
+
+  function saveSyncState(state) {
+    try {
+      if (state) localStorage.setItem(SYNC_KEY, JSON.stringify(state));
+      else localStorage.removeItem(SYNC_KEY);
+    } catch (e) {}
+    renderSyncStatus();
+  }
+
+  function normalizeWorkerUrl(raw) {
+    return String(raw == null ? '' : raw).trim().replace(/\/+$/, '');
+  }
+
+  function workerRequest(workerUrl, path, opts) {
+    opts = opts || {};
+    var headers = { 'Content-Type': 'application/json' };
+    if (opts.deviceToken) headers.Authorization = 'Bearer ' + opts.deviceToken;
+    if (opts.setupCode) headers.Authorization = 'Setup ' + opts.setupCode;
+    return fetch(workerUrl + path, {
+      method: opts.method || 'GET',
+      headers: headers,
+      body: opts.body ? JSON.stringify(opts.body) : undefined
+    }).then(function (res) {
+      return res.json().catch(function () { return {}; }).then(function (data) {
+        if (!res.ok) {
+          var err = new Error((data && data.error) || ('HTTP ' + res.status));
+          err.status = res.status;
+          throw err;
+        }
+        return data;
+      });
+    });
+  }
+
+  function pairWithWorker(workerUrl, setupCode) {
+    var url = normalizeWorkerUrl(workerUrl);
+    if (!url) return Promise.reject(new Error('Enter the Worker URL'));
+    if (!setupCode) return Promise.reject(new Error('Enter the setup code'));
+    return workerRequest(url, '/pair', { method: 'POST', body: { setupCode: String(setupCode) } })
+      .then(function (data) {
+        if (!data || !data.deviceToken) throw new Error('Worker did not return a device token');
+        var state = { workerUrl: url, deviceToken: data.deviceToken, pairedAt: new Date().toISOString() };
+        saveSyncState(state);
+        return state;
+      });
+  }
+
+  // Revokes the token on the Worker (best effort) and always clears this phone.
+  function disconnectSync() {
+    var state = loadSyncState();
+    if (!state) { renderSyncStatus(); return Promise.resolve(false); }
+    return workerRequest(state.workerUrl, '/disconnect', { method: 'POST', deviceToken: state.deviceToken, body: {} })
+      .then(function () { saveSyncState(null); return true; })
+      .catch(function () { saveSyncState(null); return false; });
+  }
+
+  function renderSyncStatus() {
+    var state = loadSyncState();
+    if ($syncStatusLine) {
+      $syncStatusLine.textContent = state
+        ? 'Paired' + (state.pairedAt ? ' since ' + new Date(state.pairedAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }) : '')
+        : 'Not paired';
+    }
+    if ($syncWorkerUrl && state && !$syncWorkerUrl.value) $syncWorkerUrl.value = state.workerUrl;
+    if ($syncDisconnectBtn) $syncDisconnectBtn.hidden = !state;
   }
 
   // ---------- Recurring ----------
@@ -7302,6 +7405,30 @@
   if ($importConfirmBtn) {
     $importConfirmBtn.addEventListener('click', commitImport);
   }
+  var $syncStatusLine = $('syncStatusLine');
+  var $syncWorkerUrl = $('syncWorkerUrl');
+  var $syncSetupCode = $('syncSetupCode');
+  var $syncPairBtn = $('syncPairBtn');
+  var $syncDisconnectBtn = $('syncDisconnectBtn');
+  if ($syncPairBtn) {
+    $syncPairBtn.addEventListener('click', function () {
+      pairWithWorker($syncWorkerUrl ? $syncWorkerUrl.value : '', $syncSetupCode ? $syncSetupCode.value : '')
+        .then(function () {
+          if ($syncSetupCode) $syncSetupCode.value = '';
+          toast('Paired with bank sync');
+        })
+        .catch(function (err) { toast('Pairing failed: ' + (err && err.message ? err.message : 'unknown error')); });
+    });
+  }
+  if ($syncDisconnectBtn) {
+    $syncDisconnectBtn.addEventListener('click', function () {
+      if (!loadSyncState()) return;
+      if (!window.confirm('Disconnect this phone from bank sync?')) return;
+      disconnectSync().then(function () { toast('Disconnected from bank sync'); });
+    });
+  }
+  renderSyncStatus();
+
   var $countCardPayments = $('countCardPayments');
   if ($countCardPayments) {
     $countCardPayments.addEventListener('change', function () {
@@ -9902,6 +10029,12 @@
       };
     },
     getLocalStorageRaw: function (key) { return localStorage.getItem(key); },
+    SYNC_KEY: SYNC_KEY,
+    loadSyncState: loadSyncState,
+    pairWithWorker: pairWithWorker,
+    disconnectSync: disconnectSync,
+    workerRequest: workerRequest,
+    renderSyncStatus: renderSyncStatus,
     trySaveEntries: function () { return saveEntries(); },
     trySaveCategories: function () { return saveCategories(); },
     trySaveAccounts: function () { return saveAccounts(); }
