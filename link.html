@@ -33,7 +33,7 @@
 <script>
 (function () {
   var S = window.sessionStorage;
-  var K = { worker: 'elLink.worker', code: 'elLink.code', token: 'elLink.linkToken' };
+  var K = { worker: 'elLink.worker', code: 'elLink.code', token: 'elLink.linkToken', update: 'elLink.update' };
   var $ = function (id) { return document.getElementById(id); };
   var linked = null;
 
@@ -67,7 +67,9 @@
     return loadPlaid().then(function () {
       var cfg = {
         token: S.getItem(K.token),
-        onSuccess: function (publicToken, meta) { linked = { publicToken: publicToken, meta: meta || {} }; showMap(); },
+        onSuccess: function (publicToken, meta) {
+          if (S.getItem(K.update)) { clearSession(); $('start').hidden = true; say('Reconnected. Go back to Expense Logger and sync.'); return; }
+          linked = { publicToken: publicToken, meta: meta || {} }; showMap(); },
         onExit: function (err) { say(err ? 'Plaid closed: ' + (err.error_code || 'error') : 'Linking cancelled'); }
       };
       if (redirectUri) cfg.receivedRedirectUri = redirectUri;
@@ -105,7 +107,8 @@
     S.setItem(K.worker, w);
     S.setItem(K.code, $('code').value);
     say('Starting Plaid…');
-    call('/link/token').then(function (d) {
+    var upd = S.getItem(K.update);
+    call('/link/token', upd ? { itemId: upd } : {}).then(function (d) {
       S.setItem(K.token, d.linkToken);
       return openLink(null);
     }).catch(function (e) { say(e.message); });
@@ -124,6 +127,18 @@
       say('Linked. Go back to Expense Logger and sync.');
     }).catch(function (e) { say(e.message); });
   });
+
+  // Reconnect (update mode): the app links here with ?update=<itemId>&worker=<url>.
+  (function () {
+    var q = new URLSearchParams(window.location.search);
+    var u = q.get('update');
+    if (/oauth_state_id/.test(window.location.search)) return;
+    if (!u) { S.removeItem(K.update); return; }
+    S.setItem(K.update, u);
+    if (q.get('worker')) $('worker').value = q.get('worker');
+    document.querySelector('h1').textContent = 'Reconnect your bank';
+    $('go').textContent = 'Reconnect with Plaid';
+  })();
 
   // Back from a bank's OAuth page (Chase): resume the same Link session.
   if (/[?&]oauth_state_id=/.test(window.location.search)) {

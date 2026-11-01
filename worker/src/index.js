@@ -1,9 +1,9 @@
 // Expense Logger sync Worker (plan: issue #46). Plumbing only: pairing, auth, CORS,
 // Plaid Link token + public_token exchange, plus sync / pull / ack.
 import { sha256Hex, secretsEqual, randomToken, encryptText, decryptText } from './crypto.js';
-import { createLinkToken, exchangePublicToken } from './plaid.js';
+import { createLinkToken, createUpdateLinkToken, exchangePublicToken } from './plaid.js';
 import * as store from './store.js';
-import { syncItem, mergePayload, emptyPayload, payloadIsEmpty, publicAccounts } from './sync.js';
+import { syncItem, mergePayload, emptyPayload, payloadIsEmpty, publicAccounts, pendingTotals } from './sync.js';
 
 var MAX_BODY = 10 * 1024;
 var ALLOWED_ACCOUNTS = { 'acct-checking': true, 'acct-chase': true };
@@ -89,7 +89,9 @@ async function runPull(env, fetchFn, now) {
         });
         if (payloadIsEmpty(payload)) batchId = null;
       }
-      accounts = accounts.concat(publicAccounts(r.accounts, accountMap).map(function (a) {
+      var hasCard = r.accounts.some(function (a) { return a.type === 'credit' && accountMap[a.account_id]; });
+      var pend = hasCard ? await pendingTotals(env, fetchFn, token, accountMap, now) : null;
+      accounts = accounts.concat(publicAccounts(r.accounts, accountMap, pend).map(function (a) {
         a.itemId = it.item_id; return a;
       }));
     } catch (e) {
@@ -173,7 +175,15 @@ export async function handle(request, env, deps) {
 
     try {
       if (url.pathname === '/link/token') {
-        var lt = await createLinkToken(env, fetchFn);
+        var lt;
+        if (typeof data.itemId === 'string' && data.itemId) {
+          // Update mode (Reconnect bank): needs the stored access token for that Item.
+          var existing = await store.getItem(env.DB, data.itemId);
+          if (!existing) return json(404, { error: 'unknown_item' }, cors);
+          lt = await createUpdateLinkToken(env, fetchFn, await decryptText(env.TOKEN_ENC_KEY, existing.access_token_enc));
+        } else {
+          lt = await createLinkToken(env, fetchFn);
+        }
         return json(200, { linkToken: lt.link_token }, cors);
       }
       var accountMap = data.accountMap && typeof data.accountMap === 'object' ? data.accountMap : {};

@@ -108,6 +108,17 @@ assert.equal(dump.includes(ACCESS), false);
 import { decryptText } from '../src/crypto.js';
 assert.equal(await decryptText(KEY, item.access_token_enc), ACCESS);
 
+// update mode: token for an existing Item uses the decrypted access token and no products
+plaidCalls.length = 0;
+r = await handle(req('POST', '/link/token', { headers: { Authorization: 'Setup ' + SETUP }, body: { itemId: 'item-FAKE-1' } }), env, deps);
+assert.equal(r.status, 200);
+assert.equal((await r.json()).linkToken, 'link-sandbox-FAKE');
+var ut = plaidCalls.filter(function (c) { return c.url.endsWith('/link/token/create'); })[0];
+assert.equal(ut.body.access_token, ACCESS);
+assert.equal(ut.body.products, undefined);
+r = await handle(req('POST', '/link/token', { headers: { Authorization: 'Setup ' + SETUP }, body: { itemId: 'nope' } }), env, deps);
+assert.equal(r.status, 404);
+
 // bad account map and missing token rejected
 r = await handle(req('POST', '/link/exchange', { headers: { Authorization: 'Setup ' + SETUP }, body: { public_token: 'x', accountMap: { a: 'acct-evil' } } }), env, deps);
 assert.equal(r.status, 400);

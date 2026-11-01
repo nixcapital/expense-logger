@@ -1,4 +1,4 @@
-/* Expense Logger 2.2.0 — dark-first, iOS-style */
+/* Expense Logger 2.3.0 — dark-first, iOS-style */
 
 :root {
   --bg: #0B0C10;
@@ -3567,3 +3567,5 @@ a.settings-row-btn { text-decoration: none; }
   .report-avg-line { stroke: #666; }
   .report-bar-label, .report-avg-label { fill: #444; }
 }
+
+.bank-sync-reconnect-btn { color: #FFB020; font-weight: 600; }

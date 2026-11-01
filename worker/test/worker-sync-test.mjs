@@ -66,7 +66,9 @@ script = [
   ok({ added: [tx('a2', 'crd', 25), tx('x1', 'other', 99)], modified: [], removed: [], next_cursor: 'c2', has_more: false,
        accounts: [{ account_id: 'chk', mask: '0001', type: 'depository', balances: { current: 2000, available: 1990 } },
                   { account_id: 'crd', mask: '0002', type: 'credit', balances: { current: 100.5, available: 900 } },
-                  { account_id: 'other', balances: { current: 1 } }] })
+                  { account_id: 'other', balances: { current: 1 } }] }),
+  // pending charges for the card balance (card only; unmapped accounts ignored)
+  ok({ transactions: [tx('q1', 'crd', 40, { pending: true }), tx('q2', 'crd', 9.5), tx('q3', 'crd', 2.25, { pending: true }), tx('q4', 'other', 7, { pending: true })], total_transactions: 4 })
 ];
 r = await handle(req('GET', '/pull', { headers: auth }), env, deps);
 assert.equal(r.status, 200);
@@ -78,6 +80,12 @@ assert.equal(p1.added[0].personal_finance_category.confidence_level, undefined);
 assert.ok(typeof p1.batchId === 'string' && p1.batchId.length > 10);
 assert.equal(p1.accounts.length, 2);
 assert.equal(p1.accounts.filter(function (a) { return a.appAccountId === 'acct-chase'; })[0].current, 100.5);
+var card = p1.accounts.filter(function (a) { return a.appAccountId === 'acct-chase'; })[0];
+assert.equal(card.pendingTotal, 42.25, 'pending charges summed for the card');
+assert.equal(p1.accounts.filter(function (a) { return a.appAccountId === 'acct-checking'; })[0].pendingTotal, null, 'checking has no pending total');
+var pc = calls.filter(function (c) { return c.url.endsWith('/transactions/get'); });
+assert.equal(pc.length, 1);
+assert.equal(pc[0].body.access_token, ACCESS);
 // request shape: first call has no cursor, second uses c1; original description requested; count 500
 assert.equal(calls[1].body.cursor, undefined);
 assert.equal(calls[1].body.options.include_original_description, true);
