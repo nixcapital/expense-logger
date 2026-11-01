@@ -13,7 +13,7 @@ const PORT = 8877;
 const ROOT_OLD = '/tmp/el-upgrade-old';
 const ROOT_NEW = '/workspace';
 /** Pinned 1.9.8 release (before 1.9.9). */
-const UPGRADE_FROM_REF = 'd05b2aa';
+const UPGRADE_FROM_REF = '745c332';
 
 function prepareOldTree() {
   execSync(`rm -rf ${ROOT_OLD} && mkdir -p ${ROOT_OLD}`);
