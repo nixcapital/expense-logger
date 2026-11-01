@@ -1,8 +1,9 @@
 // Expense Logger sync Worker (plan: issue #46). Plumbing only: pairing, auth, CORS,
-// Plaid Link token + public_token exchange. Sync/pull/ack arrive in a later PR.
-import { sha256Hex, secretsEqual, randomToken, encryptText } from './crypto.js';
+// Plaid Link token + public_token exchange, plus sync / pull / ack.
+import { sha256Hex, secretsEqual, randomToken, encryptText, decryptText } from './crypto.js';
 import { createLinkToken, exchangePublicToken } from './plaid.js';
 import * as store from './store.js';
+import { syncItem, mergePayload, emptyPayload, payloadIsEmpty, publicAccounts } from './sync.js';
 
 var MAX_BODY = 10 * 1024;
 var ALLOWED_ACCOUNTS = { 'acct-checking': true, 'acct-chase': true };
@@ -52,6 +53,64 @@ function setupCodeFromHeader(request) {
   return m ? m[1] : null;
 }
 
+async function authDevice(request, env) {
+  var t = bearer(request);
+  if (!t) return false;
+  return store.deviceActive(env.DB, await sha256Hex(t));
+}
+
+// Sync every linked Item, fold new rows into the single unacknowledged batch, and
+// return it. The cursor and batch are saved together; nothing is logged.
+async function runPull(env, fetchFn, now) {
+  var current = await store.loadBatch(env.DB);
+  var payload = current ? current.payload : emptyPayload();
+  var batchId = current ? current.batchId : null;
+  var accounts = [];
+  var needsReconnect = [];
+  var errors = [];
+  var syncedOk = {};
+  var items = await store.listItems(env.DB);
+  for (var i = 0; i < items.length; i++) {
+    var it = items[i];
+    var accountMap = JSON.parse(it.account_map || '{}');
+    try {
+      var token = await decryptText(env.TOKEN_ENC_KEY, it.access_token_enc);
+      var r = await syncItem(env, fetchFn, token, it.cursor, accountMap);
+      syncedOk[it.item_id] = true;
+      var changed = !payloadIsEmpty(r.delta);
+      if (changed) {
+        payload = mergePayload(payload, r.delta);
+        batchId = randomToken().slice(0, 32);
+      }
+      if (changed || (r.cursor && r.cursor !== it.cursor) || Number(it.needs_reconnect) === 1) {
+        await store.commitSync(env.DB, {
+          itemId: it.item_id, cursor: r.cursor || it.cursor, now: now,
+          batch: payloadIsEmpty(payload) ? null : { batchId: batchId, payload: payload }
+        });
+        if (payloadIsEmpty(payload)) batchId = null;
+      }
+      accounts = accounts.concat(publicAccounts(r.accounts, accountMap).map(function (a) {
+        a.itemId = it.item_id; return a;
+      }));
+    } catch (e) {
+      if (e && e.plaidCode === 'ITEM_LOGIN_REQUIRED') {
+        await store.setNeedsReconnect(env.DB, it.item_id, true);
+        needsReconnect.push(it.item_id);
+      } else {
+        errors.push({ itemId: it.item_id, code: e && e.plaidCode ? e.plaidCode : 'unknown' });
+      }
+    }
+  }
+  items.forEach(function (it) {
+    if (Number(it.needs_reconnect) === 1 && !syncedOk[it.item_id] && needsReconnect.indexOf(it.item_id) < 0) needsReconnect.push(it.item_id);
+  });
+  return {
+    batchId: payloadIsEmpty(payload) ? null : batchId,
+    added: payload.added, modified: payload.modified, removed: payload.removed,
+    accounts: accounts, needsReconnect: needsReconnect, errors: errors
+  };
+}
+
 export async function handle(request, env, deps) {
   deps = deps || {};
   var fetchFn = deps.fetch || globalThis.fetch;
@@ -69,6 +128,10 @@ export async function handle(request, env, deps) {
   }
 
   if (url.pathname === '/health' && request.method === 'GET') return json(200, { ok: true }, cors);
+  if (url.pathname === '/pull' && request.method === 'GET') {
+    if (!await authDevice(request, env)) return json(401, { error: 'unauthorized' }, cors);
+    return json(200, await runPull(env, fetchFn, now), cors);
+  }
   if (request.method !== 'POST') return json(404, { error: 'not_found' }, cors);
 
   var body = await readJson(request);
@@ -82,6 +145,14 @@ export async function handle(request, env, deps) {
     var token = randomToken();
     await store.addDevice(env.DB, await sha256Hex(token), now);
     return json(200, { deviceToken: token }, cors);
+  }
+
+  if (url.pathname === '/ack') {
+    if (!await authDevice(request, env)) return json(401, { error: 'unauthorized' }, cors);
+    if (typeof data.batchId !== 'string' || !data.batchId) return json(400, { error: 'missing_batch_id' }, cors);
+    var ar = await store.ackBatch(env.DB, data.batchId);
+    if (ar === 'stale') return json(409, { error: 'stale_batch' }, cors);
+    return json(200, { ok: true, deleted: ar === 'deleted' }, cors);
   }
 
   if (url.pathname === '/disconnect') {

@@ -1,38 +1,17 @@
 // node worker/test/worker-auth-test.mjs  (Node 22+; uses node:sqlite as a D1 stand-in)
 import assert from 'node:assert/strict';
-import { DatabaseSync } from 'node:sqlite';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { handle } from '../src/index.js';
 import { b64encode, sha256Hex } from '../src/crypto.js';
+import { makeDb } from './helpers.mjs';
 
 var here = path.dirname(fileURLToPath(import.meta.url));
 var ORIGIN = 'https://nixcapital.github.io';
 var SETUP = 'fake-setup-code-1234';
 var ACCESS = 'access-sandbox-FAKE-0001';
 var KEY = b64encode(new Uint8Array(32).fill(7));
-
-function makeDb() {
-  var db = new DatabaseSync(':memory:');
-  db.exec(fs.readFileSync(path.join(here, '..', 'schema.sql'), 'utf8'));
-  return {
-    raw: db,
-    prepare: function (sql) {
-      function bound(args) {
-        var st = db.prepare(sql);
-        return {
-          first: async function () { var r = st.get.apply(st, args); return r === undefined ? null : r; },
-          run: async function () { st.run.apply(st, args); return {}; },
-          all: async function () { return { results: st.all.apply(st, args) }; }
-        };
-      }
-      var s0 = bound([]);
-      s0.bind = function () { return bound(Array.prototype.slice.call(arguments)); };
-      return s0;
-    }
-  };
-}
 
 function makeEnv() {
   return {

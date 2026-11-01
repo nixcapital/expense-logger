@@ -32,6 +32,41 @@ export async function saveItem(db, item) {
 }
 
 export async function listItems(db) {
-  var res = await db.prepare('SELECT item_id, institution, account_map FROM items').all();
+  var res = await db.prepare(
+    'SELECT item_id, institution, access_token_enc, cursor, needs_reconnect, account_map FROM items ORDER BY created_at, item_id'
+  ).all();
   return res.results || [];
+}
+
+export async function loadBatch(db) {
+  var row = await db.prepare('SELECT batch_id, payload FROM batches LIMIT 1').first();
+  if (!row) return null;
+  return { batchId: row.batch_id, payload: JSON.parse(row.payload) };
+}
+
+// Persist the new cursor and the merged unacked batch together, so a cursor never
+// advances without its rows being stored.
+export async function commitSync(db, args) {
+  var stmts = [];
+  stmts.push(db.prepare('DELETE FROM batches').bind());
+  if (args.batch) {
+    stmts.push(db.prepare('INSERT INTO batches (batch_id, payload, created_at) VALUES (?, ?, ?)')
+      .bind(args.batch.batchId, JSON.stringify(args.batch.payload), args.now));
+  }
+  stmts.push(db.prepare('UPDATE items SET cursor = ?, needs_reconnect = 0 WHERE item_id = ?')
+    .bind(args.cursor, args.itemId));
+  await db.batch(stmts);
+}
+
+export async function setNeedsReconnect(db, itemId, flag) {
+  await db.prepare('UPDATE items SET needs_reconnect = ? WHERE item_id = ?').bind(flag ? 1 : 0, itemId).run();
+}
+
+// Returns 'deleted', 'none' (nothing stored) or 'stale' (a different batch is stored).
+export async function ackBatch(db, batchId) {
+  var cur = await db.prepare('SELECT batch_id FROM batches LIMIT 1').first();
+  if (!cur) return 'none';
+  if (cur.batch_id !== batchId) return 'stale';
+  await db.prepare('DELETE FROM batches WHERE batch_id = ?').bind(batchId).run();
+  return 'deleted';
 }
