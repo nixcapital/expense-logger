@@ -107,7 +107,7 @@ async function run() {
   await page.reload({ waitUntil: 'networkidle' });
 
   const version = await page.evaluate(() => window.ExpenseLoggerTest.APP_VERSION);
-  check('app version is 2.0.0', version === '2.0.0', version);
+  check('app version is 2.1.0', version === '2.1.0', version);
 
   // Pair through the real Settings UI.
   await page.click('button[data-tab="settings"]');

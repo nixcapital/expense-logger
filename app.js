@@ -54,7 +54,7 @@
   var FORECAST_OVERRIDES_KEY = 'expenseLogger.forecastOverrides.v1';
   var FORECAST_ONEOFFS_KEY = 'expenseLogger.forecastCountedOneOffs.v1';
   var SYNC_KEY      = 'expenseLogger.sync.v1'; // device token only: never in a backup or export
-  var APP_VERSION = '2.0.0';
+  var APP_VERSION = '2.1.0';
   var BACKUP_FORMAT = 2;
   var BACKUP_FORMAT_LEGACY = 1;
   var DEFAULT_ACCOUNT_CHECKING = 'acct-checking';
@@ -199,7 +199,7 @@
   var pendingReceiptBlob = null; // { id, blob } not yet attached
   var editingEntryId = null;     // id of entry being edited (modal)
   var importRules = [];
-  var importSettings = { countCardPayments: false };
+  var importSettings = { countCardPayments: false, syncCutover: null };
   var pendingImport = null;      // { batchId, rows, fileName, accountId, layout, balanceOffer?, useBalanceOffer? }
   var pendingImportAccount = null; // pre-review: { batchId, rows, fileName, layout, rowCount, balanceOffer? }
   var importReviewFilter = 'review';
@@ -701,15 +701,30 @@
   function saveImportRules() {
     try { localStorage.setItem(IMPORT_RULES_KEY, JSON.stringify(importRules)); } catch (e) {}
   }
+  var PLAID_SYNC_FLOOR = '2025-01-01';
+  function normalizeSyncCutover(raw) {
+    var out = {};
+    out[DEFAULT_ACCOUNT_CHECKING] = PLAID_SYNC_FLOOR;
+    out[DEFAULT_ACCOUNT_CHASE] = PLAID_SYNC_FLOOR;
+    if (raw && typeof raw === 'object') {
+      [DEFAULT_ACCOUNT_CHECKING, DEFAULT_ACCOUNT_CHASE].forEach(function (acct) {
+        var v = raw[acct];
+        if (typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v)) out[acct] = v;
+      });
+    }
+    return out;
+  }
   function loadImportSettings() {
     try {
       var raw = localStorage.getItem(IMPORT_SETTINGS_KEY);
       if (raw) {
         var p = JSON.parse(raw);
-        if (p && typeof p === 'object') return { countCardPayments: !!p.countCardPayments };
+        if (p && typeof p === 'object') {
+          return { countCardPayments: !!p.countCardPayments, syncCutover: normalizeSyncCutover(p.syncCutover) };
+        }
       }
     } catch (e) {}
-    return { countCardPayments: false };
+    return { countCardPayments: false, syncCutover: normalizeSyncCutover(null) };
   }
   function saveImportSettings() {
     try { localStorage.setItem(IMPORT_SETTINGS_KEY, JSON.stringify(importSettings)); } catch (e) {}
@@ -1847,6 +1862,184 @@
     }
     if ($syncWorkerUrl && state && !$syncWorkerUrl.value) $syncWorkerUrl.value = state.workerUrl;
     if ($syncDisconnectBtn) $syncDisconnectBtn.hidden = !state;
+  }
+
+  // ---------- Bank sync: pull into import review (step E, #51) ----------
+  // A pull is mapped to the same row shape rowsFromTable produces, grouped per
+  // app account, and opened in the existing import review. Nothing reaches the
+  // ledger without that review, and the Worker batch is acked only after a
+  // commit that actually saved (see commitImport). Discarding the review, or a
+  // failed save, never acks: the Worker re-serves the batch on the next pull.
+  function syncCutoverFor(accountId) {
+    var map = normalizeSyncCutover(importSettings && importSettings.syncCutover);
+    return map[accountId] || PLAID_SYNC_FLOOR;
+  }
+
+  function syncCutoverTs(accountId) {
+    var p = syncCutoverFor(accountId).split('-');
+    return new Date(parseInt(p[0], 10), parseInt(p[1], 10) - 1, parseInt(p[2], 10), 0, 0, 0, 0).getTime();
+  }
+
+  function isPlaidCardPayment(txn, bankText, note) {
+    var pfc = txn.personal_finance_category;
+    if (pfc && /CREDIT_CARD_PAYMENT/.test(String(pfc.detailed || ''))) return true;
+    return isBuiltInTransfer(bankText || note || '', '', 'card');
+  }
+
+  function plaidTxnToRow(txn, appAccountId, layout) {
+    if (!txn || txn.pending) return null;
+    if (typeof txn.amount !== 'number' || !isFinite(txn.amount) || txn.amount === 0) return null;
+    var dateStr = layout === 'card' ? (txn.authorized_date || txn.date) : txn.date;
+    var ts = dateStr ? parseUsDate(dateStr) : null;
+    if (!ts) return null;
+    if (ts < syncCutoverTs(appAccountId)) return null; // cutover: dropped locally, still acked with the batch
+    var amount = Math.round(Math.abs(txn.amount) * 100) / 100;
+    var note = cleanImportNote(txn.merchant_name || txn.name || '');
+    var bankText = String(txn.original_description || txn.name || '');
+    var rowKey = 'plaid:' + txn.transaction_id;
+
+    if (layout === 'card' && txn.amount < 0 && !isPlaidCardPayment(txn, bankText, note)) {
+      // Refund/return on the card: shown in review, never spending, never committed.
+      return {
+        status: 'credit', reason: 'Card refund/return (not spending)',
+        note: note, amount: amount, ts: ts, importRowKey: rowKey, layout: layout,
+        bankText: bankText, plaidCategory: txn.personal_finance_category || null, include: false
+      };
+    }
+
+    var isDeposit = false;
+    var isTransfer = false;
+    var transferKind = null;
+    var rule = findImportRule(note);
+    var patRule = !isCardBillAutopayTransfer(bankText) && findTransferPatternForNote(note);
+    if (layout === 'bank') {
+      if (txn.amount < 0) isDeposit = true;
+      else if ((rule && rule.isTransfer) || patRule || isBuiltInTransfer(bankText, '', 'bank')) isTransfer = true;
+    } else if (txn.amount < 0) {
+      // Card payment (a purchase is amount > 0; this is money back to the card).
+      if (!importSettings.countCardPayments) isTransfer = true;
+    }
+    if (isTransfer) transferKind = importRowTransferKind(bankText, layout, true);
+    if (rule && rule.countAsSpending) isTransfer = false;
+
+    var catId = categoryForImportRow(layout, '', note);
+    if (rule && rule.categoryId && !rule.isTransfer) catId = rule.categoryId;
+    if (isDeposit && !isTransfer) {
+      var depCatId = incomeCategoryIdForDeposit(note);
+      if (depCatId) catId = depCatId;
+    }
+
+    var sign = isTransfer ? 'xfer' : (isDeposit ? 'in' : 'out');
+    return {
+      status: isTransfer ? 'transfer' : 'import',
+      reason: isTransfer ? 'Transfer between accounts' : (isDeposit ? 'Deposit / paycheck' : ''),
+      note: note, amount: amount, ts: ts,
+      categoryId: catId, importRowKey: rowKey,
+      isTransfer: isTransfer, transferKind: transferKind, include: true,
+      typeVal: '', layout: layout,
+      contentKey: importContentKey(layout, ts, amount, note, catId, appAccountId, sign),
+      suggestedCategoryId: catId, initialCategoryId: catId,
+      initialIsTransfer: isTransfer, initialTransferKind: transferKind,
+      userSetCategory: false, userSetTransfer: false,
+      isDeposit: isDeposit, initialIsDeposit: isDeposit,
+      bankText: bankText, dedupeBaseStatus: isTransfer ? 'transfer' : 'import',
+      plaidCategory: txn.personal_finance_category || null
+    };
+  }
+
+  function plaidImportGroups(pull) {
+    var byApp = {};
+    (pull.accounts || []).forEach(function (a) {
+      if (a && a.account_id && a.appAccountId) byApp[a.account_id] = a.appAccountId;
+    });
+    var groups = {};
+    var order = [];
+    (pull.added || []).forEach(function (txn) {
+      var appId = txn && byApp[txn.account_id];
+      if (!appId) return;
+      var layout = appId === DEFAULT_ACCOUNT_CHASE ? 'card' : 'bank';
+      if (!groups[appId]) { groups[appId] = { accountId: appId, layout: layout, rows: [] }; order.push(appId); }
+      var row = plaidTxnToRow(txn, appId, layout);
+      if (row) groups[appId].rows.push(row);
+    });
+    var byRowKey = {};
+    entries.forEach(function (e) { if (e && e.importRowKey) byRowKey[e.importRowKey] = e; });
+    return order.map(function (appId) {
+      var g = groups[appId];
+      // Existing dedupe first (catches rows already imported from CSV), then the
+      // Plaid id itself (catches rows whose ledger entry was edited afterwards).
+      reapplyImportDedupe(g.rows, g.layout, g.accountId);
+      g.rows.forEach(function (r) {
+        if (r.status === 'duplicate' || r.status === 'credit') return;
+        var hit = byRowKey[r.importRowKey];
+        if (hit) {
+          r.dedupeBaseStatus = r.isTransfer ? 'transfer' : 'import';
+          r.status = 'duplicate';
+          r.reason = 'Already in your log (overlapping statement)';
+          r.existingEntryId = hit.id;
+          r.wasTransfer = r.isTransfer || undefined;
+          r.include = false;
+        }
+      });
+      return g;
+    }).filter(function (g) { return g.rows.length > 0; });
+  }
+
+  function ackSyncBatch(batchId) {
+    var state = loadSyncState();
+    if (!state || !batchId) return Promise.resolve(false);
+    return workerRequest(state.workerUrl, '/ack', { method: 'POST', deviceToken: state.deviceToken, body: { batchId: batchId } })
+      .then(function () { return true; })
+      .catch(function () { return false; });
+  }
+
+  function openSyncReview(group, batchId, remaining) {
+    pendingImport = {
+      batchId: 'plaid:' + batchId,
+      rows: group.rows,
+      fileName: 'Bank sync',
+      accountId: group.accountId,
+      layout: group.layout,
+      syncBatchId: batchId,
+      syncQueue: remaining || []
+    };
+    importReviewFilter = 'all';
+    importReviewExpandedIdx = null;
+    importApplyPrompt = null;
+    renderImportReview();
+  }
+
+  function syncNow() {
+    var state = loadSyncState();
+    if (!state) {
+      toast('Pair this phone first (Settings, Bank sync)');
+      return Promise.resolve(false);
+    }
+    return workerRequest(state.workerUrl, '/pull', { deviceToken: state.deviceToken })
+      .then(function (pull) {
+        pull = pull || {};
+        var groups = plaidImportGroups(pull);
+        var batchId = pull.batchId || null;
+        if (!groups.length) {
+          if (batchId) {
+            // Everything pulled was dropped locally (before the cutover, or
+            // unmapped): the batch is still acked so it is not served forever.
+            return ackSyncBatch(batchId).then(function () {
+              toast('Bank sync: nothing new to import');
+              return true;
+            });
+          }
+          toast('Bank sync: already up to date');
+          return false;
+        }
+        var first = groups.shift();
+        openSyncReview(first, batchId, groups);
+        return true;
+      })
+      .catch(function (err) {
+        toast('Bank sync failed: ' + (err && err.message ? err.message : 'unknown error'));
+        return false;
+      });
   }
 
   // ---------- Recurring ----------
@@ -6998,6 +7191,8 @@
       toast('Import not saved — could not store your data');
       return;
     }
+    var syncBatchId = pendingImport.syncBatchId || null;
+    var syncQueue = pendingImport.syncQueue || null;
     saveCategories();
     autoPairTransfers();
     renderAll(); rebuildFilterDropdowns();
@@ -7014,6 +7209,16 @@
     if (skippedPending) parts.push(skippedPending + ' pending');
     if (skippedBad) parts.push(skippedBad + ' unreadable');
     toast('Imported ' + parts.join(', '));
+    if (syncBatchId) {
+      // The commit saved, so the Worker batch may be acked — but only once
+      // every account group from this pull has been through review.
+      if (syncQueue && syncQueue.length) {
+        var nextGroup = syncQueue.shift();
+        openSyncReview(nextGroup, syncBatchId, syncQueue);
+      } else {
+        ackSyncBatch(syncBatchId);
+      }
+    }
   }
 
   function modalTransitionMs() {
@@ -7427,6 +7632,20 @@
       disconnectSync().then(function () { toast('Disconnected from bank sync'); });
     });
   }
+  var $syncNowBtn = $('syncNowBtn');
+  if ($syncNowBtn) {
+    $syncNowBtn.addEventListener('click', function () { syncNow(); });
+  }
+  [['syncCutoverChecking', DEFAULT_ACCOUNT_CHECKING], ['syncCutoverChase', DEFAULT_ACCOUNT_CHASE]].forEach(function (pair) {
+    var input = $(pair[0]);
+    if (!input) return;
+    input.value = syncCutoverFor(pair[1]);
+    input.addEventListener('change', function () {
+      if (!importSettings.syncCutover) importSettings.syncCutover = normalizeSyncCutover(null);
+      importSettings.syncCutover[pair[1]] = /^\d{4}-\d{2}-\d{2}$/.test(input.value) ? input.value : PLAID_SYNC_FLOOR;
+      saveImportSettings();
+    });
+  });
   renderSyncStatus();
 
   var $countCardPayments = $('countCardPayments');
@@ -7576,7 +7795,7 @@
       localStorage.removeItem(IMPORT_SETTINGS_KEY);
     } catch (e) {}
     importRules = [];
-    importSettings = { countCardPayments: false };
+    importSettings = { countCardPayments: false, syncCutover: normalizeSyncCutover(null) };
     idbClear().catch(function () {});
     buildCategoryButtons(); rebuildFilterDropdowns();
     renderAll(); renderCategoryList(); renderBudgetSettings(); renderRecurringList();
@@ -10035,6 +10254,20 @@
     disconnectSync: disconnectSync,
     workerRequest: workerRequest,
     renderSyncStatus: renderSyncStatus,
+    syncNow: syncNow,
+    plaidTxnToRow: plaidTxnToRow,
+    plaidImportGroups: plaidImportGroups,
+    ackSyncBatch: ackSyncBatch,
+    syncCutoverFor: syncCutoverFor,
+    getPendingImport: function () { return pendingImport; },
+    setImportSettings: function (patch) {
+      if (patch && typeof patch === 'object') {
+        Object.keys(patch).forEach(function (k) { importSettings[k] = patch[k]; });
+        importSettings.syncCutover = normalizeSyncCutover(importSettings.syncCutover);
+        saveImportSettings();
+      }
+      return importSettings;
+    },
     trySaveEntries: function () { return saveEntries(); },
     trySaveCategories: function () { return saveCategories(); },
     trySaveAccounts: function () { return saveAccounts(); }
