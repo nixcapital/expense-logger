@@ -1,5 +1,6 @@
 /**
 <<<<<<< HEAD
+<<<<<<< HEAD
  * Simulates 1.9.5 → 1.9.9 deploy on the same origin (port).
 =======
 <<<<<<< HEAD
@@ -7,6 +8,9 @@
 =======
  * Simulates 1.9.5 → 1.9.8 deploy on the same origin (port).
 >>>>>>> origin/claude/37-restore-keeps-receipts
+>>>>>>> origin/claude/37-restore-keeps-receipts
+=======
+ * Simulates 1.9.7 → 1.9.8 deploy on the same origin (port).
 >>>>>>> origin/claude/37-restore-keeps-receipts
  * Run: node scripts/sw-upgrade-test.mjs [--baseline]
  * --baseline uses main-branch sw.js/app (reproduces mixed-cache issues).
@@ -21,6 +25,7 @@ const PORT = 8877;
 const ROOT_OLD = '/tmp/el-upgrade-old';
 const ROOT_NEW = '/workspace';
 <<<<<<< HEAD
+<<<<<<< HEAD
 /** Pinned 1.9.5 release (before 1.9.9). */
 =======
 <<<<<<< HEAD
@@ -30,6 +35,10 @@ const UPGRADE_FROM_REF = 'b90ce0f';
 /** Pinned 1.9.5 release (before 1.9.8). */
 >>>>>>> origin/claude/37-restore-keeps-receipts
 const UPGRADE_FROM_REF = 'da57ab0';
+>>>>>>> origin/claude/37-restore-keeps-receipts
+=======
+/** Pinned 1.9.7 release (before 1.9.8). */
+const UPGRADE_FROM_REF = 'b90ce0f';
 >>>>>>> origin/claude/37-restore-keeps-receipts
 
 function prepareOldTree() {
@@ -134,6 +143,7 @@ async function run(useBaseline) {
   }
 
 <<<<<<< HEAD
+<<<<<<< HEAD
   const ok = v1.includes('1.9.5') && v2.includes('1.9.9') && entries && entries.includes('12.5') && errors.length === 0;
 =======
 <<<<<<< HEAD
@@ -141,6 +151,9 @@ async function run(useBaseline) {
 =======
   const ok = v1.includes('1.9.5') && v2.includes('1.9.8') && entries && entries.includes('12.5') && errors.length === 0;
 >>>>>>> origin/claude/37-restore-keeps-receipts
+>>>>>>> origin/claude/37-restore-keeps-receipts
+=======
+  const ok = v1.includes('1.9.7') && v2.includes('1.9.8') && entries && entries.includes('12.5') && errors.length === 0;
 >>>>>>> origin/claude/37-restore-keeps-receipts
   console.log('page errors:', errors);
   console.log(ok ? 'PASS' : 'FAIL');
