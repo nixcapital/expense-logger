@@ -1,0 +1,16 @@
+name = "expense-logger-sync"
+main = "src/index.js"
+compatibility_date = "2025-01-01"
+
+[vars]
+ALLOWED_ORIGIN = "https://nixcapital.github.io"
+REDIRECT_URI = "https://nixcapital.github.io/expense-logger/link.html"
+PLAID_ENV = "sandbox"   # change to "production" only after Tri approves
+
+[[d1_databases]]
+binding = "DB"
+database_name = "expense-logger-sync"
+database_id = "REPLACE_AFTER_wrangler_d1_create"
+
+# Secrets (never in this file): set with `npx wrangler secret put <NAME>`
+#   PLAID_CLIENT_ID, PLAID_SECRET, TOKEN_ENC_KEY (base64, 32 random bytes), SETUP_CODE
