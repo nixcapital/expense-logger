@@ -90,7 +90,7 @@ async function run() {
     localStorage.setItem('expenseLogger.importRules.v1', '[]');
   }, { seedEntry });
   await page.reload({ waitUntil: 'networkidle' });
-  await page.waitForFunction(() => window.ExpenseLoggerTest && window.ExpenseLoggerTest.APP_VERSION === '1.9.8');
+  await page.waitForFunction(() => window.ExpenseLoggerTest && window.ExpenseLoggerTest.APP_VERSION === '1.9.9');
 
   await page.click('button[data-tab="settings"]');
   await importFile(page, 'single-expense-1999.csv', 'acct-checking');
