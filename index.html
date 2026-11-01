@@ -13,8 +13,8 @@
 <link rel="manifest" href="manifest.json">
 <link rel="icon" href="icon-192.png">
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
-<link rel="stylesheet" href="styles.css?v=1.9.9">
-<link rel="stylesheet" href="icon-animations.css?v=1.9.9">
+<link rel="stylesheet" href="styles.css?v=2.2.0">
+<link rel="stylesheet" href="icon-animations.css?v=2.2.0">
 <title>Expense Logger</title>
 </head>
 <body>
@@ -409,6 +409,26 @@
         <input type="checkbox" id="countCardPayments">
       </label>
     </div>
+  </div>
+
+  <div class="inset-group">
+    <h3 class="group-label">Bank sync</h3>
+    <div class="inset-card" id="bankSyncCard">
+      <p class="hint inset-hint data-meta-hint" id="bankSyncStatus">Not paired</p>
+      <div class="bank-sync-form" id="bankSyncPairForm">
+        <input type="url" id="bankSyncUrl" placeholder="Worker URL (https://&hellip;)" autocomplete="off" autocapitalize="off" spellcheck="false" aria-label="Worker URL">
+        <input type="password" id="bankSyncCode" placeholder="Setup code" autocomplete="off" aria-label="Setup code">
+        <button class="settings-row-btn" id="bankSyncPairBtn" type="button">Pair this phone <span class="chevron">›</span></button>
+      </div>
+      <div id="bankSyncPaired" hidden>
+        <button class="settings-row-btn" id="bankSyncNowBtn" type="button">Sync bank now <span class="chevron">›</span></button>
+        <label class="settings-row"><span>Checking rows from</span><input type="date" id="bankSyncCutoverChecking" class="bank-sync-date"></label>
+        <label class="settings-row"><span>Chase card rows from</span><input type="date" id="bankSyncCutoverChase" class="bank-sync-date"></label>
+      </div>
+      <a class="settings-row-btn" id="bankSyncLinkBtn" href="link.html" target="_blank" rel="noopener">Link a bank (opens Safari) <span class="chevron">›</span></a>
+      <button class="settings-row-btn danger-text" id="bankSyncDisconnectBtn" type="button" hidden>Disconnect this phone</button>
+    </div>
+    <p class="hint inset-hint">The setup code is sent once to pair and is not kept on this phone. Backups never include the pairing. Synced rows always open in import review first.</p>
   </div>
 
   <div class="inset-group">
@@ -945,10 +965,10 @@
   <p class="hint wrapped-empty" id="wrappedEmpty" hidden>No spending data for this month.</p>
 </div>
 
-<script src="icon-system.js?v=1.9.9"></script>
-<script src="forecast.js?v=1.9.9"></script>
-<script src="wrapped.js?v=1.9.9"></script>
-<script src="app.js?v=1.9.9"></script>
+<script src="icon-system.js?v=2.2.0"></script>
+<script src="forecast.js?v=2.2.0"></script>
+<script src="wrapped.js?v=2.2.0"></script>
+<script src="app.js?v=2.2.0"></script>
 <script>
 (function () {
   'use strict';

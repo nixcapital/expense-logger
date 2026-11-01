@@ -53,7 +53,11 @@
   var TRANSFER_PATTERNS_KEY = 'expenseLogger.transferPatterns.v1';
   var FORECAST_OVERRIDES_KEY = 'expenseLogger.forecastOverrides.v1';
   var FORECAST_ONEOFFS_KEY = 'expenseLogger.forecastCountedOneOffs.v1';
-  var APP_VERSION = '1.9.9';
+  // Device token for the bank sync Worker. Device-only: never in a backup or export, and a
+  // restore or undo leaves it in place (pair again only after Clear All Data or Disconnect).
+  var SYNC_KEY = 'expenseLogger.sync.v1';
+  var SYNC_CUTOVER_KEY = 'expenseLogger.syncCutover.v1'; // { accountId: 'YYYY-MM-DD' }; bank rows before it are dropped
+  var APP_VERSION = '2.2.0';
   var BACKUP_FORMAT = 2;
   var BACKUP_FORMAT_LEGACY = 1;
   var DEFAULT_ACCOUNT_CHECKING = 'acct-checking';
@@ -1373,7 +1377,7 @@
     try {
       for (var i = 0; i < localStorage.length; i++) {
         var k = localStorage.key(i);
-        if (k && k.indexOf('expenseLogger.') === 0 && k !== PIN_KEY) out[k] = localStorage.getItem(k);
+        if (k && k.indexOf('expenseLogger.') === 0 && k !== PIN_KEY && k !== SYNC_KEY) out[k] = localStorage.getItem(k);
       }
     } catch (e) {}
     return out;
@@ -1436,7 +1440,7 @@
   function applyBackupStorageReplacingAppData(backupStorage, deviceMetaKeep) {
     var filtered = {};
     Object.keys(backupStorage || {}).forEach(function (k) {
-      if (k.indexOf('expenseLogger.') === 0 && k !== META_KEY && k !== PIN_KEY) {
+      if (k.indexOf('expenseLogger.') === 0 && k !== META_KEY && k !== PIN_KEY && k !== SYNC_KEY) {
         filtered[k] = backupStorage[k];
       }
     });
@@ -1528,12 +1532,12 @@
     try {
       for (var i = 0; i < localStorage.length; i++) {
         var k = localStorage.key(i);
-        if (k && k.indexOf('expenseLogger.') === 0) old[k] = localStorage.getItem(k);
+        if (k && k.indexOf('expenseLogger.') === 0 && k !== SYNC_KEY) old[k] = localStorage.getItem(k);
       }
     } catch (e) { return false; }
     var next = [];
     Object.keys(storage).forEach(function (k) {
-      if (k.indexOf('expenseLogger.') === 0 && storage[k] != null) next.push(k);
+      if (k.indexOf('expenseLogger.') === 0 && k !== SYNC_KEY && storage[k] != null) next.push(k);
     });
     try {
       // Old keys go first so a restore never needs more room than the data it replaces.
@@ -6427,7 +6431,7 @@
   }
 
   function summarizeImportRows(rows) {
-    var counts = { import: 0, duplicate: 0, transfer: 0, credit: 0, pending: 0, unreadable: 0 };
+    var counts = { import: 0, duplicate: 0, transfer: 0, credit: 0, pending: 0, unreadable: 0, changed: 0, removed: 0 };
     rows.forEach(function (r) { if (counts[r.status] != null) counts[r.status]++; });
     return counts;
   }
@@ -6472,6 +6476,7 @@
   function importReviewHasUnsavedChanges() {
     if (!pendingImport || !pendingImport.rows) return false;
     return pendingImport.rows.some(function (r) {
+      if (importRowIsBankChange(r)) return !!r.include;
       if (r.status !== 'import' && r.status !== 'transfer') return false;
       return !!(r.userSetCategory || r.userSetTransfer);
     });
@@ -6480,6 +6485,7 @@
   function dismissImportReview() {
     hideImportDiscardPrompt();
     pendingImport = null;
+    plaidSyncRun = null; // discarding a bank review never acks
     if ($importModal) $importModal.classList.remove('show');
   }
 
@@ -6523,7 +6529,12 @@
     }, { passive: true });
   }
 
+  function importRowIsBankChange(r) {
+    return !!r && (r.status === 'changed' || r.status === 'removed');
+  }
+
   function importRowNeedsReview(r) {
+    if (importRowIsBankChange(r)) return true;
     if (!r || (r.status !== 'import' && r.status !== 'transfer')) return false;
     if (r.status === 'transfer') return false;
     var cat = r.categoryId || 'other';
@@ -6533,6 +6544,7 @@
   function importFilterCounts(rows) {
     var c = { review: 0, transfers: 0, income: 0, all: 0 };
     rows.forEach(function (r) {
+      if (importRowIsBankChange(r)) { c.all++; c.review++; return; }
       if (r.status !== 'import' && r.status !== 'transfer') return;
       c.all++;
       if (r.status === 'transfer' || r.isTransfer) c.transfers++;
@@ -6543,6 +6555,7 @@
   }
 
   function importRowPassesFilter(r) {
+    if (importRowIsBankChange(r)) return importReviewFilter === 'review' || importReviewFilter === 'all';
     if (r.status !== 'import' && r.status !== 'transfer') return false;
     if (importReviewFilter === 'all') return true;
     if (importReviewFilter === 'transfers') return r.status === 'transfer' || r.isTransfer;
@@ -6582,6 +6595,25 @@
     return '';
   }
 
+  function bankChangeRowHTML(r, i) {
+    var fmtD = function (ts) { return new Date(ts).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }); };
+    var meta = r.reason;
+    if (r.status === 'changed') {
+      var parts = [];
+      if (Math.round(r.oldAmount * 100) !== Math.round(r.amount * 100)) parts.push(fmtMoneyDisplay(r.oldAmount) + ' \u2192 ' + fmtMoneyDisplay(r.amount));
+      if (dayKey(r.oldTs) !== dayKey(r.ts)) parts.push(fmtD(r.oldTs) + ' \u2192 ' + fmtD(r.ts));
+      meta += ': ' + parts.join(' \u00B7 ');
+    } else {
+      meta += ' \u00B7 ' + fmtD(r.ts) + ' \u00B7 ' + fmtMoneyDisplay(r.amount);
+    }
+    var label = r.status === 'removed' ? (r.include ? 'Will delete' : 'Delete') : (r.include ? 'Will update' : 'Update');
+    return '<div class="import-row import-row--compact import-row--bank-change" data-idx="' + i + '"><div class="import-row-hit">'
+      + '<span class="import-row-main"><span class="import-row-merchant">' + escHtml(r.note || '(no description)') + '</span>'
+      + '<span class="import-row-meta">' + escHtml(meta) + '</span></span>'
+      + '<button type="button" class="btn-secondary import-bank-change-btn" data-bank-change="' + i + '" aria-pressed="' + (r.include ? 'true' : 'false') + '">'
+      + label + '</button></div></div>';
+  }
+
   function renderImportReview() {
     if (!pendingImport) return;
     hideImportDiscardPrompt();
@@ -6612,6 +6644,7 @@
     html += '<div class="import-stat"><strong>' + counts.credit + '</strong><span> credits skipped</span></div>';
     html += '<div class="import-stat"><strong>' + counts.pending + '</strong><span> pending</span></div>';
     html += '<div class="import-stat"><strong>' + counts.unreadable + '</strong><span> unreadable</span></div>';
+    if (counts.changed + counts.removed) html += '<div class="import-stat"><strong>' + (counts.changed + counts.removed) + '</strong><span> bank changes</span></div>';
     html += '</div>';
     html += '<p class="hint">Transfers are payments between your accounts (e.g. card autopay). Toggle per row or change category \u2014 we remember your choices.</p>';
     $importSummary.innerHTML = html;
@@ -6635,7 +6668,8 @@
       tb += '<button type="button" class="import-filter-chip' + (importReviewFilter === 'all' ? ' is-active' : '') + '" data-filter="all">All <span class="import-filter-count">' + fCounts.all + '</span></button>';
       tb += '</div>';
       tb += '<p class="hint import-filter-hint">Needs review = rows that landed in Other.'
-        + (showIncomeChip ? '' : ' Income is hidden: this file has none.') + '</p>';
+        + (showIncomeChip ? '' : ' Income is hidden: this file has none.')
+        + (counts.changed + counts.removed ? ' Bank changes apply only if you tap them.' : '') + '</p>';
       $importReviewToolbar.innerHTML = tb;
       $importReviewToolbar.hidden = false;
       Array.prototype.forEach.call($importReviewToolbar.querySelectorAll('[data-filter]'), function (btn) {
@@ -6650,6 +6684,7 @@
     var listHtml = '';
     rows.forEach(function (r, i) {
       if (!importRowPassesFilter(r)) return;
+      if (importRowIsBankChange(r)) { listHtml += bankChangeRowHTML(r, i); return; }
       var d = r.ts ? new Date(r.ts).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : '\u2014';
       var cat = getCat(r.categoryId || 'other');
       var expanded = importReviewExpandedIdx === i;
@@ -6685,6 +6720,13 @@
     $importRowList.innerHTML = listHtml;
     if (EI && EI.hydrateUiIcons) EI.hydrateUiIcons($importRowList);
 
+    Array.prototype.forEach.call($importRowList.querySelectorAll('[data-bank-change]'), function (btn) {
+      btn.addEventListener('click', function () {
+        var row = pendingImport.rows[parseInt(btn.dataset.bankChange, 10)];
+        row.include = !row.include;
+        renderImportReview();
+      });
+    });
     Array.prototype.forEach.call($importRowList.querySelectorAll('[data-expand]'), function (btn) {
       btn.addEventListener('click', function () {
         var idx = parseInt(btn.dataset.expand, 10);
@@ -6807,12 +6849,26 @@
     entry.importDedupeSnapshot = {
       ts: r.ts,
       amount: r.amount,
-      note: r.note || '',
+      note: r.dedupeNote || r.note || '',
       categoryId: r.categoryId,
       accountId: r.layout === 'app-export' ? (accountId || '') : (accountId || ''),
       sign: importRowSignFromRow(r)
     };
     entries.push(entry);
+  }
+
+  /** Applies one tapped bank flag to the ledger (inside commitImport's rollback snapshot). */
+  function applyBankChange(r) {
+    for (var i = 0; i < entries.length; i++) {
+      var e = entries[i];
+      if (e.id !== r.existingEntryId) continue;
+      if (r.status === 'removed') { entries.splice(i, 1); return true; }
+      e.amount = r.amount;
+      e.ts = r.ts;
+      if (e.importDedupeSnapshot) { e.importDedupeSnapshot.amount = r.amount; e.importDedupeSnapshot.ts = r.ts; }
+      return true;
+    }
+    return false;
   }
 
   function restoreImportCommitSnapshot(snap) {
@@ -6830,6 +6886,7 @@
 
   function commitImport() {
     if (!pendingImport) return;
+    var fromPlaid = !!pendingImport.plaidSync;
     var commitSnap = {
       entries: JSON.parse(JSON.stringify(entries)),
       accounts: JSON.parse(JSON.stringify(accounts)),
@@ -6847,7 +6904,12 @@
     var skippedCredit = 0;
     var skippedPending = 0;
     var skippedBad = 0;
+    var bankChanged = 0;
     rows.forEach(function (r) {
+      if (importRowIsBankChange(r)) {
+        if (r.include && applyBankChange(r)) bankChanged++;
+        return;
+      }
       if (r.status === 'duplicate') {
         dup++;
         if (r.existingEntryId && accountId && backfillEntryAccount(r.existingEntryId, accountId)) tagged++;
@@ -6910,7 +6972,9 @@
     if (skippedCredit) parts.push(skippedCredit + ' credits');
     if (skippedPending) parts.push(skippedPending + ' pending');
     if (skippedBad) parts.push(skippedBad + ' unreadable');
+    if (bankChanged) parts.push(bankChanged + ' bank change' + (bankChanged === 1 ? '' : 's') + ' applied');
     toast('Imported ' + parts.join(', '));
+    if (fromPlaid) setTimeout(nextPlaidReview, modalTransitionMs());
   }
 
   function modalTransitionMs() {
@@ -7432,6 +7496,309 @@
     result.push(current);
     return result;
   }
+
+  // ---------- Bank sync pairing (Plaid Worker, plan #46) ----------
+  var $bankSyncStatus = $('bankSyncStatus');
+  var $bankSyncUrl = $('bankSyncUrl');
+  var $bankSyncCode = $('bankSyncCode');
+  var $bankSyncPairForm = $('bankSyncPairForm');
+  var $bankSyncDisconnectBtn = $('bankSyncDisconnectBtn');
+
+  function loadSyncState() {
+    try {
+      var s = JSON.parse(localStorage.getItem(SYNC_KEY) || 'null');
+      if (s && typeof s.deviceToken === 'string' && typeof s.workerUrl === 'string') return s;
+    } catch (e) {}
+    return null;
+  }
+
+  function normalizeWorkerUrl(raw) {
+    var s = String(raw || '').trim().replace(/\/+$/, '');
+    return /^https:\/\/[a-z0-9.-]+(:\d+)?(\/[^\s?#]*)?$/i.test(s) ? s : '';
+  }
+
+  /** Resolves { status, data }; status 0 means the Worker could not be reached. */
+  function workerRequest(workerUrl, path, method, auth, body) {
+    var headers = { 'Content-Type': 'application/json' };
+    if (auth) headers.Authorization = auth;
+    return fetch(workerUrl + path, {
+      method: method, headers: headers, cache: 'no-store', credentials: 'omit',
+      body: body ? JSON.stringify(body) : undefined
+    }).then(function (res) {
+      return res.json().catch(function () { return {}; }).then(function (d) { return { status: res.status, data: d || {} }; });
+    }).catch(function () { return { status: 0, data: {} }; });
+  }
+
+  function renderBankSyncStatus() {
+    if (!$bankSyncStatus) return;
+    var s = loadSyncState();
+    if (s) {
+      var host = s.workerUrl.replace(/^https:\/\//, '').split('/')[0];
+      var when = s.pairedAt ? new Date(s.pairedAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }) : '';
+      $bankSyncStatus.textContent = 'Paired with ' + host + (when ? ' since ' + when : '');
+      if ($bankSyncUrl && !$bankSyncUrl.value) $bankSyncUrl.value = s.workerUrl;
+    } else {
+      $bankSyncStatus.textContent = 'Not paired';
+    }
+    if ($bankSyncPairForm) $bankSyncPairForm.hidden = !!s;
+    if ($bankSyncDisconnectBtn) $bankSyncDisconnectBtn.hidden = !s;
+    if ($('bankSyncPaired')) $('bankSyncPaired').hidden = !s;
+  }
+
+  function pairBankSync() {
+    var url = normalizeWorkerUrl($bankSyncUrl && $bankSyncUrl.value);
+    var code = String(($bankSyncCode && $bankSyncCode.value) || '').trim();
+    if (!url) { toast('Enter the Worker URL (https://…)'); return Promise.resolve(false); }
+    if (!code) { toast('Enter the setup code'); return Promise.resolve(false); }
+    return workerRequest(url, '/pair', 'POST', null, { setupCode: code }).then(function (r) {
+      var token = r.data && r.data.deviceToken;
+      if (r.status === 200 && typeof token === 'string' && /^[0-9a-f]{64}$/.test(token)) {
+        try {
+          localStorage.setItem(SYNC_KEY, JSON.stringify({ workerUrl: url, deviceToken: token, pairedAt: new Date().toISOString() }));
+        } catch (e) { toast('Could not save pairing: storage is full'); return false; }
+        if ($bankSyncCode) $bankSyncCode.value = '';
+        renderBankSyncStatus();
+        toast('Bank sync paired');
+        return true;
+      }
+      if (r.status === 0) toast('Could not reach the Worker');
+      else if (r.status === 429) toast('Too many tries. Wait a few minutes');
+      else if (r.status === 401) toast('Setup code not accepted');
+      else toast('Pairing failed (' + r.status + ')');
+      return false;
+    });
+  }
+
+  function disconnectBankSync() {
+    var s = loadSyncState();
+    if (!s) { renderBankSyncStatus(); return Promise.resolve(true); }
+    return workerRequest(s.workerUrl, '/disconnect', 'POST', 'Bearer ' + s.deviceToken, {}).then(function (r) {
+      // 401 means the Worker already forgot this token, so it is safe to forget it here too.
+      if (r.status !== 200 && r.status !== 401) {
+        toast(r.status === 0 ? 'Could not reach the Worker. Still paired' : 'Disconnect failed (' + r.status + ')');
+        return false;
+      }
+      try { localStorage.removeItem(SYNC_KEY); } catch (e) {}
+      renderBankSyncStatus();
+      toast('This phone is disconnected');
+      return true;
+    });
+  }
+
+  var $bankSyncPairBtn = $('bankSyncPairBtn');
+  if ($bankSyncPairBtn) $bankSyncPairBtn.addEventListener('click', pairBankSync);
+  if ($bankSyncDisconnectBtn) {
+    $bankSyncDisconnectBtn.addEventListener('click', function () {
+      if (!window.confirm('Disconnect this phone from bank sync?')) return;
+      disconnectBankSync();
+    });
+  }
+
+  // ---------- Bank sync: pull into import review (Plaid E) ----------
+  // GET /pull -> one import review per account (existing rowsFromTable + dedupe) -> POST /ack
+  // only after every review was saved. Discard or a failed save never acks, so the Worker
+  // re-serves the same rows next time.
+  var SYNC_DEFAULT_CUTOVER = '2025-01-01';
+  var plaidSyncRun = null; // { batchId, queue: [pendingImport, ...], dropped }
+
+  function syncCutoverFor(accountId) {
+    var c = null;
+    try { c = (JSON.parse(localStorage.getItem(SYNC_CUTOVER_KEY) || '{}') || {})[accountId]; } catch (e) {}
+    return /^\d{4}-\d{2}-\d{2}$/.test(c || '') ? c : SYNC_DEFAULT_CUTOVER;
+  }
+
+  function saveSyncCutover(accountId, day) {
+    var all = {};
+    try { all = JSON.parse(localStorage.getItem(SYNC_CUTOVER_KEY) || '{}') || {}; } catch (e) {}
+    if (/^\d{4}-\d{2}-\d{2}$/.test(day || '')) all[accountId] = day; else delete all[accountId];
+    try { localStorage.setItem(SYNC_CUTOVER_KEY, JSON.stringify(all)); } catch (e) { toast('Could not save the start date'); }
+  }
+
+  /** Plaid row -> CSV-shaped table row. Plaid sign: positive = money out. */
+  function plaidTableRow(t, layout) {
+    var amt = Number(t.amount);
+    var desc = t.original_description || t.name || '';
+    if (layout === 'bank') return [t.date, desc, amt > 0 ? amt.toFixed(2) : '', amt < 0 ? (-amt).toFixed(2) : ''];
+    var pfc = t.personal_finance_category || {};
+    var type = amt > 0 ? 'Sale' : (/CREDIT_CARD_PAYMENT/.test(pfc.detailed || '') ? 'Payment' : 'Return');
+    return [t.authorized_date || t.date, desc, type, (-amt).toFixed(2)];  // CSV sign: purchases negative
+  }
+
+  function plaidTxnDay(t, layout) {
+    return String((layout === 'card' && t.authorized_date) || t.date || '');
+  }
+
+  // personal_finance_category -> app category, only for rows that would land in Other and
+  // have no saved import rule. Detailed codes first, then primary.
+  var PLAID_CATEGORY_HINTS = {
+    FOOD_AND_DRINK_GROCERIES: 'groceries', FOOD_AND_DRINK: 'dining', GENERAL_MERCHANDISE_SUPERSTORES: 'groceries',
+    TRANSPORTATION_GAS: 'gas', RENT_AND_UTILITIES: 'bills', LOAN_PAYMENTS: 'bills', BANK_FEES: 'bills',
+    GENERAL_SERVICES_INSURANCE: 'bills', ENTERTAINMENT: 'fun'
+  };
+
+  function plaidCategoryHint(pfc) {
+    if (!pfc) return null;
+    var id = PLAID_CATEGORY_HINTS[pfc.detailed] || PLAID_CATEGORY_HINTS[pfc.primary] || null;
+    return id && categories.some(function (c) { return c.id === id; }) ? id : null;
+  }
+
+  /** Turns a review row into a "changed since import" / "bank removed this" flag. Never auto-applied. */
+  function markBankChange(r, kind, had, next) {
+    r.status = kind;
+    r.include = false;
+    r.existingEntryId = had.id;
+    r.reason = kind === 'changed' ? 'Changed since import' : 'Bank removed this';
+    r.note = had.note || r.note;
+    r.oldAmount = had.amount;
+    r.oldTs = had.ts;
+    r.amount = next ? next.amount : had.amount;
+    r.ts = next ? next.ts : had.ts;
+    return r;
+  }
+
+  function buildPlaidImports(pull, accountMap) {
+    var groups = {};
+    var dropped = 0;
+    var modifiedIds = {};
+    (pull.modified || []).forEach(function (t) { if (t) modifiedIds[t.transaction_id] = true; });
+    var txns = (pull.added || []).concat(pull.modified || []);
+    for (var i = 0; i < txns.length; i++) {
+      var t = txns[i];
+      if (!t || t.pending) continue;
+      var acct = getAccount(accountMap[t.account_id]);
+      if (!acct) return { error: 'Bank sent rows for an account this phone does not know. Nothing saved' };
+      var layout = acct.type === 'credit_card' ? 'card' : 'bank';
+      if (plaidTxnDay(t, layout) < syncCutoverFor(acct.id)) { dropped++; continue; }
+      var g = groups[acct.id] || (groups[acct.id] = { acct: acct, layout: layout, txns: [], extra: [] });
+      g.txns.push(t);
+    }
+    var inLedger = {};
+    entries.forEach(function (e) { if (e.importRowKey) inLedger[e.importRowKey] = e; });
+    (pull.removed || []).forEach(function (x) {
+      var had = x && inLedger['plaid:' + x.transaction_id];
+      var acct = had && getAccount(had.accountId);
+      if (!acct) return; // never imported here: nothing to flag
+      var g = groups[acct.id] || (groups[acct.id] = { acct: acct, layout: acct.type === 'credit_card' ? 'card' : 'bank', txns: [], extra: [] });
+      g.extra.push(markBankChange({ importRowKey: had.importRowKey, layout: g.layout }, 'removed', had, null));
+    });
+    var imports = [];
+    Object.keys(groups).forEach(function (id) {
+      var g = groups[id];
+      var header = g.layout === 'bank' ? ['Date', 'Description', 'Debit', 'Credit'] : ['Transaction Date', 'Description', 'Type', 'Amount'];
+      var batchId = 'plaid:' + pull.batchId;
+      var rows = rowsFromTable(g.txns.map(function (t) { return plaidTableRow(t, g.layout); }), header, g.layout, batchId, id);
+      rows.forEach(function (r, ri) {
+        var t = g.txns[ri];
+        r.importRowKey = 'plaid:' + t.transaction_id;
+        if (r.status === 'import' || r.status === 'transfer') {
+          // Dedupe keys stay on the bank text (matches CSV rows); the note shows the merchant.
+          r.dedupeNote = r.note;
+          r.note = cleanImportNote(t.merchant_name || t.name || r.note);
+          r.bankText = t.original_description || t.name || '';
+        }
+        var had = inLedger[r.importRowKey];
+        if (had && modifiedIds[t.transaction_id] && r.status !== 'credit' && r.status !== 'unreadable') {
+          var next = { amount: Math.round(Math.abs(Number(t.amount)) * 100) / 100, ts: parseUsDate(plaidTxnDay(t, g.layout)) };
+          if (Math.round(next.amount * 100) !== Math.round(had.amount * 100) || dayKey(next.ts) !== dayKey(had.ts)) {
+            markBankChange(r, 'changed', had, next);
+            return;
+          }
+        }
+        if (r.status === 'import' && !r.isDeposit && (r.categoryId || 'other') === 'other' && !findImportRule(r.dedupeNote || r.note)) {
+          var hint = plaidCategoryHint(t.personal_finance_category);
+          if (hint) r.categoryId = r.suggestedCategoryId = r.initialCategoryId = hint;
+        }
+        if (had && r.status !== 'duplicate') {
+          r.dedupeBaseStatus = r.status === 'transfer' ? 'transfer' : 'import';
+          r.status = 'duplicate';
+          r.reason = 'Already imported from bank sync';
+          r.existingEntryId = had.id;
+        }
+      });
+      rows = rows.concat(g.extra);
+      var hasNew = rows.some(function (r) { return r.status === 'import' || r.status === 'transfer' || importRowIsBankChange(r); });
+      if (hasNew) {
+        imports.push({ batchId: batchId, rows: rows, fileName: 'Bank sync \u00B7 ' + g.acct.name, layout: g.layout,
+          accountId: id, balanceOffer: null, useBalanceOffer: false, plaidSync: true });
+      }
+    });
+    return { imports: imports, dropped: dropped };
+  }
+
+  function nextPlaidReview() {
+    if (!plaidSyncRun) return;
+    if (!plaidSyncRun.queue.length) { ackPlaidBatch(); return; }
+    pendingImport = plaidSyncRun.queue.shift();
+    plaidSyncRun.reviewed = true;
+    importReviewFilter = 'review';
+    importReviewExpandedIdx = null;
+    renderImportReview();
+  }
+
+  function ackPlaidBatch() {
+    var run = plaidSyncRun;
+    plaidSyncRun = null;
+    var s = loadSyncState();
+    if (!run || !s) return Promise.resolve(false);
+    return workerRequest(s.workerUrl, '/ack', 'POST', 'Bearer ' + s.deviceToken, { batchId: run.batchId }).then(function (r) {
+      var note = run.dropped ? ' (' + run.dropped + ' before the start date skipped)' : '';
+      if (run.quiet && !run.reviewed) return r.status === 200; // sync on open: nothing new, stay quiet
+      if (r.status === 200) { if (!run.reviewed || note) toast((run.reviewed ? 'Bank sync done' : 'Nothing new from the bank') + note); }
+      else if (r.status === 409) toast('Saved. More bank rows arrived, sync again');
+      else toast('Saved, but the Worker did not confirm. Next sync shows these as duplicates');
+      return r.status === 200;
+    });
+  }
+
+  /** quiet: sync on open. No toast when nothing is new or anything fails; rows still open review. */
+  function syncBankNow(quiet) {
+    quiet = quiet === true;
+    var say = quiet ? function () {} : toast;
+    var s = loadSyncState();
+    if (!s) { say('Pair bank sync first'); return Promise.resolve(false); }
+    if (plaidSyncRun || pendingImport) { say('Finish the open import review first'); return Promise.resolve(false); }
+    return workerRequest(s.workerUrl, '/pull', 'GET', 'Bearer ' + s.deviceToken).then(function (r) {
+      if (r.status !== 200) {
+        say(r.status === 0 ? 'Could not reach the Worker' : (r.status === 401 ? 'This phone is no longer paired' : 'Sync failed (' + r.status + ')'));
+        return false;
+      }
+      var d = r.data;
+      var map = s.accountMap || {};
+      (d.accounts || []).forEach(function (a) { if (a && a.account_id && a.appAccountId) map[a.account_id] = a.appAccountId; });
+      s.accountMap = map;
+      try { localStorage.setItem(SYNC_KEY, JSON.stringify(s)); } catch (e) {}
+      if (!d.batchId) { say('Bank is up to date'); return true; }
+      if (plaidSyncRun || pendingImport) return false; // a review opened while we waited
+      var plan = buildPlaidImports(d, map);
+      if (plan.error) { say(plan.error); return false; }
+      plaidSyncRun = { batchId: d.batchId, queue: plan.imports, dropped: plan.dropped, quiet: quiet };
+      nextPlaidReview();
+      return true;
+    });
+  }
+
+  // Sync on app open (plan #46): once per launch, after boot, only when paired and online, and
+  // at most every AUTO_SYNC_MIN_MS so quick relaunches don't hit the Worker. Never blocks boot.
+  var AUTO_SYNC_MIN_MS = 4 * 3600 * 1000;
+  var AUTO_SYNC_DELAY_MS = 1500;
+  function autoSyncBankOnOpen() {
+    var s = loadSyncState();
+    if (!s || (navigator && navigator.onLine === false)) return Promise.resolve(false);
+    var last = Date.parse(s.lastAutoSyncAt || '');
+    if (!isNaN(last) && Date.now() - last >= 0 && Date.now() - last < AUTO_SYNC_MIN_MS) return Promise.resolve(false);
+    s.lastAutoSyncAt = new Date().toISOString(); // stamped before the call so failures throttle too
+    try { localStorage.setItem(SYNC_KEY, JSON.stringify(s)); } catch (e) { return Promise.resolve(false); }
+    return syncBankNow(true).catch(function () { return false; });
+  }
+
+  var $bankSyncNowBtn = $('bankSyncNowBtn');
+  if ($bankSyncNowBtn) $bankSyncNowBtn.addEventListener('click', function () { syncBankNow(false); });
+  [['bankSyncCutoverChecking', DEFAULT_ACCOUNT_CHECKING], ['bankSyncCutoverChase', DEFAULT_ACCOUNT_CHASE]].forEach(function (p) {
+    var el = $(p[0]);
+    if (!el) return;
+    el.value = syncCutoverFor(p[1]);
+    el.addEventListener('change', function () { saveSyncCutover(p[1], el.value); el.value = syncCutoverFor(p[1]); });
+  });
 
   // ---------- Clear all ----------
   $('clearAllBtn').addEventListener('click', function () {
@@ -9722,6 +10089,7 @@
       if ($versionLine) $versionLine.textContent = 'Version ' + APP_VERSION;
       renderDataMetaLines();
       renderBackupReminder();
+      renderBankSyncStatus();
 
       if ($app) $app.hidden = false;
 
@@ -9763,6 +10131,7 @@
     hideSplashVisualOnly();
   }
   registerSW();
+  setTimeout(function () { try { autoSyncBankOnOpen(); } catch (e) {} }, AUTO_SYNC_DELAY_MS);
   if (EI && EI.preloadIcons) {
     EI.preloadIcons(function () {
       refreshCategorySurfacesAfterIcons();
@@ -9812,6 +10181,7 @@
     dayKey: dayKey,
     fmtMoney: fmtMoney,
     rowsFromTable: rowsFromTable,
+    pendingImportRows: function () { return pendingImport ? pendingImport.rows : null; },
     detectImportLayout: detectImportLayout,
     autoPairTransfers: autoPairTransfers,
     unlinkTransferPair: unlinkTransferPair,

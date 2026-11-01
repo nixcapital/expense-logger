@@ -1,4 +1,4 @@
-/* Expense Logger 1.9.9 — dark-first, iOS-style */
+/* Expense Logger 2.2.0 — dark-first, iOS-style */
 
 :root {
   --bg: #0B0C10;
@@ -403,7 +403,7 @@ label.field-label, .field label {
   margin-bottom: var(--sp-2);
 }
 
-input[type="number"], input[type="text"], input[type="password"],
+input[type="number"], input[type="text"], input[type="password"], input[type="url"],
 input[type="month"], input[type="date"], select {
   width: 100%;
   background: var(--raised);
@@ -1812,6 +1812,10 @@ button.legend-row.legend-btn.active { background: color-mix(in srgb, var(--accen
 .settings-row:last-child, .settings-row-btn:last-child { border-bottom: none; }
 .inset-hint { padding: 0 var(--sp-4) var(--sp-3); margin: 0; }
 .check-settings { gap: var(--sp-3); }
+.bank-sync-form { display: grid; gap: var(--sp-2); padding: 0 var(--sp-4); }
+.bank-sync-form .settings-row-btn { padding-left: 0; padding-right: 0; }
+a.settings-row-btn { text-decoration: none; }
+.settings-row .bank-sync-date { width: auto; padding: 8px 10px; font-size: 15px; }
 .group-action { margin-left: var(--sp-2); }
 .full-destructive { margin-top: var(--sp-4); }
 
@@ -3454,6 +3458,9 @@ button.legend-row.legend-btn.active { background: color-mix(in srgb, var(--accen
 }
 .import-row-merchant { display: block; font-weight: 600; font-size: 15px; line-height: 1.25; }
 .import-row-meta { display: block; font-size: 13px; color: var(--text-dim); margin-top: 2px; }
+.import-row--bank-change .import-row-main { flex: 1; min-width: 0; }
+.import-bank-change-btn { flex: 0 0 auto; width: auto; padding: 6px 12px; }
+.import-bank-change-btn[aria-pressed="true"] { background: var(--accent); color: #fff; }
 .import-row-chevron { color: var(--text-dim); font-size: 18px; flex-shrink: 0; }
 .import-row-expanded { padding: 0 var(--sp-3) 12px; }
 .import-cat-chips { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
