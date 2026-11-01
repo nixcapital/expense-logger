@@ -31,7 +31,7 @@ All responses are JSON. CORS allows only `https://nixcapital.github.io`. Device 
 { batchId: string | null,            // null when there is nothing to deliver
   added:    [txn], modified: [txn],  // posted rows only (pending are dropped), mapped accounts only
   removed:  [{transaction_id, account_id}],
-  accounts: [{itemId, account_id, appAccountId, mask, type, current, available}],  // live balances from this sync
+  accounts: [{itemId, account_id, appAccountId, mask, type, current, available, pendingTotal}],  // live balances from this sync
   needsReconnect: [itemId],          // Plaid ITEM_LOGIN_REQUIRED
   errors: [{itemId, code}] }         // short Plaid error codes, never raw bodies
 txn = { transaction_id, account_id, amount, iso_currency_code, date, authorized_date,

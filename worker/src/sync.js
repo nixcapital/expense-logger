@@ -91,7 +91,35 @@ export async function syncItem(env, fetchFn, accessToken, startCursor, accountMa
   }
 }
 
-export function publicAccounts(accounts, accountMap) {
+// Total of pending charges per account (Plaid's `current` balance leaves them out, so the app
+// adds them to a card balance it is about to anchor). Returns {account_id: total} or null if
+// Plaid cannot say. Only called for cards.
+export async function pendingTotals(env, fetchFn, accessToken, accountMap, nowMs) {
+  try {
+    var end = new Date(nowMs);
+    var start = new Date(nowMs - 45 * 86400000);
+    var iso = function (d) { return d.toISOString().slice(0, 10); };
+    var totals = {};
+    var offset = 0;
+    for (var page = 0; page < 5; page++) {
+      var res = await plaidCall(env, fetchFn, '/transactions/get', {
+        access_token: accessToken, start_date: iso(start), end_date: iso(end), options: { count: 500, offset: offset }
+      });
+      var list = res.transactions || [];
+      list.forEach(function (t) {
+        if (t.pending && accountMap[t.account_id]) totals[t.account_id] = (totals[t.account_id] || 0) + Number(t.amount);
+      });
+      offset += list.length;
+      if (!list.length || offset >= (res.total_transactions || 0)) break;
+    }
+    Object.keys(totals).forEach(function (k) { totals[k] = Math.round(totals[k] * 100) / 100; });
+    return totals;
+  } catch (e) {
+    return null;
+  }
+}
+
+export function publicAccounts(accounts, accountMap, pending) {
   return accounts.filter(function (a) { return !!accountMap[a.account_id]; }).map(function (a) {
     var b = a.balances || {};
     return {
@@ -100,7 +128,9 @@ export function publicAccounts(accounts, accountMap) {
       mask: a.mask || null,
       type: a.type || null,
       current: typeof b.current === 'number' ? b.current : null,
-      available: typeof b.available === 'number' ? b.available : null
+      available: typeof b.available === 'number' ? b.available : null,
+      // credit cards only: sum of pending charges (0 if none), or null when unknown
+      pendingTotal: a.type === 'credit' && pending ? (pending[a.account_id] || 0) : null
     };
   });
 }

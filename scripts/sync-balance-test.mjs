@@ -5,11 +5,13 @@
 import { chromium } from 'playwright';
 import { createServer } from 'http';
 import { readFileSync, existsSync } from 'fs';
-import { join, extname } from 'path';
+import { join, extname, resolve, dirname } from 'path';
+import { fileURLToPath } from 'url';
 import assert from 'assert';
 
 const PORT = 8943;
-const ROOT = process.env.EL_ROOT || '/workspace';
+// Repo root: EL_ROOT if set, else the folder above scripts/ (works on Windows and Linux).
+const ROOT = process.env.EL_ROOT || resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const WORKER = 'https://sync.example.test';
 const TOKEN = 'ab'.repeat(32);
 const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.png': 'image/png', '.svg': 'image/svg+xml' };
@@ -34,9 +36,10 @@ let state = {
   added: [txn('k1', 'plaid-chk', 20.00, iso(yday), 'Fake Cafe'), txn('k2', 'plaid-card', 30.00, iso(yday), 'Fake Store')],
   needsReconnect: [], batchId: 'b1'
 };
+let cardPending = 40; // Plaid `current` excludes this; the Worker sends it as pendingTotal
 const ACCOUNTS = () => [
   { itemId: 'i1', account_id: 'plaid-chk', appAccountId: 'acct-checking', type: 'depository', current: 1234.56, available: 1200 },
-  { itemId: 'i2', account_id: 'plaid-card', appAccountId: 'acct-chase', type: 'credit', current: 987.65, available: null }
+  { itemId: 'i2', account_id: 'plaid-card', appAccountId: 'acct-chase', type: 'credit', current: 947.65, available: null, pendingTotal: cardPending }
 ];
 const acks = [];
 
@@ -89,6 +92,20 @@ async function run() {
   assert.strictEqual(cents(chase.currentBalance), 98765, 'card owed set from bank');
   assert.strictEqual(chase.balanceAsOf, todayKey, 'anchor is today');
   assert.deepStrictEqual(acks, ['b1']);
+  // Regression: the bank's app shows 947.65 posted + 40.00 pending = 987.65. The offer must include
+  // the pending charge, because it will post later with an earlier date and never be counted.
+
+  // 1b. If the Worker could not say what is pending, no card offer is made (it would drift low).
+  cardPending = null;
+  state = { added: [txn('k9', 'plaid-card', 4.00, iso(yday), 'Fake Store Two')], needsReconnect: [], batchId: 'b1b' };
+  await page.click('#bankSyncNowBtn');
+  await page.waitForFunction(() => { const r = window.ExpenseLoggerTest.pendingImportRows(); return r && r.some((x) => x.importRowKey === 'plaid:k9'); });
+  assert.strictEqual(await page.locator('#importBalanceUseBtn').count(), 0, 'no card offer without pending info');
+  await page.click('#importConfirmBtn');
+  await page.waitForFunction(() => !document.querySelector('#importModal.show'));
+  await page.waitForTimeout(300);
+  assert.strictEqual(cents((await accts())['acct-chase'].currentBalance), 98765, 'balance untouched');
+  cardPending = 40;
 
   // 2. Using the checking offer sets balance and date.
   state = { added: [txn('k3', 'plaid-chk', 5.00, iso(yday), 'Fake Cafe Two')], needsReconnect: [], batchId: 'b2' };
@@ -108,7 +125,7 @@ async function run() {
   await page.waitForSelector('#bankSyncReconnect a');
   const href = await page.getAttribute('#bankSyncReconnect a', 'href');
   assert.strictEqual(href, 'link.html?update=i2&worker=' + encodeURIComponent(WORKER));
-  assert.match(await page.textContent('#bankSyncReconnect'), /Reconnect Chase card/);
+  assert.match(await page.textContent('#bankSyncReconnect'), /Reconnect Chase card/, 'label remembered from earlier pulls');
   state = { added: [], needsReconnect: [], batchId: null };
   await page.click('#bankSyncNowBtn');
   await page.waitForFunction(() => document.getElementById('bankSyncReconnect').hidden);

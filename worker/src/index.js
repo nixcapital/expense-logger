@@ -3,7 +3,7 @@
 import { sha256Hex, secretsEqual, randomToken, encryptText, decryptText } from './crypto.js';
 import { createLinkToken, createUpdateLinkToken, exchangePublicToken } from './plaid.js';
 import * as store from './store.js';
-import { syncItem, mergePayload, emptyPayload, payloadIsEmpty, publicAccounts } from './sync.js';
+import { syncItem, mergePayload, emptyPayload, payloadIsEmpty, publicAccounts, pendingTotals } from './sync.js';
 
 var MAX_BODY = 10 * 1024;
 var ALLOWED_ACCOUNTS = { 'acct-checking': true, 'acct-chase': true };
@@ -89,7 +89,9 @@ async function runPull(env, fetchFn, now) {
         });
         if (payloadIsEmpty(payload)) batchId = null;
       }
-      accounts = accounts.concat(publicAccounts(r.accounts, accountMap).map(function (a) {
+      var hasCard = r.accounts.some(function (a) { return a.type === 'credit' && accountMap[a.account_id]; });
+      var pend = hasCard ? await pendingTotals(env, fetchFn, token, accountMap, now) : null;
+      accounts = accounts.concat(publicAccounts(r.accounts, accountMap, pend).map(function (a) {
         a.itemId = it.item_id; return a;
       }));
     } catch (e) {

@@ -6635,7 +6635,7 @@
         html += '<div class="import-balance-offer-icon" aria-hidden="true"><span data-ui-icon="ui-insight" data-ui-icon-size="sm"></span></div>';
         html += '<div class="import-balance-offer-main"><p class="import-balance-offer-title">Balance from the bank. <strong>Set Chase balance owed to '
           + formatCardOwedLabel(offer.amount) + ' as of ' + escHtml(cardAsOf) + '?</strong></p>';
-        html += '<p class="hint">In the app now: ' + escHtml(cardNow) + '. Pending charges are not in the bank\u2019s number yet.</p>';
+        html += '<p class="hint">In the app now: ' + escHtml(cardNow) + '. Includes charges the bank still shows as pending.</p>';
         html += '<p class="import-balance-foot">Saved when you tap Import</p></div></div>';
         html += '<button type="button" class="btn-secondary import-balance-use" id="importBalanceUseBtn" aria-pressed="'
           + (pendingImport.useBalanceOffer ? 'true' : 'false') + '">' + (pendingImport.useBalanceOffer ? 'Using' : 'Use') + '</button></div>';
@@ -7725,13 +7725,23 @@
     });
     var imports = [];
     var balanceByAccount = {};
+    var pendingByAccount = {};
     (pull.accounts || []).forEach(function (a) {
       if (a && a.account_id && typeof a.current === 'number' && isFinite(a.current)) balanceByAccount[a.account_id] = a.current;
+      if (a && a.account_id) pendingByAccount[a.account_id] = a.pendingTotal;
     });
     var offerForAccount = function (appId) {
       var plaidId = Object.keys(accountMap).filter(function (k) { return accountMap[k] === appId; })[0];
       if (!plaidId || balanceByAccount[plaidId] == null) return null;
-      return { amount: Math.round(balanceByAccount[plaidId] * 100) / 100, ts: startOfDay(Date.now()), source: 'plaid' };
+      // The bank's balance leaves out pending charges, which post later with an earlier date and
+      // would never be counted. Add them so the anchor matches the bank's app. If the Worker
+      // could not say what is pending, offer nothing rather than a number that drifts low.
+      var pending = 0;
+      if (appId === DEFAULT_ACCOUNT_CHASE || (getAccount(appId) || {}).type === 'credit_card') {
+        pending = pendingByAccount[plaidId];
+        if (typeof pending !== 'number' || !isFinite(pending)) return null;
+      }
+      return { amount: Math.round((balanceByAccount[plaidId] + pending) * 100) / 100, ts: startOfDay(Date.now()), source: 'plaid' };
     };
     Object.keys(groups).forEach(function (id) {
       var g = groups[id];
@@ -7818,13 +7828,14 @@
       (d.accounts || []).forEach(function (a) { if (a && a.account_id && a.appAccountId) map[a.account_id] = a.appAccountId; });
       s.accountMap = map;
       s.needsReconnect = (d.needsReconnect || []).filter(function (x) { return typeof x === 'string' && x; }).map(function (x) { return { itemId: x }; });
-      var names = {};
+      // A failing item sends no accounts, so remember each item's label from earlier good pulls.
+      var names = s.itemLabels || {};
       (d.accounts || []).forEach(function (a) { if (a && a.itemId && a.appAccountId) names[a.itemId] = a.appAccountId === DEFAULT_ACCOUNT_CHASE ? 'Chase card' : 'Checking'; });
+      s.itemLabels = names;
       s.needsReconnect.forEach(function (x) { x.label = names[x.itemId] || 'Bank'; });
       try { localStorage.setItem(SYNC_KEY, JSON.stringify(s)); } catch (e) {}
       renderBankSyncStatus();
-      if (s.needsReconnect.length && quiet) toast('Bank needs to be reconnected. See Settings, Bank sync');
-      else if (s.needsReconnect.length) say('Bank needs to be reconnected. See Settings, Bank sync');
+      if (s.needsReconnect.length) toast('Bank needs to be reconnected. See Settings, Bank sync');
       if (!d.batchId) { say('Bank is up to date'); return true; }
       if (plaidSyncRun || pendingImport) return false; // a review opened while we waited
       var plan = buildPlaidImports(d, map);
