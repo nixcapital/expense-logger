@@ -13,8 +13,8 @@
 <link rel="manifest" href="manifest.json">
 <link rel="icon" href="icon-192.png">
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
-<link rel="stylesheet" href="styles.css?v=2.2.0">
-<link rel="stylesheet" href="icon-animations.css?v=2.2.0">
+<link rel="stylesheet" href="styles.css?v=2.3.0">
+<link rel="stylesheet" href="icon-animations.css?v=2.3.0">
 <title>Expense Logger</title>
 </head>
 <body>
@@ -420,6 +420,7 @@
         <input type="password" id="bankSyncCode" placeholder="Setup code" autocomplete="off" aria-label="Setup code">
         <button class="settings-row-btn" id="bankSyncPairBtn" type="button">Pair this phone <span class="chevron">›</span></button>
       </div>
+      <div id="bankSyncReconnect" class="bank-sync-reconnect" hidden></div>
       <div id="bankSyncPaired" hidden>
         <button class="settings-row-btn" id="bankSyncNowBtn" type="button">Sync bank now <span class="chevron">›</span></button>
         <label class="settings-row"><span>Checking rows from</span><input type="date" id="bankSyncCutoverChecking" class="bank-sync-date"></label>
@@ -965,10 +966,10 @@
   <p class="hint wrapped-empty" id="wrappedEmpty" hidden>No spending data for this month.</p>
 </div>
 
-<script src="icon-system.js?v=2.2.0"></script>
-<script src="forecast.js?v=2.2.0"></script>
-<script src="wrapped.js?v=2.2.0"></script>
-<script src="app.js?v=2.2.0"></script>
+<script src="icon-system.js?v=2.3.0"></script>
+<script src="forecast.js?v=2.3.0"></script>
+<script src="wrapped.js?v=2.3.0"></script>
+<script src="app.js?v=2.3.0"></script>
 <script>
 (function () {
   'use strict';

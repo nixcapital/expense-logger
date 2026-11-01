@@ -32,6 +32,18 @@ export function createLinkToken(env, fetchFn) {
   });
 }
 
+// Update mode: re-authenticate an existing Item. The access_token itself does not change.
+export function createUpdateLinkToken(env, fetchFn, accessToken) {
+  return plaidCall(env, fetchFn, '/link/token/create', {
+    client_name: 'Expense Logger',
+    language: 'en',
+    country_codes: ['US'],
+    user: { client_user_id: 'single-user' },
+    access_token: accessToken,
+    redirect_uri: env.REDIRECT_URI
+  });
+}
+
 export function exchangePublicToken(env, fetchFn, publicToken) {
   return plaidCall(env, fetchFn, '/item/public_token/exchange', { public_token: publicToken });
 }

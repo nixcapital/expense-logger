@@ -38,6 +38,10 @@ export async function listItems(db) {
   return res.results || [];
 }
 
+export async function getItem(db, itemId) {
+  return db.prepare('SELECT item_id, access_token_enc FROM items WHERE item_id = ?').bind(itemId).first();
+}
+
 export async function loadBatch(db) {
   var row = await db.prepare('SELECT batch_id, payload FROM batches LIMIT 1').first();
   if (!row) return null;

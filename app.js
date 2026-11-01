@@ -57,7 +57,7 @@
   // restore or undo leaves it in place (pair again only after Clear All Data or Disconnect).
   var SYNC_KEY = 'expenseLogger.sync.v1';
   var SYNC_CUTOVER_KEY = 'expenseLogger.syncCutover.v1'; // { accountId: 'YYYY-MM-DD' }; bank rows before it are dropped
-  var APP_VERSION = '2.2.0';
+  var APP_VERSION = '2.3.0';
   var BACKUP_FORMAT = 2;
   var BACKUP_FORMAT_LEGACY = 1;
   var DEFAULT_ACCOUNT_CHECKING = 'acct-checking';
@@ -6623,7 +6623,24 @@
     var html = '';
     var offer = pendingImport.balanceOffer;
     var checking = getCheckingAccount();
-    if (offer && checking && pendingImport.layout === 'bank') {
+    var offerIsCard = !!(offer && offer.source === 'plaid' && pendingImport.layout === 'card');
+    if (offerIsCard) {
+      var chaseAcct = getChaseAccount();
+      if (chaseAcct) {
+        var cardAsOf = new Date(offer.ts).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+        var cardSnap = getCardBalanceSnapshot(Date.now());
+        var cardNow = cardSnap && cardSnap.ok ? formatCardOwedLabel(cardSnap.owed) : '\u2014';
+        html += '<div class="import-balance-offer' + (pendingImport.useBalanceOffer ? ' is-on' : '') + '">';
+        html += '<div class="import-balance-offer-top">';
+        html += '<div class="import-balance-offer-icon" aria-hidden="true"><span data-ui-icon="ui-insight" data-ui-icon-size="sm"></span></div>';
+        html += '<div class="import-balance-offer-main"><p class="import-balance-offer-title">Balance from the bank. <strong>Set Chase balance owed to '
+          + formatCardOwedLabel(offer.amount) + ' as of ' + escHtml(cardAsOf) + '?</strong></p>';
+        html += '<p class="hint">In the app now: ' + escHtml(cardNow) + '. Pending charges are not in the bank\u2019s number yet.</p>';
+        html += '<p class="import-balance-foot">Saved when you tap Import</p></div></div>';
+        html += '<button type="button" class="btn-secondary import-balance-use" id="importBalanceUseBtn" aria-pressed="'
+          + (pendingImport.useBalanceOffer ? 'true' : 'false') + '">' + (pendingImport.useBalanceOffer ? 'Using' : 'Use') + '</button></div>';
+      }
+    } else if (offer && checking && pendingImport.layout === 'bank') {
       var asOfLbl = new Date(offer.ts).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
       var nowBal = typeof checking.currentBalance === 'number' ? fmtMoneyDisplay(checking.currentBalance) : '\u2014';
       var nowAsOf = checking.balanceAsOf ? formatBalanceAsOfLabel(checking.balanceAsOf) : '';
@@ -6934,7 +6951,16 @@
       importAccountPrefs[layout === 'app-export' ? 'app' : layout] = accountId;
     }
     var accountsBalanceTouched = false;
-    if (pendingImport.balanceOffer && pendingImport.useBalanceOffer && accountId === DEFAULT_ACCOUNT_CHECKING) {
+    var cardOffer = pendingImport.balanceOffer;
+    if (cardOffer && cardOffer.source === 'plaid' && pendingImport.useBalanceOffer && pendingImport.layout === 'card') {
+      var cardAcct = getAccount(accountId);
+      if (cardAcct && cardAcct.type === 'credit_card') {
+        if (hasCardBalanceAnchor(cardAcct)) cardAcct.balanceHistory = { amount: cardAcct.currentBalance, asOf: cardAcct.balanceAsOf };
+        cardAcct.currentBalance = cardOffer.amount;
+        cardAcct.balanceAsOf = dayKey(cardOffer.ts);
+        accountsBalanceTouched = true;
+      }
+    } else if (pendingImport.balanceOffer && pendingImport.useBalanceOffer && accountId === DEFAULT_ACCOUNT_CHECKING) {
       var chk = getCheckingAccount();
       if (chk) {
         chk.currentBalance = pendingImport.balanceOffer.amount;
@@ -7540,6 +7566,22 @@
     } else {
       $bankSyncStatus.textContent = 'Not paired';
     }
+    var $rc = $('bankSyncReconnect');
+    if ($rc) {
+      $rc.textContent = '';
+      var need = (s && s.needsReconnect) || [];
+      need.forEach(function (x) {
+        var a = document.createElement('a');
+        a.className = 'settings-row-btn bank-sync-reconnect-btn';
+        a.target = '_blank'; a.rel = 'noopener';
+        a.href = 'link.html?update=' + encodeURIComponent(x.itemId) + '&worker=' + encodeURIComponent(s.workerUrl);
+        a.appendChild(document.createTextNode('Reconnect ' + (x.label || 'bank') + ' (opens Safari) '));
+        var ch = document.createElement('span'); ch.className = 'chevron'; ch.textContent = '\u203A';
+        a.appendChild(ch);
+        $rc.appendChild(a);
+      });
+      $rc.hidden = !need.length;
+    }
     if ($bankSyncPairForm) $bankSyncPairForm.hidden = !!s;
     if ($bankSyncDisconnectBtn) $bankSyncDisconnectBtn.hidden = !s;
     if ($('bankSyncPaired')) $('bankSyncPaired').hidden = !s;
@@ -7682,6 +7724,15 @@
       g.extra.push(markBankChange({ importRowKey: had.importRowKey, layout: g.layout }, 'removed', had, null));
     });
     var imports = [];
+    var balanceByAccount = {};
+    (pull.accounts || []).forEach(function (a) {
+      if (a && a.account_id && typeof a.current === 'number' && isFinite(a.current)) balanceByAccount[a.account_id] = a.current;
+    });
+    var offerForAccount = function (appId) {
+      var plaidId = Object.keys(accountMap).filter(function (k) { return accountMap[k] === appId; })[0];
+      if (!plaidId || balanceByAccount[plaidId] == null) return null;
+      return { amount: Math.round(balanceByAccount[plaidId] * 100) / 100, ts: startOfDay(Date.now()), source: 'plaid' };
+    };
     Object.keys(groups).forEach(function (id) {
       var g = groups[id];
       var header = g.layout === 'bank' ? ['Date', 'Description', 'Debit', 'Credit'] : ['Transaction Date', 'Description', 'Type', 'Amount'];
@@ -7719,7 +7770,7 @@
       var hasNew = rows.some(function (r) { return r.status === 'import' || r.status === 'transfer' || importRowIsBankChange(r); });
       if (hasNew) {
         imports.push({ batchId: batchId, rows: rows, fileName: 'Bank sync \u00B7 ' + g.acct.name, layout: g.layout,
-          accountId: id, balanceOffer: null, useBalanceOffer: false, plaidSync: true });
+          accountId: id, balanceOffer: offerForAccount(id), useBalanceOffer: false, plaidSync: true });
       }
     });
     return { imports: imports, dropped: dropped };
@@ -7766,7 +7817,14 @@
       var map = s.accountMap || {};
       (d.accounts || []).forEach(function (a) { if (a && a.account_id && a.appAccountId) map[a.account_id] = a.appAccountId; });
       s.accountMap = map;
+      s.needsReconnect = (d.needsReconnect || []).filter(function (x) { return typeof x === 'string' && x; }).map(function (x) { return { itemId: x }; });
+      var names = {};
+      (d.accounts || []).forEach(function (a) { if (a && a.itemId && a.appAccountId) names[a.itemId] = a.appAccountId === DEFAULT_ACCOUNT_CHASE ? 'Chase card' : 'Checking'; });
+      s.needsReconnect.forEach(function (x) { x.label = names[x.itemId] || 'Bank'; });
       try { localStorage.setItem(SYNC_KEY, JSON.stringify(s)); } catch (e) {}
+      renderBankSyncStatus();
+      if (s.needsReconnect.length && quiet) toast('Bank needs to be reconnected. See Settings, Bank sync');
+      else if (s.needsReconnect.length) say('Bank needs to be reconnected. See Settings, Bank sync');
       if (!d.batchId) { say('Bank is up to date'); return true; }
       if (plaidSyncRun || pendingImport) return false; // a review opened while we waited
       var plan = buildPlaidImports(d, map);

@@ -20,7 +20,7 @@ All responses are JSON. CORS allows only `https://nixcapital.github.io`. Device 
 | --- | --- | --- |
 | `POST /pair` | none (setup code in body) | `{setupCode}` gives `{deviceToken}` |
 | `POST /disconnect` | device | revokes this token |
-| `POST /link/token` | `Authorization: Setup <code>` | gives `{linkToken}` (used by `link.html` in Safari) |
+| `POST /link/token` | `Authorization: Setup <code>` | gives `{linkToken}` (used by `link.html` in Safari). With `{itemId}` it returns an update-mode token to reconnect that Item (`404 unknown_item` if not linked) |
 | `POST /link/exchange` | `Setup <code>` | `{public_token, institution, accountMap: {plaidAccountId: 'acct-checking' or 'acct-chase'}}` |
 | `GET /pull` | device | syncs Plaid, returns the one unacknowledged batch (below) |
 | `POST /ack` | device | `{batchId}`: deletes that batch. `409 stale_batch` if a newer batch exists, `200 deleted:false` if none |
