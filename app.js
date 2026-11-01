@@ -7636,6 +7636,7 @@
     if (!run || !s) return Promise.resolve(false);
     return workerRequest(s.workerUrl, '/ack', 'POST', 'Bearer ' + s.deviceToken, { batchId: run.batchId }).then(function (r) {
       var note = run.dropped ? ' (' + run.dropped + ' before the start date skipped)' : '';
+      if (run.quiet && !run.reviewed) return r.status === 200; // sync on open: nothing new, stay quiet
       if (r.status === 200) { if (!run.reviewed || note) toast((run.reviewed ? 'Bank sync done' : 'Nothing new from the bank') + note); }
       else if (r.status === 409) toast('Saved. More bank rows arrived, sync again');
       else toast('Saved, but the Worker did not confirm. Next sync shows these as duplicates');
@@ -7643,13 +7644,16 @@
     });
   }
 
-  function syncBankNow() {
+  /** quiet: sync on open. No toast when nothing is new or anything fails; rows still open review. */
+  function syncBankNow(quiet) {
+    quiet = quiet === true;
+    var say = quiet ? function () {} : toast;
     var s = loadSyncState();
-    if (!s) { toast('Pair bank sync first'); return Promise.resolve(false); }
-    if (plaidSyncRun || pendingImport) { toast('Finish the open import review first'); return Promise.resolve(false); }
+    if (!s) { say('Pair bank sync first'); return Promise.resolve(false); }
+    if (plaidSyncRun || pendingImport) { say('Finish the open import review first'); return Promise.resolve(false); }
     return workerRequest(s.workerUrl, '/pull', 'GET', 'Bearer ' + s.deviceToken).then(function (r) {
       if (r.status !== 200) {
-        toast(r.status === 0 ? 'Could not reach the Worker' : (r.status === 401 ? 'This phone is no longer paired' : 'Sync failed (' + r.status + ')'));
+        say(r.status === 0 ? 'Could not reach the Worker' : (r.status === 401 ? 'This phone is no longer paired' : 'Sync failed (' + r.status + ')'));
         return false;
       }
       var d = r.data;
@@ -7657,17 +7661,32 @@
       (d.accounts || []).forEach(function (a) { if (a && a.account_id && a.appAccountId) map[a.account_id] = a.appAccountId; });
       s.accountMap = map;
       try { localStorage.setItem(SYNC_KEY, JSON.stringify(s)); } catch (e) {}
-      if (!d.batchId) { toast('Bank is up to date'); return true; }
+      if (!d.batchId) { say('Bank is up to date'); return true; }
+      if (plaidSyncRun || pendingImport) return false; // a review opened while we waited
       var plan = buildPlaidImports(d, map);
-      if (plan.error) { toast(plan.error); return false; }
-      plaidSyncRun = { batchId: d.batchId, queue: plan.imports, dropped: plan.dropped };
+      if (plan.error) { say(plan.error); return false; }
+      plaidSyncRun = { batchId: d.batchId, queue: plan.imports, dropped: plan.dropped, quiet: quiet };
       nextPlaidReview();
       return true;
     });
   }
 
+  // Sync on app open (plan #46): once per launch, after boot, only when paired and online, and
+  // at most every AUTO_SYNC_MIN_MS so quick relaunches don't hit the Worker. Never blocks boot.
+  var AUTO_SYNC_MIN_MS = 4 * 3600 * 1000;
+  var AUTO_SYNC_DELAY_MS = 1500;
+  function autoSyncBankOnOpen() {
+    var s = loadSyncState();
+    if (!s || (navigator && navigator.onLine === false)) return Promise.resolve(false);
+    var last = Date.parse(s.lastAutoSyncAt || '');
+    if (!isNaN(last) && Date.now() - last >= 0 && Date.now() - last < AUTO_SYNC_MIN_MS) return Promise.resolve(false);
+    s.lastAutoSyncAt = new Date().toISOString(); // stamped before the call so failures throttle too
+    try { localStorage.setItem(SYNC_KEY, JSON.stringify(s)); } catch (e) { return Promise.resolve(false); }
+    return syncBankNow(true).catch(function () { return false; });
+  }
+
   var $bankSyncNowBtn = $('bankSyncNowBtn');
-  if ($bankSyncNowBtn) $bankSyncNowBtn.addEventListener('click', syncBankNow);
+  if ($bankSyncNowBtn) $bankSyncNowBtn.addEventListener('click', function () { syncBankNow(false); });
   [['bankSyncCutoverChecking', DEFAULT_ACCOUNT_CHECKING], ['bankSyncCutoverChase', DEFAULT_ACCOUNT_CHASE]].forEach(function (p) {
     var el = $(p[0]);
     if (!el) return;
@@ -10006,6 +10025,7 @@
     hideSplashVisualOnly();
   }
   registerSW();
+  setTimeout(function () { try { autoSyncBankOnOpen(); } catch (e) {} }, AUTO_SYNC_DELAY_MS);
   if (EI && EI.preloadIcons) {
     EI.preloadIcons(function () {
       refreshCategorySurfacesAfterIcons();

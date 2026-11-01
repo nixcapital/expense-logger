@@ -61,7 +61,8 @@ async function run() {
   page.on('pageerror', (e) => errors.push(String(e)));
   await page.goto(`http://127.0.0.1:${PORT}/index.html`, { waitUntil: 'networkidle' });
   await page.evaluate(({ worker, token }) => {
-    localStorage.setItem('expenseLogger.sync.v1', JSON.stringify({ workerUrl: worker, deviceToken: token, pairedAt: new Date().toISOString() }));
+    localStorage.setItem('expenseLogger.sync.v1', JSON.stringify({ workerUrl: worker, deviceToken: token, pairedAt: new Date().toISOString(),
+      lastAutoSyncAt: new Date().toISOString() })); // sync-on-open throttled; this test drives the button
     // Fake row from an earlier CSV import that the bank sends again.
     localStorage.setItem('expenseLogger.entries.v1', JSON.stringify([{ id: 'csv1', amount: 45.67, categoryId: 'gas', note: 'SHELL OIL 1234',
       ts: new Date(2026, 9, 5, 12).getTime(), importSource: 'bank', accountId: 'acct-checking', importRowKey: 'r:fake', isTransfer: false }]));
