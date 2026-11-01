@@ -53,7 +53,10 @@
   var TRANSFER_PATTERNS_KEY = 'expenseLogger.transferPatterns.v1';
   var FORECAST_OVERRIDES_KEY = 'expenseLogger.forecastOverrides.v1';
   var FORECAST_ONEOFFS_KEY = 'expenseLogger.forecastCountedOneOffs.v1';
-  var APP_VERSION = '1.9.9';
+  // Device token for the bank sync Worker. Device-only: never in a backup or export, and a
+  // restore or undo leaves it in place (pair again only after Clear All Data or Disconnect).
+  var SYNC_KEY = 'expenseLogger.sync.v1';
+  var APP_VERSION = '2.0.0';
   var BACKUP_FORMAT = 2;
   var BACKUP_FORMAT_LEGACY = 1;
   var DEFAULT_ACCOUNT_CHECKING = 'acct-checking';
@@ -1373,7 +1376,7 @@
     try {
       for (var i = 0; i < localStorage.length; i++) {
         var k = localStorage.key(i);
-        if (k && k.indexOf('expenseLogger.') === 0 && k !== PIN_KEY) out[k] = localStorage.getItem(k);
+        if (k && k.indexOf('expenseLogger.') === 0 && k !== PIN_KEY && k !== SYNC_KEY) out[k] = localStorage.getItem(k);
       }
     } catch (e) {}
     return out;
@@ -1436,7 +1439,7 @@
   function applyBackupStorageReplacingAppData(backupStorage, deviceMetaKeep) {
     var filtered = {};
     Object.keys(backupStorage || {}).forEach(function (k) {
-      if (k.indexOf('expenseLogger.') === 0 && k !== META_KEY && k !== PIN_KEY) {
+      if (k.indexOf('expenseLogger.') === 0 && k !== META_KEY && k !== PIN_KEY && k !== SYNC_KEY) {
         filtered[k] = backupStorage[k];
       }
     });
@@ -1528,12 +1531,12 @@
     try {
       for (var i = 0; i < localStorage.length; i++) {
         var k = localStorage.key(i);
-        if (k && k.indexOf('expenseLogger.') === 0) old[k] = localStorage.getItem(k);
+        if (k && k.indexOf('expenseLogger.') === 0 && k !== SYNC_KEY) old[k] = localStorage.getItem(k);
       }
     } catch (e) { return false; }
     var next = [];
     Object.keys(storage).forEach(function (k) {
-      if (k.indexOf('expenseLogger.') === 0 && storage[k] != null) next.push(k);
+      if (k.indexOf('expenseLogger.') === 0 && k !== SYNC_KEY && storage[k] != null) next.push(k);
     });
     try {
       // Old keys go first so a restore never needs more room than the data it replaces.
@@ -7433,6 +7436,102 @@
     return result;
   }
 
+  // ---------- Bank sync pairing (Plaid Worker, plan #46) ----------
+  var $bankSyncStatus = $('bankSyncStatus');
+  var $bankSyncUrl = $('bankSyncUrl');
+  var $bankSyncCode = $('bankSyncCode');
+  var $bankSyncPairForm = $('bankSyncPairForm');
+  var $bankSyncDisconnectBtn = $('bankSyncDisconnectBtn');
+
+  function loadSyncState() {
+    try {
+      var s = JSON.parse(localStorage.getItem(SYNC_KEY) || 'null');
+      if (s && typeof s.deviceToken === 'string' && typeof s.workerUrl === 'string') return s;
+    } catch (e) {}
+    return null;
+  }
+
+  function normalizeWorkerUrl(raw) {
+    var s = String(raw || '').trim().replace(/\/+$/, '');
+    return /^https:\/\/[a-z0-9.-]+(:\d+)?(\/[^\s?#]*)?$/i.test(s) ? s : '';
+  }
+
+  /** Resolves { status, data }; status 0 means the Worker could not be reached. */
+  function workerRequest(workerUrl, path, method, auth, body) {
+    var headers = { 'Content-Type': 'application/json' };
+    if (auth) headers.Authorization = auth;
+    return fetch(workerUrl + path, {
+      method: method, headers: headers, cache: 'no-store', credentials: 'omit',
+      body: body ? JSON.stringify(body) : undefined
+    }).then(function (res) {
+      return res.json().catch(function () { return {}; }).then(function (d) { return { status: res.status, data: d || {} }; });
+    }).catch(function () { return { status: 0, data: {} }; });
+  }
+
+  function renderBankSyncStatus() {
+    if (!$bankSyncStatus) return;
+    var s = loadSyncState();
+    if (s) {
+      var host = s.workerUrl.replace(/^https:\/\//, '').split('/')[0];
+      var when = s.pairedAt ? new Date(s.pairedAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }) : '';
+      $bankSyncStatus.textContent = 'Paired with ' + host + (when ? ' since ' + when : '');
+      if ($bankSyncUrl && !$bankSyncUrl.value) $bankSyncUrl.value = s.workerUrl;
+    } else {
+      $bankSyncStatus.textContent = 'Not paired';
+    }
+    if ($bankSyncPairForm) $bankSyncPairForm.hidden = !!s;
+    if ($bankSyncDisconnectBtn) $bankSyncDisconnectBtn.hidden = !s;
+  }
+
+  function pairBankSync() {
+    var url = normalizeWorkerUrl($bankSyncUrl && $bankSyncUrl.value);
+    var code = String(($bankSyncCode && $bankSyncCode.value) || '').trim();
+    if (!url) { toast('Enter the Worker URL (https://…)'); return Promise.resolve(false); }
+    if (!code) { toast('Enter the setup code'); return Promise.resolve(false); }
+    return workerRequest(url, '/pair', 'POST', null, { setupCode: code }).then(function (r) {
+      var token = r.data && r.data.deviceToken;
+      if (r.status === 200 && typeof token === 'string' && /^[0-9a-f]{64}$/.test(token)) {
+        try {
+          localStorage.setItem(SYNC_KEY, JSON.stringify({ workerUrl: url, deviceToken: token, pairedAt: new Date().toISOString() }));
+        } catch (e) { toast('Could not save pairing: storage is full'); return false; }
+        if ($bankSyncCode) $bankSyncCode.value = '';
+        renderBankSyncStatus();
+        toast('Bank sync paired');
+        return true;
+      }
+      if (r.status === 0) toast('Could not reach the Worker');
+      else if (r.status === 429) toast('Too many tries. Wait a few minutes');
+      else if (r.status === 401) toast('Setup code not accepted');
+      else toast('Pairing failed (' + r.status + ')');
+      return false;
+    });
+  }
+
+  function disconnectBankSync() {
+    var s = loadSyncState();
+    if (!s) { renderBankSyncStatus(); return Promise.resolve(true); }
+    return workerRequest(s.workerUrl, '/disconnect', 'POST', 'Bearer ' + s.deviceToken, {}).then(function (r) {
+      // 401 means the Worker already forgot this token, so it is safe to forget it here too.
+      if (r.status !== 200 && r.status !== 401) {
+        toast(r.status === 0 ? 'Could not reach the Worker. Still paired' : 'Disconnect failed (' + r.status + ')');
+        return false;
+      }
+      try { localStorage.removeItem(SYNC_KEY); } catch (e) {}
+      renderBankSyncStatus();
+      toast('This phone is disconnected');
+      return true;
+    });
+  }
+
+  var $bankSyncPairBtn = $('bankSyncPairBtn');
+  if ($bankSyncPairBtn) $bankSyncPairBtn.addEventListener('click', pairBankSync);
+  if ($bankSyncDisconnectBtn) {
+    $bankSyncDisconnectBtn.addEventListener('click', function () {
+      if (!window.confirm('Disconnect this phone from bank sync?')) return;
+      disconnectBankSync();
+    });
+  }
+
   // ---------- Clear all ----------
   $('clearAllBtn').addEventListener('click', function () {
     if (!window.confirm('Delete ALL data? This cannot be undone.')) return;
@@ -9722,6 +9821,7 @@
       if ($versionLine) $versionLine.textContent = 'Version ' + APP_VERSION;
       renderDataMetaLines();
       renderBackupReminder();
+      renderBankSyncStatus();
 
       if ($app) $app.hidden = false;
 
