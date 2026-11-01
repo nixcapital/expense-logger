@@ -20,7 +20,7 @@ Each step is one PR and one version bump. Prefer under **400 changed lines**. If
 3. PRs land **one at a time onto `main`**, in the order below. Parallel branches will conflict on the version strings.
 4. Saved data already on phones must keep working. New fields are optional. No `expenseLogger.*` key is renamed. `BACKUP_FORMAT` 1 and 2 still restore.
 5. Passcode lock stays removed (PR #28). Do not bring it back.
-6. Nothing in this queue adds a server, analytics, or account sync. The app may keep using the system share sheet and file download, which it already does for backups, CSV, and Spending Wrapped images.
+6. Nothing in the 1.x queue adds a server, analytics, or account sync. Bank sync (2.x, see #46) adds one small Cloudflare Worker. It stores Plaid access tokens encrypted and a short-lived queue of undelivered transactions, deleted on acknowledgement. The phone remains the source of truth and every pulled row goes through import review. Analytics and account sync stay out. The app may keep using the system share sheet and file download, which it already does for backups, CSV, and Spending Wrapped images.
 7. Tests stay as `node scripts/<name>.mjs` with Playwright where the script already uses it (`playwright@1.49.1` is what PR #2 documented). Forecast math belongs in `forecast.js` unit tests. Do not add a bundler, framework, or `package.json` unless a step says so.
 8. QA viewport used by existing scripts is **428×926**. Behavior tests matter more than new screenshots. Add a screenshot script only when a step changes layout.
 9. Line numbers below are from 1.9.1 and will drift. Search for the function name.
@@ -74,7 +74,7 @@ Shipped arc, from merged PRs #1–#28: editable categories and budgets, recurrin
 
 **Conflict note:** `app.js` is one file (~9.7k lines). Every step touches it for the version string, and most touch it for behavior. Rebase onto latest `main` before opening the PR. Do not stack unmerged branches.
 
-**Out of scope for the whole queue:** cloud sync, bank login, passcode or encryption theater, renaming storage keys, rewriting the app in a framework, splitting `app.js` into a module graph (a later suggestion only, and only if the human asks).
+**Out of scope for the whole queue:** cloud sync, any bank login inside the app itself (linking happens through Plaid Link, see #46), passcode or encryption theater, renaming storage keys, rewriting the app in a framework, splitting `app.js` into a module graph (a later suggestion only, and only if the human asks).
 
 ---
 
@@ -653,3 +653,9 @@ Merge these five before any feature work. They are small, they do not rename key
 | 5 | **1.9.6** | The forecast stops charging that recurring bill again in a month that already has it, without moving old checking math. |
 
 After that batch, the next highest-value pair is **1.9.7** (CSV totals and round-trip) and **1.9.10** (card refunds lower the amount owed).
+
+---
+
+## 2.x — Plaid bank sync
+
+Tracked in issue #46 (tasks #47 to #53). Versions: 2.0.0 pairing and `link.html`, 2.1.0 pull into import review, 2.2.0 changed/removed flags and category hints, 2.3.0 Plaid balances and Reconnect banner. The Worker PRs (#48, #49) ship without an app version bump. Do not start a later 2.x step before the previous one is on `main`.
