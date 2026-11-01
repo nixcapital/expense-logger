@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>Expense Logger · Link a bank</title>
+<!-- Plaid Link (plan #46), Safari only; also the OAuth redirect page. No secrets: the setup code
+     lives in this tab's sessionStorage until linking ends and is sent as "Authorization: Setup <code>". -->
+<style>
+  body { font: 17px -apple-system, system-ui, sans-serif; background: #0B0C10; color: #F2F3F5; margin: 0; padding: 24px 20px; }
+  p, label { color: #9AA0AA; line-height: 1.4; } label { display: block; font-size: 13px; margin: 16px 0 6px; }
+  input, select, button { width: 100%; box-sizing: border-box; font: inherit; padding: 14px; border-radius: 12px; border: none; background: #1F222B; color: #F2F3F5; margin-top: 6px; }
+  button { margin-top: 20px; background: #4C8DFF; color: #fff; font-weight: 600; }
+</style>
+</head>
+<body>
+<h1>Link a bank</h1>
+<p>Links your checking and Chase card to the sync Worker. Then go back to Expense Logger and sync.</p>
+<div id="start">
+  <label for="worker">Worker URL</label>
+  <input type="url" id="worker" placeholder="https://…" autocomplete="off" autocapitalize="off" spellcheck="false">
+  <label for="code">Setup code</label>
+  <input type="password" id="code" autocomplete="off">
+  <button type="button" id="go">Open Plaid</button>
+</div>
+<div id="map" hidden>
+  <p>Choose where each account goes. Rows always go through import review in the app.</p>
+  <div id="accts"></div>
+  <button type="button" id="save">Save link</button>
+</div>
+<p id="msg" role="status"></p>
+<script>
+(function () {
+  var S = window.sessionStorage;
+  var K = { worker: 'elLink.worker', code: 'elLink.code', token: 'elLink.linkToken' };
+  var $ = function (id) { return document.getElementById(id); };
+  var linked = null;
+
+  function say(t) { $('msg').textContent = t; }
+  function clearSession() { Object.keys(K).forEach(function (k) { S.removeItem(K[k]); }); }
+
+  function call(path, body) {
+    return fetch(S.getItem(K.worker) + path, {
+      method: 'POST', credentials: 'omit', cache: 'no-store',
+      headers: { 'Content-Type': 'application/json', Authorization: 'Setup ' + S.getItem(K.code) },
+      body: JSON.stringify(body || {})
+    }).then(function (r) {
+      return r.json().catch(function () { return {}; }).then(function (d) {
+        if (!r.ok) throw new Error(r.status === 401 ? 'Setup code not accepted' : r.status === 429 ? 'Too many tries. Wait a few minutes' : 'Worker error ' + r.status + (d.code ? ' (' + d.code + ')' : ''));
+        return d;
+      });
+    });
+  }
+
+  function loadPlaid() {
+    if (window.Plaid) return Promise.resolve();
+    return new Promise(function (ok, fail) {
+      var s = document.createElement('script');
+      s.src = 'https://cdn.plaid.com/link/v2/stable/link-initialize.js';
+      s.onload = ok; s.onerror = function () { fail(new Error('Could not load Plaid')); };
+      document.head.appendChild(s);
+    });
+  }
+
+  function openLink(redirectUri) {
+    return loadPlaid().then(function () {
+      var cfg = {
+        token: S.getItem(K.token),
+        onSuccess: function (publicToken, meta) { linked = { publicToken: publicToken, meta: meta || {} }; showMap(); },
+        onExit: function (err) { say(err ? 'Plaid closed: ' + (err.error_code || 'error') : 'Linking cancelled'); }
+      };
+      if (redirectUri) cfg.receivedRedirectUri = redirectUri;
+      window.Plaid.create(cfg).open();
+    });
+  }
+
+  function showMap() {
+    $('start').hidden = true;
+    $('map').hidden = false;
+    var box = $('accts');
+    box.textContent = '';
+    (linked.meta.accounts || []).forEach(function (a) {
+      var lab = document.createElement('label');
+      lab.textContent = String(a.name || 'Account') + (a.mask ? ' \u00B7\u00B7' + a.mask : '');
+      var sel = document.createElement('select');
+      sel.dataset.id = a.id;
+      [['', 'Don\u2019t sync'], ['acct-checking', 'Checking'], ['acct-chase', 'Chase card']].forEach(function (o) {
+        var opt = document.createElement('option');
+        opt.value = o[0]; opt.textContent = o[1];
+        sel.appendChild(opt);
+      });
+      sel.value = a.type === 'credit' ? 'acct-chase' : (a.subtype === 'checking' ? 'acct-checking' : '');
+      lab.appendChild(sel);
+      box.appendChild(lab);
+    });
+    if (!box.children.length) box.textContent = 'No accounts returned.';
+    say('');
+  }
+
+  $('go').addEventListener('click', function () {
+    var w = $('worker').value.trim().replace(/\/+$/, '');
+    if (!/^https:\/\/[^\s]+$/i.test(w)) { say('Enter the Worker URL (https://…)'); return; }
+    if (!$('code').value) { say('Enter the setup code'); return; }
+    S.setItem(K.worker, w);
+    S.setItem(K.code, $('code').value);
+    say('Starting Plaid…');
+    call('/link/token').then(function (d) {
+      S.setItem(K.token, d.linkToken);
+      return openLink(null);
+    }).catch(function (e) { say(e.message); });
+  });
+
+  $('save').addEventListener('click', function () {
+    var map = {};
+    Array.prototype.forEach.call(document.querySelectorAll('#accts select'), function (sel) {
+      if (sel.value && sel.dataset.id) map[sel.dataset.id] = sel.value;
+    });
+    if (!Object.keys(map).length) { say('Choose at least one account'); return; }
+    var inst = linked.meta.institution && linked.meta.institution.name;
+    call('/link/exchange', { public_token: linked.publicToken, institution: inst || '', accountMap: map }).then(function () {
+      clearSession();
+      $('map').hidden = true;
+      say('Linked. Go back to Expense Logger and sync.');
+    }).catch(function (e) { say(e.message); });
+  });
+
+  // Back from a bank's OAuth page (Chase): resume the same Link session.
+  if (/[?&]oauth_state_id=/.test(window.location.search)) {
+    if (S.getItem(K.token) && S.getItem(K.worker)) {
+      say('Finishing bank login…');
+      openLink(window.location.href).catch(function (e) { say(e.message); });
+    } else {
+      say('This tab lost the link session. Start again.');
+    }
+  }
+})();
+</script>
+</body>
+</html>

@@ -7,6 +7,11 @@ Never commit secrets. Set them with `npx wrangler secret put <NAME>`:
 
 Tests (Node 22+): `node worker/test/worker-auth-test.mjs` and `node worker/test/worker-sync-test.mjs`
 
+## App side
+
+- Settings → Bank sync pairs the phone (`POST /pair`) and stores `{workerUrl, deviceToken, pairedAt}` in `expenseLogger.sync.v1`. That key is device-only: it is never in a backup or export, and restore or Undo leave it in place (so a restore does not unpair; Disconnect does).
+- `link.html` runs Plaid Link in Safari (and is the OAuth redirect page). The service worker never caches or intercepts it.
+
 ## API contract (what the app calls)
 
 All responses are JSON. CORS allows only `https://nixcapital.github.io`. Device routes need `Authorization: Bearer <deviceToken>`.
