@@ -84,7 +84,7 @@ async function run() {
   await page.reload({ waitUntil: 'networkidle' });
 
   const version = await page.evaluate(() => window.ExpenseLoggerTest.APP_VERSION);
-  assert.strictEqual(version, '2.1.0');
+  assert.strictEqual(version, '2.2.0');
 
   console.log('qol-190-test: apply-to-similar import rows');
   const messy = readFileSync(join(FIX, 'fake-chase-oct-messy.csv'), 'utf8');

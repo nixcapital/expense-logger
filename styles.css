@@ -1,4 +1,4 @@
-/* Expense Logger 2.1.0 — dark-first, iOS-style */
+/* Expense Logger 2.2.0 — dark-first, iOS-style */
 
 :root {
   --bg: #0B0C10;
@@ -3458,6 +3458,9 @@ a.settings-row-btn { text-decoration: none; }
 }
 .import-row-merchant { display: block; font-weight: 600; font-size: 15px; line-height: 1.25; }
 .import-row-meta { display: block; font-size: 13px; color: var(--text-dim); margin-top: 2px; }
+.import-row--bank-change .import-row-main { flex: 1; min-width: 0; }
+.import-bank-change-btn { flex: 0 0 auto; width: auto; padding: 6px 12px; }
+.import-bank-change-btn[aria-pressed="true"] { background: var(--accent); color: #fff; }
 .import-row-chevron { color: var(--text-dim); font-size: 18px; flex-shrink: 0; }
 .import-row-expanded { padding: 0 var(--sp-3) 12px; }
 .import-cat-chips { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }

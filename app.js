@@ -57,7 +57,7 @@
   // restore or undo leaves it in place (pair again only after Clear All Data or Disconnect).
   var SYNC_KEY = 'expenseLogger.sync.v1';
   var SYNC_CUTOVER_KEY = 'expenseLogger.syncCutover.v1'; // { accountId: 'YYYY-MM-DD' }; bank rows before it are dropped
-  var APP_VERSION = '2.1.0';
+  var APP_VERSION = '2.2.0';
   var BACKUP_FORMAT = 2;
   var BACKUP_FORMAT_LEGACY = 1;
   var DEFAULT_ACCOUNT_CHECKING = 'acct-checking';
@@ -6431,7 +6431,7 @@
   }
 
   function summarizeImportRows(rows) {
-    var counts = { import: 0, duplicate: 0, transfer: 0, credit: 0, pending: 0, unreadable: 0 };
+    var counts = { import: 0, duplicate: 0, transfer: 0, credit: 0, pending: 0, unreadable: 0, changed: 0, removed: 0 };
     rows.forEach(function (r) { if (counts[r.status] != null) counts[r.status]++; });
     return counts;
   }
@@ -6476,6 +6476,7 @@
   function importReviewHasUnsavedChanges() {
     if (!pendingImport || !pendingImport.rows) return false;
     return pendingImport.rows.some(function (r) {
+      if (importRowIsBankChange(r)) return !!r.include;
       if (r.status !== 'import' && r.status !== 'transfer') return false;
       return !!(r.userSetCategory || r.userSetTransfer);
     });
@@ -6528,7 +6529,12 @@
     }, { passive: true });
   }
 
+  function importRowIsBankChange(r) {
+    return !!r && (r.status === 'changed' || r.status === 'removed');
+  }
+
   function importRowNeedsReview(r) {
+    if (importRowIsBankChange(r)) return true;
     if (!r || (r.status !== 'import' && r.status !== 'transfer')) return false;
     if (r.status === 'transfer') return false;
     var cat = r.categoryId || 'other';
@@ -6538,6 +6544,7 @@
   function importFilterCounts(rows) {
     var c = { review: 0, transfers: 0, income: 0, all: 0 };
     rows.forEach(function (r) {
+      if (importRowIsBankChange(r)) { c.all++; c.review++; return; }
       if (r.status !== 'import' && r.status !== 'transfer') return;
       c.all++;
       if (r.status === 'transfer' || r.isTransfer) c.transfers++;
@@ -6548,6 +6555,7 @@
   }
 
   function importRowPassesFilter(r) {
+    if (importRowIsBankChange(r)) return importReviewFilter === 'review' || importReviewFilter === 'all';
     if (r.status !== 'import' && r.status !== 'transfer') return false;
     if (importReviewFilter === 'all') return true;
     if (importReviewFilter === 'transfers') return r.status === 'transfer' || r.isTransfer;
@@ -6587,6 +6595,25 @@
     return '';
   }
 
+  function bankChangeRowHTML(r, i) {
+    var fmtD = function (ts) { return new Date(ts).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }); };
+    var meta = r.reason;
+    if (r.status === 'changed') {
+      var parts = [];
+      if (Math.round(r.oldAmount * 100) !== Math.round(r.amount * 100)) parts.push(fmtMoneyDisplay(r.oldAmount) + ' \u2192 ' + fmtMoneyDisplay(r.amount));
+      if (dayKey(r.oldTs) !== dayKey(r.ts)) parts.push(fmtD(r.oldTs) + ' \u2192 ' + fmtD(r.ts));
+      meta += ': ' + parts.join(' \u00B7 ');
+    } else {
+      meta += ' \u00B7 ' + fmtD(r.ts) + ' \u00B7 ' + fmtMoneyDisplay(r.amount);
+    }
+    var label = r.status === 'removed' ? (r.include ? 'Will delete' : 'Delete') : (r.include ? 'Will update' : 'Update');
+    return '<div class="import-row import-row--compact import-row--bank-change" data-idx="' + i + '"><div class="import-row-hit">'
+      + '<span class="import-row-main"><span class="import-row-merchant">' + escHtml(r.note || '(no description)') + '</span>'
+      + '<span class="import-row-meta">' + escHtml(meta) + '</span></span>'
+      + '<button type="button" class="btn-secondary import-bank-change-btn" data-bank-change="' + i + '" aria-pressed="' + (r.include ? 'true' : 'false') + '">'
+      + label + '</button></div></div>';
+  }
+
   function renderImportReview() {
     if (!pendingImport) return;
     hideImportDiscardPrompt();
@@ -6617,6 +6644,7 @@
     html += '<div class="import-stat"><strong>' + counts.credit + '</strong><span> credits skipped</span></div>';
     html += '<div class="import-stat"><strong>' + counts.pending + '</strong><span> pending</span></div>';
     html += '<div class="import-stat"><strong>' + counts.unreadable + '</strong><span> unreadable</span></div>';
+    if (counts.changed + counts.removed) html += '<div class="import-stat"><strong>' + (counts.changed + counts.removed) + '</strong><span> bank changes</span></div>';
     html += '</div>';
     html += '<p class="hint">Transfers are payments between your accounts (e.g. card autopay). Toggle per row or change category \u2014 we remember your choices.</p>';
     $importSummary.innerHTML = html;
@@ -6640,7 +6668,8 @@
       tb += '<button type="button" class="import-filter-chip' + (importReviewFilter === 'all' ? ' is-active' : '') + '" data-filter="all">All <span class="import-filter-count">' + fCounts.all + '</span></button>';
       tb += '</div>';
       tb += '<p class="hint import-filter-hint">Needs review = rows that landed in Other.'
-        + (showIncomeChip ? '' : ' Income is hidden: this file has none.') + '</p>';
+        + (showIncomeChip ? '' : ' Income is hidden: this file has none.')
+        + (counts.changed + counts.removed ? ' Bank changes apply only if you tap them.' : '') + '</p>';
       $importReviewToolbar.innerHTML = tb;
       $importReviewToolbar.hidden = false;
       Array.prototype.forEach.call($importReviewToolbar.querySelectorAll('[data-filter]'), function (btn) {
@@ -6655,6 +6684,7 @@
     var listHtml = '';
     rows.forEach(function (r, i) {
       if (!importRowPassesFilter(r)) return;
+      if (importRowIsBankChange(r)) { listHtml += bankChangeRowHTML(r, i); return; }
       var d = r.ts ? new Date(r.ts).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : '\u2014';
       var cat = getCat(r.categoryId || 'other');
       var expanded = importReviewExpandedIdx === i;
@@ -6690,6 +6720,13 @@
     $importRowList.innerHTML = listHtml;
     if (EI && EI.hydrateUiIcons) EI.hydrateUiIcons($importRowList);
 
+    Array.prototype.forEach.call($importRowList.querySelectorAll('[data-bank-change]'), function (btn) {
+      btn.addEventListener('click', function () {
+        var row = pendingImport.rows[parseInt(btn.dataset.bankChange, 10)];
+        row.include = !row.include;
+        renderImportReview();
+      });
+    });
     Array.prototype.forEach.call($importRowList.querySelectorAll('[data-expand]'), function (btn) {
       btn.addEventListener('click', function () {
         var idx = parseInt(btn.dataset.expand, 10);
@@ -6820,6 +6857,20 @@
     entries.push(entry);
   }
 
+  /** Applies one tapped bank flag to the ledger (inside commitImport's rollback snapshot). */
+  function applyBankChange(r) {
+    for (var i = 0; i < entries.length; i++) {
+      var e = entries[i];
+      if (e.id !== r.existingEntryId) continue;
+      if (r.status === 'removed') { entries.splice(i, 1); return true; }
+      e.amount = r.amount;
+      e.ts = r.ts;
+      if (e.importDedupeSnapshot) { e.importDedupeSnapshot.amount = r.amount; e.importDedupeSnapshot.ts = r.ts; }
+      return true;
+    }
+    return false;
+  }
+
   function restoreImportCommitSnapshot(snap) {
     entries = snap.entries;
     accounts = snap.accounts;
@@ -6853,7 +6904,12 @@
     var skippedCredit = 0;
     var skippedPending = 0;
     var skippedBad = 0;
+    var bankChanged = 0;
     rows.forEach(function (r) {
+      if (importRowIsBankChange(r)) {
+        if (r.include && applyBankChange(r)) bankChanged++;
+        return;
+      }
       if (r.status === 'duplicate') {
         dup++;
         if (r.existingEntryId && accountId && backfillEntryAccount(r.existingEntryId, accountId)) tagged++;
@@ -6916,6 +6972,7 @@
     if (skippedCredit) parts.push(skippedCredit + ' credits');
     if (skippedPending) parts.push(skippedPending + ' pending');
     if (skippedBad) parts.push(skippedBad + ' unreadable');
+    if (bankChanged) parts.push(bankChanged + ' bank change' + (bankChanged === 1 ? '' : 's') + ' applied');
     toast('Imported ' + parts.join(', '));
     if (fromPlaid) setTimeout(nextPlaidReview, modalTransitionMs());
   }
@@ -7571,9 +7628,39 @@
     return String((layout === 'card' && t.authorized_date) || t.date || '');
   }
 
+  // personal_finance_category -> app category, only for rows that would land in Other and
+  // have no saved import rule. Detailed codes first, then primary.
+  var PLAID_CATEGORY_HINTS = {
+    FOOD_AND_DRINK_GROCERIES: 'groceries', FOOD_AND_DRINK: 'dining', GENERAL_MERCHANDISE_SUPERSTORES: 'groceries',
+    TRANSPORTATION_GAS: 'gas', RENT_AND_UTILITIES: 'bills', LOAN_PAYMENTS: 'bills', BANK_FEES: 'bills',
+    GENERAL_SERVICES_INSURANCE: 'bills', ENTERTAINMENT: 'fun'
+  };
+
+  function plaidCategoryHint(pfc) {
+    if (!pfc) return null;
+    var id = PLAID_CATEGORY_HINTS[pfc.detailed] || PLAID_CATEGORY_HINTS[pfc.primary] || null;
+    return id && categories.some(function (c) { return c.id === id; }) ? id : null;
+  }
+
+  /** Turns a review row into a "changed since import" / "bank removed this" flag. Never auto-applied. */
+  function markBankChange(r, kind, had, next) {
+    r.status = kind;
+    r.include = false;
+    r.existingEntryId = had.id;
+    r.reason = kind === 'changed' ? 'Changed since import' : 'Bank removed this';
+    r.note = had.note || r.note;
+    r.oldAmount = had.amount;
+    r.oldTs = had.ts;
+    r.amount = next ? next.amount : had.amount;
+    r.ts = next ? next.ts : had.ts;
+    return r;
+  }
+
   function buildPlaidImports(pull, accountMap) {
     var groups = {};
     var dropped = 0;
+    var modifiedIds = {};
+    (pull.modified || []).forEach(function (t) { if (t) modifiedIds[t.transaction_id] = true; });
     var txns = (pull.added || []).concat(pull.modified || []);
     for (var i = 0; i < txns.length; i++) {
       var t = txns[i];
@@ -7582,11 +7669,18 @@
       if (!acct) return { error: 'Bank sent rows for an account this phone does not know. Nothing saved' };
       var layout = acct.type === 'credit_card' ? 'card' : 'bank';
       if (plaidTxnDay(t, layout) < syncCutoverFor(acct.id)) { dropped++; continue; }
-      var g = groups[acct.id] || (groups[acct.id] = { acct: acct, layout: layout, txns: [] });
+      var g = groups[acct.id] || (groups[acct.id] = { acct: acct, layout: layout, txns: [], extra: [] });
       g.txns.push(t);
     }
     var inLedger = {};
     entries.forEach(function (e) { if (e.importRowKey) inLedger[e.importRowKey] = e; });
+    (pull.removed || []).forEach(function (x) {
+      var had = x && inLedger['plaid:' + x.transaction_id];
+      var acct = had && getAccount(had.accountId);
+      if (!acct) return; // never imported here: nothing to flag
+      var g = groups[acct.id] || (groups[acct.id] = { acct: acct, layout: acct.type === 'credit_card' ? 'card' : 'bank', txns: [], extra: [] });
+      g.extra.push(markBankChange({ importRowKey: had.importRowKey, layout: g.layout }, 'removed', had, null));
+    });
     var imports = [];
     Object.keys(groups).forEach(function (id) {
       var g = groups[id];
@@ -7603,6 +7697,17 @@
           r.bankText = t.original_description || t.name || '';
         }
         var had = inLedger[r.importRowKey];
+        if (had && modifiedIds[t.transaction_id] && r.status !== 'credit' && r.status !== 'unreadable') {
+          var next = { amount: Math.round(Math.abs(Number(t.amount)) * 100) / 100, ts: parseUsDate(plaidTxnDay(t, g.layout)) };
+          if (Math.round(next.amount * 100) !== Math.round(had.amount * 100) || dayKey(next.ts) !== dayKey(had.ts)) {
+            markBankChange(r, 'changed', had, next);
+            return;
+          }
+        }
+        if (r.status === 'import' && !r.isDeposit && (r.categoryId || 'other') === 'other' && !findImportRule(r.dedupeNote || r.note)) {
+          var hint = plaidCategoryHint(t.personal_finance_category);
+          if (hint) r.categoryId = r.suggestedCategoryId = r.initialCategoryId = hint;
+        }
         if (had && r.status !== 'duplicate') {
           r.dedupeBaseStatus = r.status === 'transfer' ? 'transfer' : 'import';
           r.status = 'duplicate';
@@ -7610,7 +7715,8 @@
           r.existingEntryId = had.id;
         }
       });
-      var hasNew = rows.some(function (r) { return r.status === 'import' || r.status === 'transfer'; });
+      rows = rows.concat(g.extra);
+      var hasNew = rows.some(function (r) { return r.status === 'import' || r.status === 'transfer' || importRowIsBankChange(r); });
       if (hasNew) {
         imports.push({ batchId: batchId, rows: rows, fileName: 'Bank sync \u00B7 ' + g.acct.name, layout: g.layout,
           accountId: id, balanceOffer: null, useBalanceOffer: false, plaidSync: true });
