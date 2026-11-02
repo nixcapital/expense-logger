@@ -1,4 +1,4 @@
-/* Expense Logger 2.3.0 — dark-first, iOS-style */
+/* Expense Logger 2.4.0 — dark-first, iOS-style */
 
 :root {
   --bg: #0B0C10;
@@ -1817,6 +1817,30 @@ button.legend-row.legend-btn.active { background: color-mix(in srgb, var(--accen
 a.settings-row-btn { text-decoration: none; }
 .settings-row .bank-sync-date { width: auto; padding: 8px 10px; font-size: 15px; }
 .group-action { margin-left: var(--sp-2); }
+.agent-brief-level { padding: var(--sp-3) var(--sp-4); }
+.agent-brief-level .seg-control { display: flex; width: 100%; }
+.agent-brief-level .seg-btn { flex: 1; min-height: 44px; font-size: 15px; }
+.agent-brief-preview {
+  margin: 0;
+  padding: var(--sp-3) var(--sp-4);
+  border-top: 1px solid var(--sep);
+  border-bottom: 1px solid var(--sep);
+  background: var(--bg);
+  color: var(--text);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 13px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.agent-brief-actions { display: grid; grid-template-columns: 1fr 1fr; }
+.agent-brief-actions .settings-row-btn {
+  justify-content: center;
+  min-height: 48px;
+  font-weight: 600;
+  border-bottom: none;
+}
+.agent-brief-actions .settings-row-btn + .settings-row-btn { border-left: 1px solid var(--sep); }
 .full-destructive { margin-top: var(--sp-4); }
 
 .collapsible summary {

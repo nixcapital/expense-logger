@@ -13,8 +13,8 @@
 <link rel="manifest" href="manifest.json">
 <link rel="icon" href="icon-192.png">
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
-<link rel="stylesheet" href="styles.css?v=2.3.0">
-<link rel="stylesheet" href="icon-animations.css?v=2.3.0">
+<link rel="stylesheet" href="styles.css?v=2.4.0">
+<link rel="stylesheet" href="icon-animations.css?v=2.4.0">
 <title>Expense Logger</title>
 </head>
 <body>
@@ -408,6 +408,23 @@
         <span>Count card bill payments as spending</span>
         <input type="checkbox" id="countCardPayments">
       </label>
+    </div>
+  </div>
+
+  <div class="inset-group" id="agentBriefGroup">
+    <h3 class="group-label">Agent brief</h3>
+    <div class="inset-card agent-brief-card">
+      <div class="agent-brief-level">
+        <div class="seg-control" role="group" aria-label="Level" id="agentBriefLevel">
+          <button type="button" class="seg-btn is-active" id="agentBriefL0" data-brief-level="L0" aria-pressed="true">L0</button>
+          <button type="button" class="seg-btn" id="agentBriefL1" data-brief-level="L1" aria-pressed="false">L1</button>
+        </div>
+      </div>
+      <pre class="agent-brief-preview" id="agentBriefPreview" spellcheck="false"></pre>
+      <div class="agent-brief-actions">
+        <button type="button" class="settings-row-btn" id="agentBriefCopyBtn">Copy</button>
+        <button type="button" class="settings-row-btn" id="agentBriefSaveBtn">Save file</button>
+      </div>
     </div>
   </div>
 
@@ -966,10 +983,11 @@
   <p class="hint wrapped-empty" id="wrappedEmpty" hidden>No spending data for this month.</p>
 </div>
 
-<script src="icon-system.js?v=2.3.0"></script>
-<script src="forecast.js?v=2.3.0"></script>
-<script src="wrapped.js?v=2.3.0"></script>
-<script src="app.js?v=2.3.0"></script>
+<script src="icon-system.js?v=2.4.0"></script>
+<script src="forecast.js?v=2.4.0"></script>
+<script src="wrapped.js?v=2.4.0"></script>
+<script src="brief.js?v=2.4.0"></script>
+<script src="app.js?v=2.4.0"></script>
 <script>
 (function () {
   'use strict';

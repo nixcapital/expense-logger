@@ -57,7 +57,7 @@
   // restore or undo leaves it in place (pair again only after Clear All Data or Disconnect).
   var SYNC_KEY = 'expenseLogger.sync.v1';
   var SYNC_CUTOVER_KEY = 'expenseLogger.syncCutover.v1'; // { accountId: 'YYYY-MM-DD' }; bank rows before it are dropped
-  var APP_VERSION = '2.3.0';
+  var APP_VERSION = '2.4.0';
   var BACKUP_FORMAT = 2;
   var BACKUP_FORMAT_LEGACY = 1;
   var DEFAULT_ACCOUNT_CHECKING = 'acct-checking';
@@ -348,6 +348,11 @@
 
 
   var $versionLine = $('versionLine');
+  var $agentBriefPreview = $('agentBriefPreview');
+  var $agentBriefL0 = $('agentBriefL0');
+  var $agentBriefL1 = $('agentBriefL1');
+  var $agentBriefCopyBtn = $('agentBriefCopyBtn');
+  var $agentBriefSaveBtn = $('agentBriefSaveBtn');
   var $storageStatusLine = $('storageStatusLine');
   var $lastBackupLine = $('lastBackupLine');
   var $backupReminderLine = $('backupReminderLine');
@@ -7234,6 +7239,107 @@
     });
   }
 
+  // ---------- Agent brief (one payload for preview, Copy, and Save file) ----------
+  var agentBriefLevel = 'L0';
+  var agentBriefText = '';
+  var agentBriefInputCache = null;
+
+  function agentBriefSource() {
+    var nowMs = Date.now();
+    var checking = getCheckingAccount();
+    var chase = getChaseAccount();
+    return {
+      level: agentBriefLevel,
+      nowMs: nowMs,
+      generatedAt: new Date(nowMs).toISOString(),
+      entries: entries,
+      categories: categories,
+      accounts: accounts,
+      recurringItems: recurringItems,
+      transferPairs: transferPairs,
+      overrides: forecastOverrides,
+      countedOneOffs: forecastCountedOneOffsList(),
+      cushion: getForecastCushion(),
+      chartDays: forecastChartDays,
+      maxLookaheadDays: 365,
+      checkingId: checking && checking.id,
+      chaseId: chase && chase.id
+    };
+  }
+
+  function syncAgentBriefLevelUi() {
+    if ($agentBriefL0) {
+      var on0 = agentBriefLevel !== 'L1';
+      $agentBriefL0.classList.toggle('is-active', on0);
+      $agentBriefL0.setAttribute('aria-pressed', on0 ? 'true' : 'false');
+    }
+    if ($agentBriefL1) {
+      var on1 = agentBriefLevel === 'L1';
+      $agentBriefL1.classList.toggle('is-active', on1);
+      $agentBriefL1.setAttribute('aria-pressed', on1 ? 'true' : 'false');
+    }
+  }
+
+  function publishAgentBrief() {
+    try {
+      agentBriefInputCache = agentBriefSource();
+      var brief = null;
+      if (window.ExpenseBrief && window.ExpenseBrief.buildAgentBrief) {
+        brief = window.ExpenseBrief.buildAgentBrief(agentBriefInputCache);
+      }
+      agentBriefText = brief ? JSON.stringify(brief, null, 2) : '';
+    } catch (err) {
+      agentBriefInputCache = null;
+      agentBriefText = '';
+    }
+    if ($agentBriefPreview) $agentBriefPreview.textContent = agentBriefText;
+    syncAgentBriefLevelUi();
+  }
+
+  function selectAgentBriefLevel(level) {
+    var next = level === 'L1' ? 'L1' : 'L0';
+    if (next === agentBriefLevel && agentBriefText) return;
+    agentBriefLevel = next;
+    publishAgentBrief();
+  }
+
+  function copyAgentBriefFallback(text) {
+    var ta = document.createElement('textarea');
+    ta.value = text;
+    ta.setAttribute('readonly', '');
+    ta.style.position = 'fixed';
+    ta.style.left = '-9999px';
+    document.body.appendChild(ta);
+    ta.select();
+    var ok = false;
+    try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
+    document.body.removeChild(ta);
+    toast(ok ? 'Copied' : 'Could not copy');
+  }
+
+  function copyAgentBrief() {
+    var text = agentBriefText;
+    if (!text) { toast('Nothing to copy'); return; }
+    var clip = navigator.clipboard;
+    if (clip && clip.writeText) {
+      try {
+        var pending = clip.writeText(text);
+        if (pending && pending.then) {
+          pending.then(function () { toast('Copied'); }, function () { copyAgentBriefFallback(text); });
+          return;
+        }
+      } catch (e) {}
+    }
+    copyAgentBriefFallback(text);
+  }
+
+  function saveAgentBriefFile() {
+    var text = agentBriefText;
+    if (!text) { toast('Nothing to save'); return; }
+    var blob = new Blob([text], { type: 'application/json' });
+    downloadBlob(blob, 'agent-brief-' + agentBriefLevel.toLowerCase() + '-' + localDateStamp() + '.json');
+  }
+
   // ---------- Export / import ----------
   function exportCSV() {
     if (entries.length === 0) { toast('Nothing to export yet'); return; }
@@ -7313,6 +7419,10 @@
   }
 
   $exportBtn.addEventListener('click', exportCSV);
+  if ($agentBriefL0) $agentBriefL0.addEventListener('click', function () { selectAgentBriefLevel('L0'); });
+  if ($agentBriefL1) $agentBriefL1.addEventListener('click', function () { selectAgentBriefLevel('L1'); });
+  if ($agentBriefCopyBtn) $agentBriefCopyBtn.addEventListener('click', copyAgentBrief);
+  if ($agentBriefSaveBtn) $agentBriefSaveBtn.addEventListener('click', saveAgentBriefFile);
   $('exportJsonBtn').addEventListener('click', exportJSON);
   var $backupDataBtn = $('backupDataBtn');
   if ($backupDataBtn) $backupDataBtn.addEventListener('click', runBackupExport);
@@ -9618,6 +9728,7 @@
       if ($countCardPayments) $countCardPayments.checked = importSettings.countCardPayments;
       renderDataMetaLines();
       renderBackupReminder();
+      publishAgentBrief();
       $versionLine.textContent = 'Version ' + APP_VERSION;
     }
     window.scrollTo(0, 0);
@@ -10343,7 +10454,10 @@
     getLocalStorageRaw: function (key) { return localStorage.getItem(key); },
     trySaveEntries: function () { return saveEntries(); },
     trySaveCategories: function () { return saveCategories(); },
-    trySaveAccounts: function () { return saveAccounts(); }
+    trySaveAccounts: function () { return saveAccounts(); },
+    agentBriefText: function () { return agentBriefText; },
+    agentBriefInput: function () { return agentBriefInputCache; },
+    publishAgentBrief: publishAgentBrief
   };
 
 })();

@@ -1,5 +1,5 @@
 /**
- * Simulates 2.2.0 → 2.3.0 deploy on the same origin (port).
+ * Simulates 2.2.0 → 2.4.0 deploy on the same origin (port).
  * Run: node scripts/sw-upgrade-test.mjs [--baseline]
  * --baseline uses main-branch sw.js/app (reproduces mixed-cache issues).
  */
@@ -15,7 +15,7 @@ const PORT = 8877;
 // Repo root: EL_ROOT if set, else the folder above scripts/ (works on Windows and Linux).
 const ROOT_NEW = process.env.EL_ROOT || resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const ROOT_OLD = join(tmpdir(), 'el-upgrade-old');
-/** Pinned 2.2.0 release (before 2.3.0). */
+/** Pinned 2.2.0 release (before 2.4.0). */
 const UPGRADE_FROM_REF = '9ec36a6';
 
 function prepareOldTree() {
@@ -102,7 +102,7 @@ async function run(useBaseline) {
     rmSync(deployNew, { recursive: true, force: true });
     cpSync(ROOT_NEW, deployNew, { recursive: true });
     currentRoot = deployNew;
-    console.log('Switching server files to full 2.3.0');
+    console.log('Switching server files to full 2.4.0');
   }
 
   await page.reload({ waitUntil: 'networkidle' });
@@ -113,7 +113,7 @@ async function run(useBaseline) {
   console.log('After deploy reload:', v2, 'caches:', caches, 'entries preserved:', !!entries);
 
   let reloads = 0;
-  while (!v2.includes('2.3.0') && reloads < 2) {
+  while (!v2.includes('2.4.0') && reloads < 2) {
     await page.reload({ waitUntil: 'networkidle' });
     await page.waitForTimeout(2500);
     v2 = await page.evaluate(() => document.getElementById('versionLine')?.textContent || '');
@@ -122,7 +122,7 @@ async function run(useBaseline) {
     console.log('Extra reload', reloads + ':', v2, 'caches:', caches);
   }
 
-  const ok = v1.includes('2.2.0') && v2.includes('2.3.0') && entries && entries.includes('12.5') && errors.length === 0;
+  const ok = v1.includes('2.2.0') && v2.includes('2.4.0') && entries && entries.includes('12.5') && errors.length === 0;
   console.log('page errors:', errors);
   console.log(ok ? 'PASS' : 'FAIL');
 
