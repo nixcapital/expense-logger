@@ -83,6 +83,68 @@ async function encryptDoc(page, entryId) {
   }, { pass: PASS, entryId });
 }
 
+const REF_SHEET_ID = 'backupRestoreModal';
+const HOUSEHOLD_SHEET_IDS = ['householdJoinSheet', 'householdJoinConfirmSheet', 'householdRestoreSheet'];
+
+async function sheetModalBackground(page, sheetId) {
+  return page.evaluate((id) => {
+    const ov = document.getElementById(id);
+    ov.hidden = false;
+    ov.classList.add('show');
+    const modal = ov.querySelector('.modal');
+    return getComputedStyle(modal).backgroundColor;
+  }, sheetId);
+}
+
+async function assertHouseholdSheetStyles(page) {
+  const refBg = await sheetModalBackground(page, REF_SHEET_ID);
+  for (const id of HOUSEHOLD_SHEET_IDS) {
+    const bg = await sheetModalBackground(page, id);
+    assert.strictEqual(bg, refBg, id + ' modal background matches ' + REF_SHEET_ID);
+  }
+  await page.evaluate(({ householdIds, refId }) => {
+    householdIds.concat([refId]).forEach((id) => {
+      const ov = document.getElementById(id);
+      if (!ov) return;
+      ov.classList.remove('show');
+      if (id !== refId) ov.hidden = true;
+    });
+  }, { householdIds: HOUSEHOLD_SHEET_IDS, refId: REF_SHEET_ID });
+}
+
+async function accessibleName(page, selector) {
+  return page.evaluate((sel) => {
+    const el = document.querySelector(sel);
+    if (!el) return '';
+    if (el.labels && el.labels.length) return el.labels[0].textContent.trim();
+    return el.getAttribute('aria-label') || '';
+  }, selector);
+}
+
+async function assertJoinFieldAccessibleNames(page) {
+  await page.click('#householdJoinOpenBtn');
+  await page.waitForSelector('#householdJoinSheet.show');
+  assert.strictEqual(await accessibleName(page, '#householdJoinUrl'), 'Worker URL');
+  assert.strictEqual(await accessibleName(page, '#householdJoinCode'), 'Household setup code');
+  assert.strictEqual(await accessibleName(page, '#householdJoinPass'), 'Household passphrase');
+  await page.click('#householdJoinCancelBtn');
+  await page.waitForFunction(() => document.getElementById('householdJoinSheet').hidden);
+}
+
+async function assertRestoreFieldAccessibleName(page) {
+  await page.evaluate(() => {
+    const ov = document.getElementById('householdRestoreSheet');
+    ov.hidden = false;
+    ov.classList.add('show');
+  });
+  assert.strictEqual(await accessibleName(page, '#householdRestorePass'), 'Household passphrase');
+  await page.evaluate(() => {
+    const ov = document.getElementById('householdRestoreSheet');
+    ov.hidden = true;
+    ov.classList.remove('show');
+  });
+}
+
 async function fillJoinForm(page) {
   await page.click('#householdJoinOpenBtn');
   await page.fill('#householdJoinUrl', WORKER + '/');
@@ -93,7 +155,10 @@ async function fillJoinForm(page) {
 async function run() {
   await new Promise((r) => server.listen(PORT, r));
   const browser = await chromium.launch();
-  const context = await browser.newContext({ viewport: { width: 428, height: 926 } });
+  const context = await browser.newContext({
+    viewport: { width: 428, height: 926 },
+    colorScheme: 'dark'
+  });
   await mockWorker(context);
   const page = await context.newPage();
   const errors = [];
@@ -113,6 +178,10 @@ async function run() {
   });
   await page.reload({ waitUntil: 'networkidle' });
   await page.click('.tab-btn[data-tab="settings"]');
+
+  await assertHouseholdSheetStyles(page);
+  await assertJoinFieldAccessibleNames(page);
+  await assertRestoreFieldAccessibleName(page);
 
   await fillJoinForm(page);
   await page.click('#householdJoinBtn');

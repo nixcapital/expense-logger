@@ -8071,6 +8071,7 @@
   var $householdJoinCode = $('householdJoinCode');
   var $householdJoinPass = $('householdJoinPass');
   var $householdJoinBtn = $('householdJoinBtn');
+  var $householdJoinCancelBtn = $('householdJoinCancelBtn');
   var $householdJoinOpenBtn = $('householdJoinOpenBtn');
   var $householdJoinConfirmSheet = $('householdJoinConfirmSheet');
   var $householdJoinConfirmCancelBtn = $('householdJoinConfirmCancelBtn');
@@ -8450,6 +8451,12 @@
     if ($householdRestoreBtn) $householdRestoreBtn.hidden = !paired;
   }
 
+  function closeHouseholdJoinSheet() {
+    if (!$householdJoinSheet) return;
+    $householdJoinSheet.hidden = true;
+    $householdJoinSheet.classList.remove('show');
+  }
+
   function openHouseholdJoinSheet() {
     if (!$householdJoinSheet) return;
     $householdJoinSheet.hidden = false;
@@ -8501,6 +8508,7 @@
     });
   }
   if ($householdJoinBtn) $householdJoinBtn.addEventListener('click', runHouseholdJoin);
+  if ($householdJoinCancelBtn) $householdJoinCancelBtn.addEventListener('click', closeHouseholdJoinSheet);
   if ($householdJoinOpenBtn) $householdJoinOpenBtn.addEventListener('click', openHouseholdJoinSheet);
   if ($householdViewerRefreshBtn) {
     $householdViewerRefreshBtn.addEventListener('click', function () {
@@ -10592,7 +10600,7 @@
     });
   });
 
-  [$budgetModal, $catModal, $receiptModal, $importAccountModal, $addAccountModal, $wrappedModal, $backupRestoreModal, $householdJoinConfirmSheet].forEach(function (ov) {
+  [$budgetModal, $catModal, $receiptModal, $importAccountModal, $addAccountModal, $wrappedModal, $backupRestoreModal, $householdJoinSheet, $householdJoinConfirmSheet, $householdRestoreSheet].forEach(function (ov) {
     if (!ov) return;
     ov.addEventListener('click', function (e) {
       if (e.target === ov) {
@@ -10600,7 +10608,14 @@
         if (ov === $receiptModal) editingEntryId = null;
         if (ov === $importAccountModal) pendingImportAccount = null;
         if (ov === $backupRestoreModal) pendingBackupRestore = null;
+        if (ov === $householdJoinSheet) {
+          ov.hidden = true;
+        }
         if (ov === $householdJoinConfirmSheet) clearPendingHouseholdJoin();
+        if (ov === $householdRestoreSheet) {
+          ov.hidden = true;
+          if ($householdRestorePass) $householdRestorePass.value = '';
+        }
       }
     });
   });
