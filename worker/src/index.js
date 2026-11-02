@@ -3,6 +3,7 @@
 import { sha256Hex, secretsEqual, randomToken, encryptText, decryptText } from './crypto.js';
 import { createLinkToken, createUpdateLinkToken, exchangePublicToken } from './plaid.js';
 import * as store from './store.js';
+import { route as householdRoute } from './household.js';
 import { syncItem, mergePayload, emptyPayload, payloadIsEmpty, publicAccounts, pendingTotals } from './sync.js';
 
 var MAX_BODY = 10 * 1024;
@@ -34,9 +35,11 @@ async function readJson(request) {
 }
 
 // Check a setup code with a global failure lockout (single user, so one bucket is enough).
-async function checkSetupCode(env, code, now) {
+async function checkSetupCode(env, code, now, expected) {
+  // An unset secret passed explicitly (e.g. HOUSEHOLD_CODE) must fail, never fall back to SETUP_CODE.
+  if (arguments.length < 4) expected = env.SETUP_CODE;
   if (await store.recentFailures(env.DB, now) >= store.MAX_FAILURES) return 'locked';
-  if (typeof code === 'string' && code && env.SETUP_CODE && await secretsEqual(code, env.SETUP_CODE)) return 'ok';
+  if (typeof code === 'string' && code && expected && await secretsEqual(code, expected)) return 'ok';
   await store.recordFailure(env.DB, now);
   return 'bad';
 }
@@ -134,6 +137,10 @@ export async function handle(request, env, deps) {
     if (!await authDevice(request, env)) return json(401, { error: 'unauthorized' }, cors);
     return json(200, await runPull(env, fetchFn, now), cors);
   }
+  var hh = await householdRoute(request, env, url, cors, now, {
+    json: json, bearer: bearer, authDevice: authDevice, checkSetupCode: checkSetupCode
+  });
+  if (hh) return hh;
   if (request.method !== 'POST') return json(404, { error: 'not_found' }, cors);
 
   var body = await readJson(request);

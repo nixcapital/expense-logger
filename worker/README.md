@@ -3,7 +3,16 @@
 Cloudflare Worker + D1 for Plaid bank sync. Plan: issue #46. Sandbox and fake data only until Tri says otherwise.
 
 Never commit secrets. Set them with `npx wrangler secret put <NAME>`:
-`PLAID_CLIENT_ID`, `PLAID_SECRET`, `TOKEN_ENC_KEY` (base64 of 32 random bytes), `SETUP_CODE`.
+`PLAID_CLIENT_ID`, `PLAID_SECRET`, `TOKEN_ENC_KEY` (base64 of 32 random bytes), `SETUP_CODE`, and (household mirror) `HOUSEHOLD_CODE`, a different code for the second phone. Existing deployments must re-run `schema.sql` (all `CREATE TABLE IF NOT EXISTS`) and set `HOUSEHOLD_CODE` before the new routes work.
+
+## Household and agent routes (plan #66, docs/AGENT_BRIEF.md)
+
+- `POST /household/pair` (HOUSEHOLD_CODE) gives a read-only viewer token. `POST /viewers/revoke` (writer) revokes all viewers.
+- `POST /snapshot`, `GET /snapshots`, `GET /snapshot?id=` (writer); `GET /snapshot` newest (writer or viewer). Ciphertext only; last 5 kept.
+- `POST /brief` (writer) stores `{briefs:{L0,L1}}`, rejecting forbidden field names. `GET /brief` (agent token) returns only its own level.
+- `GET/POST /agents`, `POST /agents/revoke` (writer). An agent token is shown once; only its hash is stored. Agent tokens reach nothing but `GET /brief`.
+
+Tests: `node worker/test/worker-household-test.mjs`.
 
 Tests (Node 22+): `node worker/test/worker-auth-test.mjs` and `node worker/test/worker-sync-test.mjs`
 
