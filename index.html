@@ -13,8 +13,8 @@
 <link rel="manifest" href="manifest.json">
 <link rel="icon" href="icon-192.png">
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
-<link rel="stylesheet" href="styles.css?v=2.4.0">
-<link rel="stylesheet" href="icon-animations.css?v=2.4.0">
+<link rel="stylesheet" href="styles.css?v=2.5.0">
+<link rel="stylesheet" href="icon-animations.css?v=2.5.0">
 <title>Expense Logger</title>
 </head>
 <body>
@@ -408,6 +408,25 @@
         <span>Count card bill payments as spending</span>
         <input type="checkbox" id="countCardPayments">
       </label>
+    </div>
+  </div>
+
+  <div class="inset-group" id="householdWriterGroup">
+    <h3 class="group-label">Household</h3>
+    <div class="inset-card">
+      <button class="settings-row-btn" id="householdJoinOpenBtn" type="button" hidden>Join household <span class="chevron">›</span></button>
+      <div class="bank-sync-form" id="householdWriterForm">
+        <input type="password" id="householdPassInput" autocomplete="off" aria-label="Household passphrase">
+        <button class="settings-row-btn" id="householdPassSaveBtn" type="button">Save passphrase <span class="chevron">›</span></button>
+      </div>
+      <button class="settings-row-btn" id="householdRestoreBtn" type="button">Restore from household copy <span class="chevron">›</span></button>
+    </div>
+  </div>
+
+  <div class="inset-group" id="householdViewerGroup" hidden>
+    <h3 class="group-label">Household</h3>
+    <div class="inset-card">
+      <p class="data-meta-hint" id="householdViewerStatus">View only</p>
     </div>
   </div>
 
@@ -983,11 +1002,27 @@
   <p class="hint wrapped-empty" id="wrappedEmpty" hidden>No spending data for this month.</p>
 </div>
 
-<script src="icon-system.js?v=2.4.0"></script>
-<script src="forecast.js?v=2.4.0"></script>
-<script src="wrapped.js?v=2.4.0"></script>
-<script src="brief.js?v=2.4.0"></script>
-<script src="app.js?v=2.4.0"></script>
+<div class="modal-overlay sheet" id="householdJoinSheet" hidden>
+  <div class="modal sheet-modal">
+    <div class="sheet-grabber" aria-hidden="true"></div>
+    <div class="sheet-header">
+      <h2 class="sheet-title">Join household</h2>
+    </div>
+    <div class="bank-sync-form">
+      <input type="url" id="householdJoinUrl" autocomplete="off" autocapitalize="off" spellcheck="false" aria-label="Worker URL">
+      <input type="password" id="householdJoinCode" autocomplete="off" aria-label="Household setup code">
+      <input type="password" id="householdJoinPass" autocomplete="off" aria-label="Household passphrase">
+      <button type="button" class="settings-row-btn" id="householdJoinBtn">Join <span class="chevron">›</span></button>
+    </div>
+  </div>
+</div>
+
+<script src="icon-system.js?v=2.5.0"></script>
+<script src="forecast.js?v=2.5.0"></script>
+<script src="wrapped.js?v=2.5.0"></script>
+<script src="brief.js?v=2.5.0"></script>
+<script src="household-crypto.js?v=2.5.0"></script>
+<script src="app.js?v=2.5.0"></script>
 <script>
 (function () {
   'use strict';
