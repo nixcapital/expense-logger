@@ -200,14 +200,35 @@
     };
   }
 
+  function isCalendarDate(raw) {
+    var t = String(raw || '').trim();
+    if (/^\d{4}-\d{2}-\d{2}$/.test(t)) return true;
+    if (/^\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4}$/.test(t)) return true;
+    return false;
+  }
+
+  /* Phones are 7 or more digits, with spaces, dashes, dots, or parentheses.
+     Calendar dates and store numbers under 7 digits stay. */
+  function stripPhonesAndEmail(s) {
+    s = s.replace(/[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}/ig, ' ');
+    s = s.replace(/(?:\+\s*)?(?:\(?\d+\)?(?:[\s.\-]+\(?\d+\)?)*)/g, function (raw) {
+      var digits = raw.replace(/\D/g, '');
+      if (digits.length < 7 || isCalendarDate(raw)) return raw;
+      return ' ';
+    });
+    return s;
+  }
+
   function cleanName(label) {
-    return String(label == null ? '' : label)
+    var s = stripPhonesAndEmail(String(label == null ? '' : label));
+    s = s.replace(/\s+/g, ' ')
+      .replace(/(?:\*{2,}|\u2022{2,}|x{2,})\s*\d{2,}/ig, ' ')
       .replace(/\s+/g, ' ')
-      .replace(/(?:\*{2,}|\u2022{2,}|x{2,})\s*\d{2,}/ig, '')
-      .replace(/\b\d{8,}\b/g, '')
-      .replace(/\s+/g, ' ')
+      .replace(/^[\s.\-–,;:|/]+|[\s.\-–,;:|/]+$/g, '')
       .trim()
       .slice(0, 80);
+    if (!/[A-Za-z]/.test(s)) return '';
+    return s;
   }
 
   function leaksBankText(label, entries) {
@@ -281,7 +302,7 @@
       var key = EW && EW.merchantKey ? EW.merchantKey(note) : String(note).toLowerCase().replace(/\s+/g, ' ').trim();
       if (!key) return;
       var name = cleanName(EW && EW.normalizeMerchantName ? EW.normalizeMerchantName(note) : note);
-      if (!name || /\d{8,}/.test(name)) return;
+      if (!name) return;
       var cat = categoryName(input.categories, e.categoryId);
       if (e.categoryId === 'income') return;
       if (!groups[cat]) groups[cat] = {};

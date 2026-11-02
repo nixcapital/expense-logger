@@ -266,6 +266,60 @@ l1.topMerchants.Groceries.forEach(function (row) {
 assertClean(l0);
 assertClean(l1);
 
+const PRIVATE_BITS = [
+  '555-1234',
+  '(555) 123-4567',
+  '123-4567',
+  '+1 555.123.4567',
+  '555.123.4567',
+  'jane.smith@example.com',
+  'Jane.smith@example.com'
+];
+const privInput = {
+  nowMs: input.nowMs,
+  categories: categories,
+  accounts: [{ id: CHECKING, type: 'bank', currentBalance: 800, balanceAsOf: '2026-11-02' }],
+  entries: [
+    entry('pv1', 20, 'Venmo to Jane Smith 555-1234', 2026, 9, 3, { categoryId: 'fun' }),
+    entry('pv2', 18, 'Cafe (555) 123-4567', 2026, 9, 4, { categoryId: 'dining' }),
+    entry('pv3', 9, 'Pizza +1 555.123.4567', 2026, 9, 5, { categoryId: 'dining' }),
+    entry('pv4', 10, 'News jane.smith@example.com', 2026, 9, 6, { categoryId: 'fun' }),
+    entry('pv5', 15, '4412 Kiosk', 2026, 9, 7, { categoryId: 'fun' }),
+    entry('pv6', 4, '555-1234', 2026, 9, 8, { categoryId: 'fun' })
+  ],
+  recurringItems: [
+    { id: 'r-yoga', amount: 30, note: 'Yoga 555-1234', dayOfMonth: 12 },
+    { id: 'r-spa', amount: 22, note: 'Spa (555) 123-4567', dayOfMonth: 13 },
+    { id: 'r-taxi', amount: 16, note: 'Taxi +1 555.123.4567', dayOfMonth: 17 },
+    { id: 'r-mail', amount: 5, note: 'Mail jane.smith@example.com', dayOfMonth: 16 },
+    { id: 'r-lock', amount: 15, note: 'Locker 4412', dayOfMonth: 18 },
+    { id: 'r-bay', amount: 8, note: 'Bay 12', dayOfMonth: 3 },
+    { id: 'r-ins', amount: 40, note: 'Insurance 2026-11-15', dayOfMonth: 4 },
+    { id: 'r-only', amount: 11, note: '555-1234', dayOfMonth: 25 }
+  ]
+};
+const privL0 = Brief.buildAgentBrief(Object.assign({ level: 'L0' }, privInput));
+const privL1 = Brief.buildAgentBrief(Object.assign({ level: 'L1' }, privInput));
+[privL0, privL1].forEach(function (brief) {
+  var raw = JSON.stringify(brief);
+  PRIVATE_BITS.forEach(function (secret) {
+    assert.ok(raw.indexOf(secret) === -1, 'leaked ' + secret);
+  });
+});
+assert.ok(!('upcomingBills' in privL0));
+var privBills = privL1.upcomingBills.map(function (bill) { return bill.name; });
+assert.ok(privBills.indexOf('Yoga') !== -1);
+assert.ok(privBills.indexOf('Spa') !== -1);
+assert.ok(privBills.indexOf('Taxi') !== -1);
+assert.ok(privBills.indexOf('Mail') !== -1);
+assert.ok(privBills.indexOf('Locker 4412') !== -1);
+assert.ok(privBills.indexOf('Bay 12') !== -1);
+assert.ok(privBills.indexOf('Insurance 2026-11-15') !== -1);
+assert.deepStrictEqual(privL1.topMerchants.Fun.map(function (row) { return row.name; }), [
+  'Venmo To Jane Smith', '4412 Kiosk', 'News'
+]);
+assert.deepStrictEqual(privL1.topMerchants.Dining.map(function (row) { return row.name; }), ['Cafe', 'Pizza']);
+
 const src = readFileSync(resolve(ROOT, 'brief.js'), 'utf8');
 assert.ok(!/localStorage|indexedDB|document\.|fetch\(/.test(src), 'brief.js touches storage or DOM');
 assert.ok(src.indexOf('computeCardBalanceOwed') !== -1 && src.indexOf('runForecast') !== -1);
