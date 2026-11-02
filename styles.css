@@ -730,6 +730,7 @@ input[type="number"] {
   min-height: 52px;
 }
 .save-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.link-btn:disabled { opacity: 0.4; cursor: not-allowed; }
 .flex1 { flex: 1; }
 
 .btn-secondary {

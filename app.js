@@ -8273,6 +8273,33 @@
     var sum = summarizeBackupStorage(snap);
     if (sum.entryCount > 0) return true;
     try {
+      var cats = JSON.parse(snap[CATS_KEY] || '[]');
+      if (!categoriesMatchDefaults(cats)) return true;
+      var ui = JSON.parse(snap[UI_KEY] || '{}');
+      if (uiSettingsDifferFromDefaults(ui)) return true;
+      var impSet = JSON.parse(snap[IMPORT_SETTINGS_KEY] || '{}');
+      if (impSet && impSet.countCardPayments) return true;
+      var impPrefs = JSON.parse(snap[IMPORT_ACCOUNT_PREFS_KEY] || '{}');
+      if (impPrefs && typeof impPrefs === 'object' && Object.keys(impPrefs).length) return true;
+      var accts = JSON.parse(snap[ACCOUNTS_KEY] || '[]');
+      if (Array.isArray(accts) && accts.length && !accountsMatchDefaults(accts)) return true;
+      if (Array.isArray(accts) && accts.some(function (a) {
+        return a && (a.currentBalance != null || a.balanceAsOf != null);
+      })) return true;
+      if (snap[META_KEY]) {
+        var meta = JSON.parse(snap[META_KEY]);
+        if (meta && (meta.forecastCushion != null || meta.lastBackupAt || meta.backupNudgeHiddenUntil)) return true;
+      }
+      if (snap[SYNC_CUTOVER_KEY]) {
+        var cut = JSON.parse(snap[SYNC_CUTOVER_KEY] || '{}');
+        if (cut && typeof cut === 'object' && Object.keys(cut).length) return true;
+      }
+      var fo = JSON.parse(snap[FORECAST_OVERRIDES_KEY] || '[]');
+      if (Array.isArray(fo) && fo.length) return true;
+      var oneoffs = JSON.parse(snap[FORECAST_ONEOFFS_KEY] || '[]');
+      if (Array.isArray(oneoffs) && oneoffs.length) return true;
+      var tpats = JSON.parse(snap[TRANSFER_PATTERNS_KEY] || '[]');
+      if (Array.isArray(tpats) && tpats.length) return true;
       var rec = JSON.parse(snap[RECURRING_KEY] || '[]');
       if (Array.isArray(rec) && rec.length) return true;
       var bud = JSON.parse(snap[BUDGETS_KEY] || '{}');
@@ -8281,11 +8308,63 @@
       if (Array.isArray(tp) && tp.some(function (p) { return p && !p.unlinked; })) return true;
       var rules = JSON.parse(snap[IMPORT_RULES_KEY] || '[]');
       if (Array.isArray(rules) && rules.length) return true;
-      var accts = JSON.parse(snap[ACCOUNTS_KEY] || '[]');
-      if (Array.isArray(accts) && accts.some(function (a) {
-        return a && (a.currentBalance != null || a.balanceAsOf != null);
-      })) return true;
-    } catch (e) {}
+      var unlink = JSON.parse(snap[TRANSFER_UNLINK_KEY] || '[]');
+      if (Array.isArray(unlink) && unlink.length) return true;
+    } catch (e) {
+      return true;
+    }
+    return false;
+  }
+
+  function normalizeCategoryRowForJoinReplace(c) {
+    if (!c || typeof c.id !== 'string') return null;
+    return {
+      id: c.id,
+      name: String(c.name || ''),
+      icon: String(c.icon || ''),
+      color: String(c.color || '')
+    };
+  }
+
+  function categoriesMatchDefaults(cats) {
+    if (!Array.isArray(cats)) return false;
+    var norm = cats.map(normalizeCategoryRowForJoinReplace).filter(Boolean).sort(function (a, b) {
+      return a.id.localeCompare(b.id);
+    });
+    var def = DEFAULT_CATEGORIES.map(normalizeCategoryRowForJoinReplace).filter(Boolean).sort(function (a, b) {
+      return a.id.localeCompare(b.id);
+    });
+    return JSON.stringify(norm) === JSON.stringify(def);
+  }
+
+  function normalizeAccountRowForJoinReplace(a) {
+    if (!a || !a.id) return null;
+    return {
+      id: a.id,
+      name: String(a.name || ''),
+      type: a.type === 'credit_card' ? 'credit_card' : 'bank',
+      color: String(a.color || '')
+    };
+  }
+
+  function accountsMatchDefaults(accts) {
+    if (!Array.isArray(accts) || !accts.length) return true;
+    var norm = accts.map(normalizeAccountRowForJoinReplace).filter(Boolean).sort(function (a, b) {
+      return a.id.localeCompare(b.id);
+    });
+    var def = DEFAULT_ACCOUNTS.map(normalizeAccountRowForJoinReplace).filter(Boolean).sort(function (a, b) {
+      return a.id.localeCompare(b.id);
+    });
+    return JSON.stringify(norm) === JSON.stringify(def);
+  }
+
+  function uiSettingsDifferFromDefaults(ui) {
+    if (!ui || typeof ui !== 'object') return false;
+    if (ui.reportChartMonths === 12) return true;
+    if (ui.reportTxSort && ui.reportTxSort !== 'latest') return true;
+    if (normalizeActivityRangeId(ui.activityRange) !== 'this-month') return true;
+    if (ui.activityAccountId) return true;
+    if (ui.dismissedWrapped && Object.keys(ui.dismissedWrapped).length) return true;
     return false;
   }
 
@@ -8463,11 +8542,18 @@
     $householdJoinSheet.classList.add('show');
   }
 
+  function updateHouseholdRestoreConfirmBtn() {
+    if (!$householdRestoreConfirmBtn) return;
+    var pass = ($householdRestorePass && $householdRestorePass.value) || '';
+    $householdRestoreConfirmBtn.disabled = !pass.trim();
+  }
+
   function openHouseholdRestoreSheet() {
     if (!$householdRestoreSheet) return;
     if ($householdRestorePass) $householdRestorePass.value = '';
     $householdRestoreSheet.hidden = false;
     $householdRestoreSheet.classList.add('show');
+    updateHouseholdRestoreConfirmBtn();
   }
 
   function closeHouseholdRestoreSheet() {
@@ -8475,6 +8561,7 @@
     $householdRestoreSheet.hidden = true;
     $householdRestoreSheet.classList.remove('show');
     if ($householdRestorePass) $householdRestorePass.value = '';
+    updateHouseholdRestoreConfirmBtn();
   }
 
   if ($householdPassSaveBtn) {
@@ -8488,10 +8575,15 @@
   }
   if ($householdRestoreConfirmBtn) {
     $householdRestoreConfirmBtn.addEventListener('click', function () {
+      if ($householdRestoreConfirmBtn.disabled) return;
       var pass = ($householdRestorePass && $householdRestorePass.value) || '';
+      if (!pass.trim()) return;
       closeHouseholdRestoreSheet();
       restoreFromHouseholdCopy(pass);
     });
+  }
+  if ($householdRestorePass) {
+    $householdRestorePass.addEventListener('input', updateHouseholdRestoreConfirmBtn);
   }
   if ($householdJoinConfirmCancelBtn) {
     $householdJoinConfirmCancelBtn.addEventListener('click', function () {

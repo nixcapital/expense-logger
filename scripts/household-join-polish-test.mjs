@@ -138,11 +138,80 @@ async function assertRestoreFieldAccessibleName(page) {
     ov.classList.add('show');
   });
   assert.strictEqual(await accessibleName(page, '#householdRestorePass'), 'Household passphrase');
+  assert.strictEqual(await page.locator('#householdRestoreConfirmBtn').isDisabled(), true, 'restore disabled when empty');
+  await page.fill('#householdRestorePass', '   ');
+  assert.strictEqual(await page.locator('#householdRestoreConfirmBtn').isDisabled(), true, 'restore disabled for whitespace');
+  await page.fill('#householdRestorePass', 'fake-pass');
+  assert.strictEqual(await page.locator('#householdRestoreConfirmBtn').isDisabled(), false, 'restore enabled with text');
   await page.evaluate(() => {
     const ov = document.getElementById('householdRestoreSheet');
     ov.hidden = true;
     ov.classList.remove('show');
   });
+}
+
+async function watchJoinConfirmSheet(page) {
+  await page.evaluate(() => {
+    window.__joinConfirmSeen = false;
+    var el = document.getElementById('householdJoinConfirmSheet');
+    if (!el) return;
+    window.__joinConfirmObs = new MutationObserver(function () {
+      if (el.classList.contains('show')) window.__joinConfirmSeen = true;
+    });
+    window.__joinConfirmObs.observe(el, { attributes: true, attributeFilter: ['class'] });
+  });
+}
+
+async function joinConfirmWasSeen(page) {
+  return page.evaluate(() => {
+    if (window.__joinConfirmObs) window.__joinConfirmObs.disconnect();
+    return !!window.__joinConfirmSeen;
+  });
+}
+
+async function assertJoinReplaceConfirmForCustomCategoriesOnly(page) {
+  await page.evaluate(() => {
+    localStorage.clear();
+    localStorage.setItem('expenseLogger.categories.v1', JSON.stringify([
+      { id: 'groceries', name: 'Groceries', icon: 'shopping-cart', color: '#4dabf7' },
+      { id: 'pets', name: 'Pets', icon: 'dog', color: '#adb5bd' }
+    ]));
+  });
+  await page.reload({ waitUntil: 'networkidle' });
+  assert.strictEqual(
+    await page.evaluate(() => window.ExpenseLoggerTest.phoneHasLedgerDataForJoinReplace()),
+    true,
+    'custom categories count as phone data'
+  );
+  await page.click('.tab-btn[data-tab="settings"]');
+  await fillJoinForm(page);
+  await page.click('#householdJoinBtn');
+  await page.waitForSelector('#householdJoinConfirmSheet.show');
+  await page.click('#householdJoinConfirmCancelBtn');
+  await page.waitForFunction(() => document.getElementById('householdJoinConfirmSheet').hidden);
+  await page.click('#householdJoinCancelBtn');
+  await page.waitForFunction(() => document.getElementById('householdJoinSheet').hidden);
+}
+
+async function assertFreshPhoneSkipsJoinReplaceConfirm(page) {
+  pairFailNetwork = false;
+  await page.evaluate(() => localStorage.clear());
+  await page.reload({ waitUntil: 'networkidle' });
+  await page.waitForFunction(() => window.ExpenseLoggerTest && window.ExpenseHouseholdCrypto);
+  assert.strictEqual(
+    await page.evaluate(() => window.ExpenseLoggerTest.phoneHasLedgerDataForJoinReplace()),
+    false,
+    'defaults-only phone has no replace data'
+  );
+  await watchJoinConfirmSheet(page);
+  await page.click('.tab-btn[data-tab="settings"]');
+  await fillJoinForm(page);
+  await Promise.all([
+    page.waitForNavigation({ waitUntil: 'networkidle' }),
+    page.click('#householdJoinBtn')
+  ]);
+  assert.strictEqual(await joinConfirmWasSeen(page), false, 'fresh phone skips replace confirm');
+  assert.strictEqual(await page.evaluate(() => window.ExpenseLoggerTest.isViewMode()), true);
 }
 
 async function fillJoinForm(page) {
@@ -171,6 +240,20 @@ async function run() {
 
   global.__testBlob = await encryptDoc(page, 'from-household');
 
+  const freshPage = await context.newPage();
+  await freshPage.goto(`http://127.0.0.1:${PORT}/index.html`, { waitUntil: 'networkidle' });
+  await assertFreshPhoneSkipsJoinReplaceConfirm(freshPage);
+  await freshPage.close();
+  await page.evaluate(() => localStorage.clear());
+  await page.reload({ waitUntil: 'networkidle' });
+  await page.waitForFunction(() => window.ExpenseLoggerTest && window.ExpenseHouseholdCrypto);
+
+  await page.click('.tab-btn[data-tab="settings"]');
+  await assertHouseholdSheetStyles(page);
+  await assertJoinFieldAccessibleNames(page);
+  await assertRestoreFieldAccessibleName(page);
+  await assertJoinReplaceConfirmForCustomCategoriesOnly(page);
+
   await page.evaluate(() => {
     window.ExpenseLoggerTest.tryLocalStorageWrite('expenseLogger.entries.v1', JSON.stringify([
       { id: 'local-kept', amount: 2, categoryId: 'groceries', note: 'local', ts: Date.now() }
@@ -178,10 +261,6 @@ async function run() {
   });
   await page.reload({ waitUntil: 'networkidle' });
   await page.click('.tab-btn[data-tab="settings"]');
-
-  await assertHouseholdSheetStyles(page);
-  await assertJoinFieldAccessibleNames(page);
-  await assertRestoreFieldAccessibleName(page);
 
   await fillJoinForm(page);
   await page.click('#householdJoinBtn');
