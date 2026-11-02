@@ -13,4 +13,4 @@ database_name = "expense-logger-sync"
 database_id = "REPLACE_AFTER_wrangler_d1_create"
 
 # Secrets (never in this file): set with `npx wrangler secret put <NAME>`
-#   PLAID_CLIENT_ID, PLAID_SECRET, TOKEN_ENC_KEY (base64, 32 random bytes), SETUP_CODE
+#   PLAID_CLIENT_ID, PLAID_SECRET, TOKEN_ENC_KEY (base64, 32 random bytes), SETUP_CODE, HOUSEHOLD_CODE

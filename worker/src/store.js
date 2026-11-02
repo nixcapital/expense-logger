@@ -74,3 +74,54 @@ export async function ackBatch(db, batchId) {
   await db.prepare('DELETE FROM batches WHERE batch_id = ?').bind(batchId).run();
   return 'deleted';
 }
+
+// ---- Household mirror and agent brief ----
+export var SNAPSHOTS_KEPT = 5;
+
+export async function addViewer(db, tokenHash, now) {
+  await db.prepare('INSERT INTO viewers (token_hash, created_at, revoked) VALUES (?, ?, 0)').bind(tokenHash, now).run();
+}
+export async function viewerActive(db, tokenHash) {
+  var row = await db.prepare('SELECT revoked FROM viewers WHERE token_hash = ?').bind(tokenHash).first();
+  return !!row && Number(row.revoked) === 0;
+}
+export async function revokeAllViewers(db) {
+  await db.prepare('UPDATE viewers SET revoked = 1').bind().run();
+}
+
+export async function addSnapshot(db, blob, now) {
+  await db.prepare('INSERT INTO snapshots (blob, created_at) VALUES (?, ?)').bind(blob, now).run();
+  await db.prepare('DELETE FROM snapshots WHERE id NOT IN (SELECT id FROM snapshots ORDER BY id DESC LIMIT ?)')
+    .bind(SNAPSHOTS_KEPT).run();
+}
+export async function listSnapshots(db) {
+  var res = await db.prepare('SELECT id, created_at, LENGTH(blob) AS bytes FROM snapshots ORDER BY id DESC').all();
+  return res.results || [];
+}
+export async function getSnapshot(db, id) {
+  if (id) return db.prepare('SELECT id, blob, created_at FROM snapshots WHERE id = ?').bind(id).first();
+  return db.prepare('SELECT id, blob, created_at FROM snapshots ORDER BY id DESC LIMIT 1').first();
+}
+
+export async function saveBrief(db, level, body, now) {
+  await db.prepare('INSERT OR REPLACE INTO briefs (level, body, updated_at) VALUES (?, ?, ?)').bind(level, body, now).run();
+}
+export async function getBrief(db, level) {
+  return db.prepare('SELECT body, updated_at FROM briefs WHERE level = ?').bind(level).first();
+}
+
+export async function addAgent(db, a) {
+  await db.prepare('INSERT INTO agents (id, name, level, token_hash, created_at, revoked) VALUES (?, ?, ?, ?, ?, 0)')
+    .bind(a.id, a.name, a.level, a.tokenHash, a.now).run();
+}
+export async function agentByHash(db, tokenHash) {
+  var row = await db.prepare('SELECT id, level, revoked FROM agents WHERE token_hash = ?').bind(tokenHash).first();
+  return row && Number(row.revoked) === 0 ? row : null;
+}
+export async function listAgents(db) {
+  var res = await db.prepare('SELECT id, name, level, created_at, revoked FROM agents ORDER BY created_at, id').all();
+  return res.results || [];
+}
+export async function revokeAgent(db, id) {
+  await db.prepare('UPDATE agents SET revoked = 1 WHERE id = ?').bind(id).run();
+}
