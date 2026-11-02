@@ -1857,8 +1857,8 @@ a.settings-row-btn { text-decoration: none; }
   border-top: 1px solid var(--sep);
 }
 .agent-brief-details > summary::-webkit-details-marker { display: none; }
-.agent-brief-details > summary::after { content: '\203A'; margin-left: auto; transition: transform .15s; }
-.agent-brief-details[open] > summary::after { transform: rotate(90deg); }
+.agent-brief-details > summary::after { content: '\203A'; margin-left: auto; }
+.agent-brief-details[open] > summary::after { content: '\2228'; }
 .agent-brief-actions .settings-row-btn {
   justify-content: center;
   min-height: 48px;
