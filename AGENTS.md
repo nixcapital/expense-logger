@@ -51,6 +51,8 @@ Tasks live in GitHub issues. The label says who has it: `claude` or `cursor`. No
 5. **Hand off** by commenting on the issue with what's done, what's left, and the branch. Then swap the label.
 6. **Only Tri merges.** Agents never merge, approve on Tri's behalf, or force-push shared history.
 7. Parallel PRs touching version strings will conflict, so avoid two release PRs at once. Say in the issue if your task needs a version bump.
+8. **Stacked PRs.** Retarget a stacked PR to `main` before it is merged.
+9. **Overlapping PRs.** When two open PRs touch the same lines (for example version bumps), Tri merges one first. The other agent then updates its branch from `main` and re-runs its tests before Tri merges it.
 
 ## Keep out of the repo
 
