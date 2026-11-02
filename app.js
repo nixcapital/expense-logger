@@ -57,7 +57,10 @@
   // restore or undo leaves it in place (pair again only after Clear All Data or Disconnect).
   var SYNC_KEY = 'expenseLogger.sync.v1';
   var SYNC_CUTOVER_KEY = 'expenseLogger.syncCutover.v1'; // { accountId: 'YYYY-MM-DD' }; bank rows before it are dropped
-  var APP_VERSION = '2.4.0';
+  // Household mirror (plan #66): config and passphrase stay on-device only — never in backups or snapshots.
+  var HOUSEHOLD_KEY = 'expenseLogger.household.v1';
+  var HOUSEHOLD_PASS_KEY = 'expenseLogger.householdPass.v1';
+  var APP_VERSION = '2.5.0';
   var BACKUP_FORMAT = 2;
   var BACKUP_FORMAT_LEGACY = 1;
   var DEFAULT_ACCOUNT_CHECKING = 'acct-checking';
@@ -67,6 +70,43 @@
   var BACKUP_NUDGE_MIN_ENTRIES = 50;
   var BACKUP_NUDGE_HIDE_DAYS = 14;
   var EI = window.ExpenseIcons;
+
+  function loadHouseholdConfigRaw() {
+    try {
+      var h = JSON.parse(localStorage.getItem(HOUSEHOLD_KEY) || 'null');
+      if (h && typeof h === 'object') return h;
+    } catch (e) {}
+    return null;
+  }
+
+  function isViewMode() {
+    var h = loadHouseholdConfigRaw();
+    return !!(h && h.role === 'viewer');
+  }
+
+  (function installViewModeWriteBlock() {
+    if (!isViewMode()) return;
+    var set = Storage.prototype.setItem;
+    var rem = Storage.prototype.removeItem;
+    Storage.prototype.setItem = function (k, v) {
+      if (typeof k === 'string' && k.indexOf('expenseLogger.') === 0) return;
+      return set.call(this, k, v);
+    };
+    Storage.prototype.removeItem = function (k) {
+      if (typeof k === 'string' && k.indexOf('expenseLogger.') === 0) return;
+      return rem.call(this, k);
+    };
+  })();
+
+  function markHouseholdDirty() {
+    if (isViewMode()) return;
+    try {
+      var h = loadHouseholdConfigRaw() || {};
+      if (h.role !== 'writer') return;
+      h.dirty = true;
+      localStorage.setItem(HOUSEHOLD_KEY, JSON.stringify(h));
+    } catch (e) {}
+  }
 
   function iconBadge(cat, size) {
     return EI ? EI.badgeHTML(cat, { size: size || 'md' }) : '';
@@ -660,6 +700,7 @@
     if (storageGuardBlocksSave(CATS_KEY)) return false;
     try {
       localStorage.setItem(CATS_KEY, JSON.stringify(categories));
+      markHouseholdDirty();
       return true;
     } catch (e) {
       toast('Could not save categories');
@@ -677,7 +718,7 @@
     return {};
   }
   function saveBudgets() {
-    try { localStorage.setItem(BUDGETS_KEY, JSON.stringify(budgets)); } catch (e) {}
+    try { localStorage.setItem(BUDGETS_KEY, JSON.stringify(budgets)); markHouseholdDirty(); } catch (e) {}
   }
   function loadRecurring() {
     try {
@@ -690,7 +731,7 @@
     return [];
   }
   function saveRecurring() {
-    try { localStorage.setItem(RECURRING_KEY, JSON.stringify(recurringItems)); } catch (e) {}
+    try { localStorage.setItem(RECURRING_KEY, JSON.stringify(recurringItems)); markHouseholdDirty(); } catch (e) {}
   }
   function loadImportRules() {
     try {
@@ -707,7 +748,7 @@
     return [];
   }
   function saveImportRules() {
-    try { localStorage.setItem(IMPORT_RULES_KEY, JSON.stringify(importRules)); } catch (e) {}
+    try { localStorage.setItem(IMPORT_RULES_KEY, JSON.stringify(importRules)); markHouseholdDirty(); } catch (e) {}
   }
   function loadImportSettings() {
     try {
@@ -720,7 +761,7 @@
     return { countCardPayments: false };
   }
   function saveImportSettings() {
-    try { localStorage.setItem(IMPORT_SETTINGS_KEY, JSON.stringify(importSettings)); } catch (e) {}
+    try { localStorage.setItem(IMPORT_SETTINGS_KEY, JSON.stringify(importSettings)); markHouseholdDirty(); } catch (e) {}
   }
   function loadEntries() {
     try {
@@ -745,7 +786,11 @@
   }
   function saveEntries() {
     if (storageGuardBlocksSave(STORAGE_KEY)) return false;
-    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(entries)); return true; }
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(entries));
+      markHouseholdDirty();
+      return true;
+    }
     catch (e) { toast('Could not save — storage full or blocked'); return false; }
   }
   function saveUI() {
@@ -864,6 +909,7 @@
     if (storageGuardBlocksSave(ACCOUNTS_KEY)) return false;
     try {
       localStorage.setItem(ACCOUNTS_KEY, JSON.stringify(accounts));
+      markHouseholdDirty();
       return true;
     } catch (e) { return false; }
   }
@@ -884,7 +930,7 @@
   }
 
   function saveTransferPatterns() {
-    try { localStorage.setItem(TRANSFER_PATTERNS_KEY, JSON.stringify(transferPatterns)); } catch (e) {}
+    try { localStorage.setItem(TRANSFER_PATTERNS_KEY, JSON.stringify(transferPatterns)); markHouseholdDirty(); } catch (e) {}
   }
 
   function loadForecastOverrides() {
@@ -899,7 +945,7 @@
   }
 
   function saveForecastOverrides() {
-    try { localStorage.setItem(FORECAST_OVERRIDES_KEY, JSON.stringify(forecastOverrides)); } catch (e) {}
+    try { localStorage.setItem(FORECAST_OVERRIDES_KEY, JSON.stringify(forecastOverrides)); markHouseholdDirty(); } catch (e) {}
   }
 
   function refreshForecastOverridesFromStorage() {
@@ -924,7 +970,7 @@
   }
 
   function saveForecastCountedOneOffs() {
-    try { localStorage.setItem(FORECAST_ONEOFFS_KEY, JSON.stringify(forecastCountedOneOffs)); } catch (e) {}
+    try { localStorage.setItem(FORECAST_ONEOFFS_KEY, JSON.stringify(forecastCountedOneOffs)); markHouseholdDirty(); } catch (e) {}
   }
 
   function forecastCountedOneOffsList() {
@@ -1115,7 +1161,7 @@
   }
 
   function saveTransferPairs() {
-    try { localStorage.setItem(TRANSFER_PAIRS_KEY, JSON.stringify(transferPairs)); } catch (e) {}
+    try { localStorage.setItem(TRANSFER_PAIRS_KEY, JSON.stringify(transferPairs)); markHouseholdDirty(); } catch (e) {}
   }
 
   function loadTransferUnlinkKeys() {
@@ -1130,7 +1176,7 @@
   }
 
   function saveTransferUnlinkKeys() {
-    try { localStorage.setItem(TRANSFER_UNLINK_KEY, JSON.stringify(transferUnlinkKeys)); } catch (e) {}
+    try { localStorage.setItem(TRANSFER_UNLINK_KEY, JSON.stringify(transferUnlinkKeys)); markHouseholdDirty(); } catch (e) {}
   }
 
   function loadImportAccountPrefs() {
@@ -1145,7 +1191,7 @@
   }
 
   function saveImportAccountPrefs() {
-    try { localStorage.setItem(IMPORT_ACCOUNT_PREFS_KEY, JSON.stringify(importAccountPrefs)); } catch (e) {}
+    try { localStorage.setItem(IMPORT_ACCOUNT_PREFS_KEY, JSON.stringify(importAccountPrefs)); markHouseholdDirty(); } catch (e) {}
   }
 
   function getAccount(id) {
@@ -1382,7 +1428,8 @@
     try {
       for (var i = 0; i < localStorage.length; i++) {
         var k = localStorage.key(i);
-        if (k && k.indexOf('expenseLogger.') === 0 && k !== PIN_KEY && k !== SYNC_KEY) out[k] = localStorage.getItem(k);
+        if (k && k.indexOf('expenseLogger.') === 0 && k !== PIN_KEY && k !== SYNC_KEY
+            && k !== HOUSEHOLD_KEY && k !== HOUSEHOLD_PASS_KEY) out[k] = localStorage.getItem(k);
       }
     } catch (e) {}
     return out;
@@ -1445,7 +1492,8 @@
   function applyBackupStorageReplacingAppData(backupStorage, deviceMetaKeep) {
     var filtered = {};
     Object.keys(backupStorage || {}).forEach(function (k) {
-      if (k.indexOf('expenseLogger.') === 0 && k !== META_KEY && k !== PIN_KEY && k !== SYNC_KEY) {
+      if (k.indexOf('expenseLogger.') === 0 && k !== META_KEY && k !== PIN_KEY && k !== SYNC_KEY
+          && k !== HOUSEHOLD_KEY && k !== HOUSEHOLD_PASS_KEY) {
         filtered[k] = backupStorage[k];
       }
     });
@@ -1537,12 +1585,14 @@
     try {
       for (var i = 0; i < localStorage.length; i++) {
         var k = localStorage.key(i);
-        if (k && k.indexOf('expenseLogger.') === 0 && k !== SYNC_KEY) old[k] = localStorage.getItem(k);
+        if (k && k.indexOf('expenseLogger.') === 0 && k !== SYNC_KEY
+            && k !== HOUSEHOLD_KEY && k !== HOUSEHOLD_PASS_KEY) old[k] = localStorage.getItem(k);
       }
     } catch (e) { return false; }
     var next = [];
     Object.keys(storage).forEach(function (k) {
-      if (k.indexOf('expenseLogger.') === 0 && k !== SYNC_KEY && storage[k] != null) next.push(k);
+      if (k.indexOf('expenseLogger.') === 0 && k !== SYNC_KEY
+          && k !== HOUSEHOLD_KEY && k !== HOUSEHOLD_PASS_KEY && storage[k] != null) next.push(k);
     });
     try {
       // Old keys go first so a restore never needs more room than the data it replaces.
@@ -5527,6 +5577,7 @@
   }
 
   function openEntryEditor(entryId) {
+    if (isViewMode()) { toast('View only'); return; }
     var entry = null;
     for (var i = 0; i < entries.length; i++) if (entries[i].id === entryId) { entry = entries[i]; break; }
     if (!entry) return;
@@ -7710,6 +7761,7 @@
         } catch (e) { toast('Could not save pairing: storage is full'); return false; }
         if ($bankSyncCode) $bankSyncCode.value = '';
         renderBankSyncStatus();
+        renderHouseholdSettings();
         toast('Bank sync paired');
         return true;
       }
@@ -7961,6 +8013,7 @@
   var AUTO_SYNC_MIN_MS = 4 * 3600 * 1000;
   var AUTO_SYNC_DELAY_MS = 1500;
   function autoSyncBankOnOpen() {
+    if (isViewMode()) return Promise.resolve(false);
     var s = loadSyncState();
     if (!s || (navigator && navigator.onLine === false)) return Promise.resolve(false);
     var last = Date.parse(s.lastAutoSyncAt || '');
@@ -7978,6 +8031,245 @@
     el.value = syncCutoverFor(p[1]);
     el.addEventListener('change', function () { saveSyncCutover(p[1], el.value); el.value = syncCutoverFor(p[1]); });
   });
+
+  // ---------- Household mirror (plan #66) ----------
+  var HC = window.ExpenseHouseholdCrypto;
+  var $householdWriterGroup = $('householdWriterGroup');
+  var $householdViewerGroup = $('householdViewerGroup');
+  var $householdViewerStatus = $('householdViewerStatus');
+  var $householdPassInput = $('householdPassInput');
+  var $householdPassSaveBtn = $('householdPassSaveBtn');
+  var $householdRestoreBtn = $('householdRestoreBtn');
+  var $householdJoinSheet = $('householdJoinSheet');
+  var $householdJoinUrl = $('householdJoinUrl');
+  var $householdJoinCode = $('householdJoinCode');
+  var $householdJoinPass = $('householdJoinPass');
+  var $householdJoinBtn = $('householdJoinBtn');
+  var $householdJoinOpenBtn = $('householdJoinOpenBtn');
+  var $householdWriterForm = $('householdWriterForm');
+  var HOUSEHOLD_UPLOAD_DELAY_MS = 2000;
+
+  function loadHouseholdConfig() {
+    var h = loadHouseholdConfigRaw();
+    return h && typeof h === 'object' ? h : {};
+  }
+
+  function saveHouseholdConfig(h) {
+    try { localStorage.setItem(HOUSEHOLD_KEY, JSON.stringify(h || {})); return true; } catch (e) { return false; }
+  }
+
+  function loadHouseholdPassphrase() {
+    try {
+      var p = localStorage.getItem(HOUSEHOLD_PASS_KEY);
+      return typeof p === 'string' && p.length ? p : '';
+    } catch (e) { return ''; }
+  }
+
+  function saveHouseholdPassphrase(pass) {
+    try {
+      if (!pass) localStorage.removeItem(HOUSEHOLD_PASS_KEY);
+      else localStorage.setItem(HOUSEHOLD_PASS_KEY, pass);
+      return true;
+    } catch (e) { return false; }
+  }
+
+  function householdWorkerUrl() {
+    var sync = loadSyncState();
+    if (sync && sync.workerUrl) return sync.workerUrl;
+    var h = loadHouseholdConfig();
+    return normalizeWorkerUrl(h.workerUrl || '');
+  }
+
+  function buildBriefPayload(level) {
+    if (!window.ExpenseBrief) return null;
+    var input = agentBriefSource();
+    if (!input) return null;
+    input.level = level;
+    try { return window.ExpenseBrief.buildAgentBrief(input); } catch (e) { return null; }
+  }
+
+  function encryptHouseholdSnapshot(passphrase, saltB64) {
+    if (!HC) return Promise.reject(new Error('no-crypto'));
+    var doc = buildBackupDocument();
+    var saltBytes = saltB64 ? HC.b64Decode(saltB64) : null;
+    return HC.encryptPlaintext(passphrase, saltBytes, JSON.stringify(doc)).then(function (r) {
+      return { blob: r.blob, saltB64: r.saltB64 };
+    });
+  }
+
+  function decryptHouseholdSnapshot(passphrase, blob) {
+    if (!HC) return Promise.reject(new Error('no-crypto'));
+    return HC.decryptBlob(passphrase, blob).then(function (text) {
+      var doc = JSON.parse(text);
+      var v = validateBackupDocument(doc);
+      if (!v.ok) throw new Error(v.error || 'bad-backup');
+      return doc;
+    });
+  }
+
+  function clearHouseholdDirty() {
+    var h = loadHouseholdConfig();
+    if (h.role !== 'writer') return;
+    h.dirty = false;
+    saveHouseholdConfig(h);
+  }
+
+  function pushHouseholdBriefs(workerUrl, deviceToken) {
+    var l0 = buildBriefPayload('L0');
+    var l1 = buildBriefPayload('L1');
+    if (!l0 || !l1) return Promise.resolve(false);
+    return workerRequest(workerUrl, '/brief', 'POST', 'Bearer ' + deviceToken, { briefs: { L0: l0, L1: l1 } })
+      .then(function (r) { return r.status === 200; });
+  }
+
+  function uploadHouseholdMirror() {
+    if (isViewMode() || !HC) return Promise.resolve(false);
+    var h = loadHouseholdConfig();
+    if (h.role !== 'writer' || !h.dirty) return Promise.resolve(false);
+    var pass = loadHouseholdPassphrase();
+    if (!pass) return Promise.resolve(false);
+    var sync = loadSyncState();
+    if (!sync) return Promise.resolve(false);
+    var url = sync.workerUrl;
+    var saltB64 = h.saltB64 || '';
+    return encryptHouseholdSnapshot(pass, saltB64).then(function (enc) {
+      if (!h.saltB64) {
+        h.saltB64 = enc.saltB64;
+        saveHouseholdConfig(h);
+      }
+      return workerRequest(url, '/snapshot', 'POST', 'Bearer ' + sync.deviceToken, { blob: enc.blob }).then(function (r) {
+        if (r.status !== 200) return false;
+        return pushHouseholdBriefs(url, sync.deviceToken).then(function (briefOk) {
+          if (briefOk) clearHouseholdDirty();
+          return briefOk;
+        });
+      });
+    }).catch(function () { return false; });
+  }
+
+  function restoreFromHouseholdCopy(passphrase) {
+    var sync = loadSyncState();
+    if (!sync) { toast('Pair bank sync first'); return Promise.resolve(false); }
+    if (!passphrase) { toast('Enter the household passphrase'); return Promise.resolve(false); }
+    return workerRequest(sync.workerUrl, '/snapshot', 'GET', 'Bearer ' + sync.deviceToken, null).then(function (r) {
+      if (r.status !== 200 || !r.data.blob) { toast('No household copy yet'); return false; }
+      return decryptHouseholdSnapshot(passphrase, r.data.blob).then(function (doc) {
+        return commitBackupRestore(doc);
+      }).catch(function () {
+        toast('Could not decrypt — check the passphrase');
+        return false;
+      });
+    });
+  }
+
+  function finishHouseholdJoin(workerUrl, viewerToken, passphrase, blob) {
+    return decryptHouseholdSnapshot(passphrase, blob).then(function (doc) {
+      return commitBackupRestore(doc).then(function (ok) {
+        if (!ok) return false;
+        saveHouseholdPassphrase(passphrase);
+        saveHouseholdConfig({
+          role: 'viewer',
+          workerUrl: workerUrl,
+          viewerToken: viewerToken
+        });
+        return true;
+      });
+    });
+  }
+
+  function runHouseholdJoin() {
+    var url = normalizeWorkerUrl($householdJoinUrl && $householdJoinUrl.value);
+    var code = ($householdJoinCode && $householdJoinCode.value || '').trim();
+    var pass = $householdJoinPass && $householdJoinPass.value || '';
+    if (!url || !code || !pass) { toast('Fill in all fields'); return; }
+    workerRequest(url, '/household/pair', 'POST', null, { setupCode: code }).then(function (pr) {
+      if (pr.status !== 200 || !pr.data.viewerToken) { toast('Setup code not accepted'); return; }
+      var vt = pr.data.viewerToken;
+      workerRequest(url, '/snapshot', 'GET', 'Bearer ' + vt, null).then(function (sr) {
+        if (sr.status !== 200 || !sr.data.blob) { toast('No snapshot on the server yet'); return; }
+        finishHouseholdJoin(url, vt, pass, sr.data.blob).then(function (ok) {
+          if (!ok) return;
+          if ($householdJoinSheet) $householdJoinSheet.hidden = true;
+          toast('Joined household');
+          window.location.reload();
+        }).catch(function () { toast('Could not decrypt — check the passphrase'); });
+      });
+    });
+  }
+
+  function saveWriterHouseholdPassphrase() {
+    if (isViewMode()) return;
+    var pass = ($householdPassInput && $householdPassInput.value) || '';
+    if (pass.length < 8) { toast('Use at least 8 characters'); return; }
+    if (!loadSyncState()) { toast('Pair bank sync first'); return; }
+    var h = loadHouseholdConfig();
+    h.role = 'writer';
+    h.workerUrl = loadSyncState().workerUrl;
+    if (!h.saltB64 && HC) h.saltB64 = HC.newHouseholdSaltB64();
+    h.dirty = true;
+    if (!saveHouseholdPassphrase(pass) || !saveHouseholdConfig(h)) {
+      toast('Could not save');
+      return;
+    }
+    if ($householdPassInput) $householdPassInput.value = '';
+    toast('Household passphrase saved');
+    markHouseholdDirty();
+    uploadHouseholdMirror();
+  }
+
+  function applyViewModeChrome() {
+    if (!isViewMode()) return;
+    document.body.classList.add('el-view-mode');
+    var hide = function (id) { var el = $(id); if (el) el.hidden = true; };
+    hide('backupDataBtn');
+    hide('restoreBackupLabel');
+    hide('exportBtn');
+    hide('exportJsonBtn');
+    hide('importJsonBtn');
+    hide('importCsvBtn');
+    hide('clearAllBtn');
+    hide('addCategoryBtn');
+    hide('bankSyncCard');
+    hide('householdWriterGroup');
+    hide('householdRestoreBtn');
+    if ($householdViewerGroup) $householdViewerGroup.hidden = false;
+    if ($householdViewerStatus) $householdViewerStatus.textContent = 'View only — edits are disabled';
+    var addTab = document.querySelector('.tab-btn-add');
+    if (addTab) addTab.hidden = true;
+  }
+
+  function renderHouseholdSettings() {
+    if (isViewMode()) {
+      applyViewModeChrome();
+      return;
+    }
+    if ($householdViewerGroup) $householdViewerGroup.hidden = true;
+    var paired = !!loadSyncState();
+    var showJoin = loadHouseholdConfig().role !== 'writer' && !paired;
+    if ($householdWriterGroup) $householdWriterGroup.hidden = false;
+    if ($householdJoinOpenBtn) $householdJoinOpenBtn.hidden = !showJoin;
+    if ($householdWriterForm) $householdWriterForm.hidden = !paired;
+    if ($householdRestoreBtn) $householdRestoreBtn.hidden = !paired;
+  }
+
+  function openHouseholdJoinSheet() {
+    if (!$householdJoinSheet) return;
+    $householdJoinSheet.hidden = false;
+    $householdJoinSheet.classList.add('show');
+  }
+
+  if ($householdPassSaveBtn) {
+    $householdPassSaveBtn.addEventListener('click', saveWriterHouseholdPassphrase);
+  }
+  if ($householdRestoreBtn) {
+    $householdRestoreBtn.addEventListener('click', function () {
+      var pass = window.prompt('Household passphrase');
+      if (pass == null) return;
+      restoreFromHouseholdCopy(String(pass));
+    });
+  }
+  if ($householdJoinBtn) $householdJoinBtn.addEventListener('click', runHouseholdJoin);
+  if ($householdJoinOpenBtn) $householdJoinOpenBtn.addEventListener('click', openHouseholdJoinSheet);
 
   // ---------- Clear all ----------
   $('clearAllBtn').addEventListener('click', function () {
@@ -8022,6 +8314,7 @@
   });
 
   function openAddSheet() {
+    if (isViewMode()) { toast('View only'); return; }
     if (!$addSheet) return;
     if (!addEntryDate) addEntryDate = localDateStamp();
     if ($addDate) $addDate.value = addEntryDate;
@@ -9685,6 +9978,7 @@
     closeOtherTransferSheet();
     closeTransferDetail();
     if (tab === 'add') {
+      if (isViewMode()) { toast('View only'); return; }
       tabBeforeAdd = currentTab === 'add' ? tabBeforeAdd : currentTab;
       openAddSheet();
       Array.prototype.forEach.call($tabBar.querySelectorAll('.tab-btn'), function (b) {
@@ -9729,6 +10023,7 @@
       renderDataMetaLines();
       renderBackupReminder();
       publishAgentBrief();
+      renderHouseholdSettings();
       $versionLine.textContent = 'Version ' + APP_VERSION;
     }
     window.scrollTo(0, 0);
@@ -10270,6 +10565,8 @@
       renderDataMetaLines();
       renderBackupReminder();
       renderBankSyncStatus();
+      applyViewModeChrome();
+      renderHouseholdSettings();
 
       if ($app) $app.hidden = false;
 
@@ -10312,6 +10609,7 @@
   }
   registerSW();
   setTimeout(function () { try { autoSyncBankOnOpen(); } catch (e) {} }, AUTO_SYNC_DELAY_MS);
+  setTimeout(function () { try { uploadHouseholdMirror(); } catch (e) {} }, HOUSEHOLD_UPLOAD_DELAY_MS);
   if (EI && EI.preloadIcons) {
     EI.preloadIcons(function () {
       refreshCategorySurfacesAfterIcons();
@@ -10457,7 +10755,30 @@
     trySaveAccounts: function () { return saveAccounts(); },
     agentBriefText: function () { return agentBriefText; },
     agentBriefInput: function () { return agentBriefInputCache; },
-    publishAgentBrief: publishAgentBrief
+    publishAgentBrief: publishAgentBrief,
+    isViewMode: isViewMode,
+    markHouseholdDirty: markHouseholdDirty,
+    uploadHouseholdMirror: uploadHouseholdMirror,
+    encryptHouseholdSnapshot: encryptHouseholdSnapshot,
+    restoreFromHouseholdCopy: restoreFromHouseholdCopy,
+    finishHouseholdJoin: finishHouseholdJoin,
+    loadHouseholdConfig: loadHouseholdConfig,
+    saveHouseholdConfig: saveHouseholdConfig,
+    saveHouseholdPassphrase: saveHouseholdPassphrase,
+    loadHouseholdPassphrase: loadHouseholdPassphrase,
+    HOUSEHOLD_KEY: HOUSEHOLD_KEY,
+    HOUSEHOLD_PASS_KEY: HOUSEHOLD_PASS_KEY,
+    SYNC_KEY: SYNC_KEY,
+    tryLocalStorageWrite: function (k, v) {
+      try { localStorage.setItem(k, v); return true; } catch (e) { return false; }
+    }
+  };
+
+  window.ExpenseLoggerHousehold = {
+    uploadHouseholdMirror: uploadHouseholdMirror,
+    encryptHouseholdSnapshot: encryptHouseholdSnapshot,
+    decryptHouseholdSnapshot: decryptHouseholdSnapshot,
+    buildBackupDocument: buildBackupDocument
   };
 
 })();
