@@ -220,7 +220,7 @@ async function assertBoot(page, url, fixture, label) {
   });
   assert.ok(snap.splashHidden, label + ': splash must dismiss');
   assert.ok(snap.homeVisible, label + ': Home tab must render');
-  assert.ok(snap.version.indexOf('2.6.2') !== -1, label + ': version line');
+  assert.ok(snap.version.indexOf('2.6.3') !== -1, label + ': version line');
   if (fixture.storage) {
     assert.ok(snap.storageKeys.length > 0, label + ': storage preserved');
   }
@@ -323,7 +323,7 @@ async function runSwUpgrade(fromTag, label, launch, standalone) {
     entries: localStorage.getItem('expenseLogger.entries.v1')
   }));
   assert.ok(snap.splashHidden, label + ': splash after SW upgrade');
-  assert.ok(snap.version.indexOf('2.6.2') !== -1, label + ': version after upgrade');
+  assert.ok(snap.version.indexOf('2.6.3') !== -1, label + ': version after upgrade');
   assert.ok(snap.entries && snap.entries.indexOf('fc-0') !== -1, label + ': entries preserved');
   await browser.close();
   srv.close();
@@ -424,7 +424,7 @@ async function runFreshWebKitStandalone(launch) {
   }));
   assert.ok(snap.splashHidden, 'fresh webkit standalone: splash must hide within 2s');
   assert.ok(snap.homeVisible, 'fresh webkit standalone: Home visible');
-  assert.ok(snap.version.indexOf('2.6.2') !== -1, 'fresh webkit standalone: version');
+  assert.ok(snap.version.indexOf('2.6.3') !== -1, 'fresh webkit standalone: version');
   await browser.close();
   srv.close();
 }

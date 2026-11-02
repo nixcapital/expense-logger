@@ -1,4 +1,4 @@
-/* Expense Logger 2.6.2 — dark-first, iOS-style */
+/* Expense Logger 2.6.3 — dark-first, iOS-style */
 
 :root {
   --bg: #0B0C10;
@@ -1834,16 +1834,31 @@ a.settings-row-btn { text-decoration: none; }
   margin: 0;
   padding: var(--sp-3) var(--sp-4);
   border-top: 1px solid var(--sep);
-  border-bottom: 1px solid var(--sep);
   background: var(--bg);
   color: var(--text);
+  max-height: 200px;
+  overflow: auto;
+  -webkit-overflow-scrolling: touch;
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 13px;
   line-height: 1.45;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
-.agent-brief-actions { display: grid; grid-template-columns: 1fr 1fr; }
+.agent-brief-actions { display: grid; grid-template-columns: 1fr 1fr; border-top: 1px solid var(--sep); }
+.agent-brief-details > summary {
+  list-style: none;
+  cursor: pointer;
+  padding: var(--sp-3) var(--sp-4);
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  color: var(--text-dim);
+  border-top: 1px solid var(--sep);
+}
+.agent-brief-details > summary::-webkit-details-marker { display: none; }
+.agent-brief-details > summary::after { content: '\203A'; margin-left: auto; }
+.agent-brief-details[open] > summary::after { content: '\2228'; }
 .agent-brief-actions .settings-row-btn {
   justify-content: center;
   min-height: 48px;

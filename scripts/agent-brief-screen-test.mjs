@@ -29,9 +29,9 @@ const FORBIDDEN_KEYS = [
 
 const html = readFileSync(join(ROOT, 'index.html'), 'utf8');
 const appSrc = readFileSync(join(ROOT, 'app.js'), 'utf8');
-assert.ok(html.includes('brief.js?v=2.6.2'));
-assert.ok(readFileSync(join(ROOT, 'sw.js'), 'utf8').includes("CACHE_VERSION = 'expense-logger-v2.6.2'"));
-assert.ok(appSrc.includes("APP_VERSION = '2.6.2'"));
+assert.ok(html.includes('brief.js?v=2.6.3'));
+assert.ok(readFileSync(join(ROOT, 'sw.js'), 'utf8').includes("CACHE_VERSION = 'expense-logger-v2.6.3'"));
+assert.ok(appSrc.includes("APP_VERSION = '2.6.3'"));
 const copyFn = appSrc.slice(appSrc.indexOf('function copyAgentBrief('), appSrc.indexOf('function saveAgentBriefFile'));
 const saveFn = appSrc.slice(appSrc.indexOf('function saveAgentBriefFile'), appSrc.indexOf('function exportCSV'));
 assert.ok(!/publishAgentBrief|buildAgentBrief|Date\.now\(/.test(copyFn + saveFn));
@@ -180,7 +180,7 @@ async function run() {
 
     const still = await page.evaluate((key) => localStorage.getItem(key), SYNC_KEY);
     assert.ok(still && still.includes(TOKEN));
-    assert.strictEqual(await page.evaluate(() => window.ExpenseLoggerTest.APP_VERSION), '2.6.2');
+    assert.strictEqual(await page.evaluate(() => window.ExpenseLoggerTest.APP_VERSION), '2.6.3');
     assert.strictEqual(await page.locator('#agentBriefGroup .hint, #agentBriefGroup p').count(), 0);
     await page.evaluate(() => {
       const header = document.querySelector('#tab-settings .screen-header-wrap');
@@ -193,15 +193,26 @@ async function run() {
       return {
         l0: r('agentBriefL0'), l1: r('agentBriefL1'), copy: r('agentBriefCopyBtn'), save: r('agentBriefSaveBtn'),
         preview: r('agentBriefPreview'), labelTop: document.querySelector('#agentBriefGroup .group-label').getBoundingClientRect().top,
-        clipped: pre.scrollHeight > pre.clientHeight + 1,
+        open: document.querySelector('.agent-brief-details').open,
+        groupHeight: document.getElementById('agentBriefGroup').getBoundingClientRect().height,
         scrollWidth: document.documentElement.scrollWidth, innerWidth: window.innerWidth, innerHeight: window.innerHeight
       };
     });
     assert.ok(layout.l0.height >= 44 && layout.l1.height >= 44 && layout.copy.height >= 44 && layout.save.height >= 44);
     assert.ok(Math.abs(layout.l0.top - layout.l1.top) < 2 && layout.l1.left >= layout.l0.right - 2);
     assert.ok(Math.abs(layout.copy.top - layout.save.top) < 2 && layout.save.left >= layout.copy.right - 2);
-    assert.ok(layout.preview.top >= layout.l0.bottom - 2 && layout.copy.top >= layout.preview.bottom - 2);
-    assert.ok(!layout.clipped && layout.labelTop > 40 && layout.save.right <= layout.innerWidth + 1);
+    assert.ok(layout.copy.top >= layout.l0.bottom - 2);
+    assert.strictEqual(layout.open, false, 'preview collapsed by default');
+    assert.ok(layout.groupHeight < 260, 'collapsed group is compact: ' + layout.groupHeight);
+    await page.click('#agentBriefGroup .agent-brief-details > summary');
+    const opened = await page.evaluate(() => {
+      const pre = document.getElementById('agentBriefPreview');
+      const r = pre.getBoundingClientRect();
+      return { open: document.querySelector('.agent-brief-details').open, h: r.height, scrolls: pre.scrollHeight > pre.clientHeight + 1 };
+    });
+    assert.ok(opened.open && opened.h <= 201 && opened.scrolls, 'open preview is a short scroll box');
+    await page.click('#agentBriefGroup .agent-brief-details > summary');
+    assert.ok(layout.labelTop > 40 && layout.save.right <= layout.innerWidth + 1);
     assert.ok(layout.scrollWidth <= layout.innerWidth + 1 && layout.copy.bottom < layout.innerHeight - 49);
     assert.deepStrictEqual(errors, []);
     console.log('agent-brief-screen-test: PASS');

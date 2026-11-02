@@ -60,7 +60,7 @@
   // Household mirror (plan #66): config and passphrase stay on-device only — never in backups or snapshots.
   var HOUSEHOLD_KEY = 'expenseLogger.household.v1';
   var HOUSEHOLD_PASS_KEY = 'expenseLogger.householdPass.v1';
-  var APP_VERSION = '2.6.2';
+  var APP_VERSION = '2.6.3';
   var BACKUP_FORMAT = 2;
   var BACKUP_FORMAT_LEGACY = 1;
   var DEFAULT_ACCOUNT_CHECKING = 'acct-checking';
