@@ -1,4 +1,4 @@
-/* Expense Logger 2.6.2 — dark-first, iOS-style */
+/* Expense Logger 2.6.3 — dark-first, iOS-style */
 
 :root {
   --bg: #0B0C10;
@@ -730,6 +730,7 @@ input[type="number"] {
   min-height: 52px;
 }
 .save-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.link-btn:disabled { opacity: 0.4; cursor: not-allowed; }
 .flex1 { flex: 1; }
 
 .btn-secondary {
@@ -1813,7 +1814,16 @@ button.legend-row.legend-btn.active { background: color-mix(in srgb, var(--accen
 .inset-hint { padding: 0 var(--sp-4) var(--sp-3); margin: 0; }
 .check-settings { gap: var(--sp-3); }
 .bank-sync-form { display: grid; gap: var(--sp-2); padding: 0 var(--sp-4); }
+.bank-sync-form .field { margin-bottom: var(--sp-2); }
+.bank-sync-form .field:last-of-type { margin-bottom: 0; }
+.household-join-form .field:last-of-type { margin-bottom: var(--sp-2); }
 .bank-sync-form .settings-row-btn { padding-left: 0; padding-right: 0; }
+#householdJoinSheet.modal-overlay.sheet .modal,
+#householdJoinConfirmSheet.modal-overlay.sheet .modal,
+#householdRestoreSheet.modal-overlay.sheet .modal {
+  background: var(--card);
+  color: var(--text);
+}
 a.settings-row-btn { text-decoration: none; }
 .settings-row .bank-sync-date { width: auto; padding: 8px 10px; font-size: 15px; }
 .group-action { margin-left: var(--sp-2); }

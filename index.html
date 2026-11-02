@@ -13,8 +13,8 @@
 <link rel="manifest" href="manifest.json">
 <link rel="icon" href="icon-192.png">
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
-<link rel="stylesheet" href="styles.css?v=2.6.2">
-<link rel="stylesheet" href="icon-animations.css?v=2.6.2">
+<link rel="stylesheet" href="styles.css?v=2.6.3">
+<link rel="stylesheet" href="icon-animations.css?v=2.6.3">
 <title>Expense Logger</title>
 </head>
 <body>
@@ -1005,27 +1005,67 @@
   <p class="hint wrapped-empty" id="wrappedEmpty" hidden>No spending data for this month.</p>
 </div>
 
-<div class="modal-overlay sheet" id="householdJoinSheet" hidden>
+<div class="modal-overlay sheet sheet-fade modal-front" id="householdJoinSheet" hidden>
   <div class="modal sheet-modal">
     <div class="sheet-grabber" aria-hidden="true"></div>
     <div class="sheet-header">
-      <h2 class="sheet-title">Join household</h2>
+      <button type="button" class="btn-secondary sheet-cancel" id="householdJoinCancelBtn">Cancel</button>
+      <h3>Join household</h3>
+      <span class="sheet-header-spacer"></span>
     </div>
-    <div class="bank-sync-form">
-      <input type="url" id="householdJoinUrl" autocomplete="off" autocapitalize="off" spellcheck="false" aria-label="Worker URL">
-      <input type="password" id="householdJoinCode" autocomplete="off" aria-label="Household setup code">
-      <input type="password" id="householdJoinPass" autocomplete="off" aria-label="Household passphrase">
+    <div class="bank-sync-form household-join-form">
+      <div class="field">
+        <label for="householdJoinUrl">Worker URL</label>
+        <input type="url" id="householdJoinUrl" autocomplete="off" autocapitalize="off" spellcheck="false">
+      </div>
+      <div class="field">
+        <label for="householdJoinCode">Household setup code</label>
+        <input type="password" id="householdJoinCode" autocomplete="off">
+      </div>
+      <div class="field">
+        <label for="householdJoinPass">Household passphrase</label>
+        <input type="password" id="householdJoinPass" autocomplete="off">
+      </div>
       <button type="button" class="settings-row-btn" id="householdJoinBtn">Join <span class="chevron">›</span></button>
     </div>
   </div>
 </div>
 
-<script src="icon-system.js?v=2.6.2"></script>
-<script src="forecast.js?v=2.6.2"></script>
-<script src="wrapped.js?v=2.6.2"></script>
-<script src="brief.js?v=2.6.2"></script>
-<script src="household-crypto.js?v=2.6.2"></script>
-<script src="app.js?v=2.6.2"></script>
+<div class="modal-overlay sheet sheet-fade modal-front" id="householdJoinConfirmSheet" hidden>
+  <div class="modal sheet-modal">
+    <div class="sheet-grabber" aria-hidden="true"></div>
+    <div class="sheet-header">
+      <button class="btn-secondary sheet-cancel" id="householdJoinConfirmCancelBtn" type="button">Cancel</button>
+      <h3>Replace data?</h3>
+      <button class="link-btn" id="householdJoinConfirmBtn" type="button">Join</button>
+    </div>
+    <p class="import-account-hint" id="householdJoinConfirmText">Joining replaces all data on this phone with the household copy.</p>
+  </div>
+</div>
+
+<div class="modal-overlay sheet sheet-fade modal-front" id="householdRestoreSheet" hidden>
+  <div class="modal sheet-modal">
+    <div class="sheet-grabber" aria-hidden="true"></div>
+    <div class="sheet-header">
+      <button class="btn-secondary sheet-cancel" id="householdRestoreCancelBtn" type="button">Cancel</button>
+      <h3>Restore copy</h3>
+      <button class="link-btn" id="householdRestoreConfirmBtn" type="button" disabled>Restore</button>
+    </div>
+    <div class="bank-sync-form household-restore-form">
+      <div class="field">
+        <label for="householdRestorePass">Household passphrase</label>
+        <input type="password" id="householdRestorePass" autocomplete="off">
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="icon-system.js?v=2.6.3"></script>
+<script src="forecast.js?v=2.6.3"></script>
+<script src="wrapped.js?v=2.6.3"></script>
+<script src="brief.js?v=2.6.3"></script>
+<script src="household-crypto.js?v=2.6.3"></script>
+<script src="app.js?v=2.6.3"></script>
 <script>
 (function () {
   'use strict';

@@ -60,7 +60,7 @@
   // Household mirror (plan #66): config and passphrase stay on-device only — never in backups or snapshots.
   var HOUSEHOLD_KEY = 'expenseLogger.household.v1';
   var HOUSEHOLD_PASS_KEY = 'expenseLogger.householdPass.v1';
-  var APP_VERSION = '2.6.2';
+  var APP_VERSION = '2.6.3';
   var BACKUP_FORMAT = 2;
   var BACKUP_FORMAT_LEGACY = 1;
   var DEFAULT_ACCOUNT_CHECKING = 'acct-checking';
@@ -8071,9 +8071,19 @@
   var $householdJoinCode = $('householdJoinCode');
   var $householdJoinPass = $('householdJoinPass');
   var $householdJoinBtn = $('householdJoinBtn');
+  var $householdJoinCancelBtn = $('householdJoinCancelBtn');
   var $householdJoinOpenBtn = $('householdJoinOpenBtn');
+  var $householdJoinConfirmSheet = $('householdJoinConfirmSheet');
+  var $householdJoinConfirmCancelBtn = $('householdJoinConfirmCancelBtn');
+  var $householdJoinConfirmBtn = $('householdJoinConfirmBtn');
+  var $householdRestoreSheet = $('householdRestoreSheet');
+  var $householdRestorePass = $('householdRestorePass');
+  var $householdRestoreCancelBtn = $('householdRestoreCancelBtn');
+  var $householdRestoreConfirmBtn = $('householdRestoreConfirmBtn');
   var $householdWriterForm = $('householdWriterForm');
   var HOUSEHOLD_UPLOAD_DELAY_MS = 2000;
+  var pendingHouseholdJoin = null;
+  var householdJoinBusy = false;
 
   function loadHouseholdConfig() {
     var h = loadHouseholdConfigRaw();
@@ -8258,6 +8268,167 @@
     });
   }
 
+  function phoneHasLedgerDataForJoinReplace() {
+    var snap = buildBackupStorageSnapshot();
+    var sum = summarizeBackupStorage(snap);
+    if (sum.entryCount > 0) return true;
+    try {
+      var cats = JSON.parse(snap[CATS_KEY] || '[]');
+      if (!categoriesMatchDefaults(cats)) return true;
+      var ui = JSON.parse(snap[UI_KEY] || '{}');
+      if (uiSettingsDifferFromDefaults(ui)) return true;
+      var impSet = JSON.parse(snap[IMPORT_SETTINGS_KEY] || '{}');
+      if (impSet && impSet.countCardPayments) return true;
+      var impPrefs = JSON.parse(snap[IMPORT_ACCOUNT_PREFS_KEY] || '{}');
+      if (impPrefs && typeof impPrefs === 'object' && Object.keys(impPrefs).length) return true;
+      var accts = JSON.parse(snap[ACCOUNTS_KEY] || '[]');
+      if (Array.isArray(accts) && accts.length && !accountsMatchDefaults(accts)) return true;
+      if (Array.isArray(accts) && accts.some(function (a) {
+        return a && (a.currentBalance != null || a.balanceAsOf != null);
+      })) return true;
+      if (snap[META_KEY]) {
+        var meta = JSON.parse(snap[META_KEY]);
+        if (meta && (meta.forecastCushion != null || meta.lastBackupAt || meta.backupNudgeHiddenUntil)) return true;
+      }
+      if (snap[SYNC_CUTOVER_KEY]) {
+        var cut = JSON.parse(snap[SYNC_CUTOVER_KEY] || '{}');
+        if (cut && typeof cut === 'object' && Object.keys(cut).length) return true;
+      }
+      var fo = JSON.parse(snap[FORECAST_OVERRIDES_KEY] || '[]');
+      if (Array.isArray(fo) && fo.length) return true;
+      var oneoffs = JSON.parse(snap[FORECAST_ONEOFFS_KEY] || '[]');
+      if (Array.isArray(oneoffs) && oneoffs.length) return true;
+      var tpats = JSON.parse(snap[TRANSFER_PATTERNS_KEY] || '[]');
+      if (Array.isArray(tpats) && tpats.length) return true;
+      var rec = JSON.parse(snap[RECURRING_KEY] || '[]');
+      if (Array.isArray(rec) && rec.length) return true;
+      var bud = JSON.parse(snap[BUDGETS_KEY] || '{}');
+      if (bud && Object.keys(bud).length) return true;
+      var tp = JSON.parse(snap[TRANSFER_PAIRS_KEY] || '[]');
+      if (Array.isArray(tp) && tp.some(function (p) { return p && !p.unlinked; })) return true;
+      var rules = JSON.parse(snap[IMPORT_RULES_KEY] || '[]');
+      if (Array.isArray(rules) && rules.length) return true;
+      var unlink = JSON.parse(snap[TRANSFER_UNLINK_KEY] || '[]');
+      if (Array.isArray(unlink) && unlink.length) return true;
+    } catch (e) {
+      return true;
+    }
+    return false;
+  }
+
+  function normalizeCategoryRowForJoinReplace(c) {
+    if (!c || typeof c.id !== 'string') return null;
+    return {
+      id: c.id,
+      name: String(c.name || ''),
+      icon: String(c.icon || ''),
+      color: String(c.color || '')
+    };
+  }
+
+  function categoriesMatchDefaults(cats) {
+    if (!Array.isArray(cats)) return false;
+    var norm = cats.map(normalizeCategoryRowForJoinReplace).filter(Boolean).sort(function (a, b) {
+      return a.id.localeCompare(b.id);
+    });
+    var def = DEFAULT_CATEGORIES.map(normalizeCategoryRowForJoinReplace).filter(Boolean).sort(function (a, b) {
+      return a.id.localeCompare(b.id);
+    });
+    return JSON.stringify(norm) === JSON.stringify(def);
+  }
+
+  function normalizeAccountRowForJoinReplace(a) {
+    if (!a || !a.id) return null;
+    return {
+      id: a.id,
+      name: String(a.name || ''),
+      type: a.type === 'credit_card' ? 'credit_card' : 'bank',
+      color: String(a.color || '')
+    };
+  }
+
+  function accountsMatchDefaults(accts) {
+    if (!Array.isArray(accts) || !accts.length) return true;
+    var norm = accts.map(normalizeAccountRowForJoinReplace).filter(Boolean).sort(function (a, b) {
+      return a.id.localeCompare(b.id);
+    });
+    var def = DEFAULT_ACCOUNTS.map(normalizeAccountRowForJoinReplace).filter(Boolean).sort(function (a, b) {
+      return a.id.localeCompare(b.id);
+    });
+    return JSON.stringify(norm) === JSON.stringify(def);
+  }
+
+  function uiSettingsDifferFromDefaults(ui) {
+    if (!ui || typeof ui !== 'object') return false;
+    if (ui.reportChartMonths === 12) return true;
+    if (ui.reportTxSort && ui.reportTxSort !== 'latest') return true;
+    if (normalizeActivityRangeId(ui.activityRange) !== 'this-month') return true;
+    if (ui.activityAccountId) return true;
+    if (ui.dismissedWrapped && Object.keys(ui.dismissedWrapped).length) return true;
+    return false;
+  }
+
+  function setHouseholdJoinBusy(on) {
+    householdJoinBusy = !!on;
+    if ($householdJoinBtn) $householdJoinBtn.disabled = householdJoinBusy;
+  }
+
+  function clearPendingHouseholdJoin() {
+    pendingHouseholdJoin = null;
+    if ($householdJoinConfirmSheet) {
+      $householdJoinConfirmSheet.hidden = true;
+      $householdJoinConfirmSheet.classList.remove('show');
+    }
+  }
+
+  function householdJoinReachabilityToast(status) {
+    return status === 0 ? 'Could not reach the Worker' : null;
+  }
+
+  function completeHouseholdJoinSuccess() {
+    if ($householdJoinSheet) {
+      $householdJoinSheet.hidden = true;
+      $householdJoinSheet.classList.remove('show');
+    }
+    clearPendingHouseholdJoin();
+    toast('Joined household');
+    window.location.reload();
+  }
+
+  function applyHouseholdJoinFinish(workerUrl, viewerToken, passphrase, blob, snapshotId) {
+    return finishHouseholdJoin(workerUrl, viewerToken, passphrase, blob, snapshotId).then(function (ok) {
+      if (!ok) {
+        setHouseholdJoinBusy(false);
+        return false;
+      }
+      completeHouseholdJoinSuccess();
+      return true;
+    }).catch(function () {
+      toast('Could not decrypt — check the passphrase');
+      setHouseholdJoinBusy(false);
+      return false;
+    });
+  }
+
+  function proceedHouseholdJoinAfterSnapshot(workerUrl, viewerToken, passphrase, blob, snapshotId) {
+    if (phoneHasLedgerDataForJoinReplace()) {
+      pendingHouseholdJoin = {
+        workerUrl: workerUrl,
+        viewerToken: viewerToken,
+        passphrase: passphrase,
+        blob: blob,
+        snapshotId: snapshotId
+      };
+      setHouseholdJoinBusy(false);
+      if ($householdJoinConfirmSheet) {
+        $householdJoinConfirmSheet.hidden = false;
+        $householdJoinConfirmSheet.classList.add('show');
+      }
+      return;
+    }
+    applyHouseholdJoinFinish(workerUrl, viewerToken, passphrase, blob, snapshotId);
+  }
+
   function finishHouseholdJoin(workerUrl, viewerToken, passphrase, blob, snapshotId) {
     return decryptHouseholdSnapshot(passphrase, blob).then(function (doc) {
       return commitBackupRestore(doc).then(function (ok) {
@@ -8275,22 +8446,33 @@
   }
 
   function runHouseholdJoin() {
+    if (householdJoinBusy) return;
     var url = normalizeWorkerUrl($householdJoinUrl && $householdJoinUrl.value);
     var code = ($householdJoinCode && $householdJoinCode.value || '').trim();
     var pass = $householdJoinPass && $householdJoinPass.value || '';
     if (!url || !code || !pass) { toast('Fill in all fields'); return; }
+    setHouseholdJoinBusy(true);
     workerRequest(url, '/household/pair', 'POST', null, { setupCode: code }).then(function (pr) {
-      if (pr.status !== 200 || !pr.data.viewerToken) { toast('Setup code not accepted'); return; }
+      var net = householdJoinReachabilityToast(pr.status);
+      if (net) { toast(net); setHouseholdJoinBusy(false); return; }
+      if (pr.status !== 200 || !pr.data.viewerToken) { toast('Setup code not accepted'); setHouseholdJoinBusy(false); return; }
       var vt = pr.data.viewerToken;
       workerRequest(url, '/snapshot', 'GET', 'Bearer ' + vt, null).then(function (sr) {
-        if (sr.status !== 200 || !sr.data.blob) { toast('No snapshot on the server yet'); return; }
-        finishHouseholdJoin(url, vt, pass, sr.data.blob, sr.data.id).then(function (ok) {
-          if (!ok) return;
-          if ($householdJoinSheet) $householdJoinSheet.hidden = true;
-          toast('Joined household');
-          window.location.reload();
-        }).catch(function () { toast('Could not decrypt — check the passphrase'); });
+        var snapNet = householdJoinReachabilityToast(sr.status);
+        if (snapNet) { toast(snapNet); setHouseholdJoinBusy(false); return; }
+        if (sr.status !== 200 || !sr.data.blob) {
+          toast(sr.status === 404 ? 'No snapshot on the server yet' : 'Could not load household copy');
+          setHouseholdJoinBusy(false);
+          return;
+        }
+        proceedHouseholdJoinAfterSnapshot(url, vt, pass, sr.data.blob, sr.data.id);
+      }).catch(function () {
+        toast('Could not reach the Worker');
+        setHouseholdJoinBusy(false);
       });
+    }).catch(function () {
+      toast('Could not reach the Worker');
+      setHouseholdJoinBusy(false);
     });
   }
 
@@ -8348,23 +8530,77 @@
     if ($householdRestoreBtn) $householdRestoreBtn.hidden = !paired;
   }
 
+  function closeHouseholdJoinSheet() {
+    if (!$householdJoinSheet) return;
+    $householdJoinSheet.hidden = true;
+    $householdJoinSheet.classList.remove('show');
+  }
+
   function openHouseholdJoinSheet() {
     if (!$householdJoinSheet) return;
     $householdJoinSheet.hidden = false;
     $householdJoinSheet.classList.add('show');
   }
 
+  function updateHouseholdRestoreConfirmBtn() {
+    if (!$householdRestoreConfirmBtn) return;
+    var pass = ($householdRestorePass && $householdRestorePass.value) || '';
+    $householdRestoreConfirmBtn.disabled = !pass.trim();
+  }
+
+  function openHouseholdRestoreSheet() {
+    if (!$householdRestoreSheet) return;
+    if ($householdRestorePass) $householdRestorePass.value = '';
+    $householdRestoreSheet.hidden = false;
+    $householdRestoreSheet.classList.add('show');
+    updateHouseholdRestoreConfirmBtn();
+  }
+
+  function closeHouseholdRestoreSheet() {
+    if (!$householdRestoreSheet) return;
+    $householdRestoreSheet.hidden = true;
+    $householdRestoreSheet.classList.remove('show');
+    if ($householdRestorePass) $householdRestorePass.value = '';
+    updateHouseholdRestoreConfirmBtn();
+  }
+
   if ($householdPassSaveBtn) {
     $householdPassSaveBtn.addEventListener('click', saveWriterHouseholdPassphrase);
   }
   if ($householdRestoreBtn) {
-    $householdRestoreBtn.addEventListener('click', function () {
-      var pass = window.prompt('Household passphrase');
-      if (pass == null) return;
-      restoreFromHouseholdCopy(String(pass));
+    $householdRestoreBtn.addEventListener('click', openHouseholdRestoreSheet);
+  }
+  if ($householdRestoreCancelBtn) {
+    $householdRestoreCancelBtn.addEventListener('click', closeHouseholdRestoreSheet);
+  }
+  if ($householdRestoreConfirmBtn) {
+    $householdRestoreConfirmBtn.addEventListener('click', function () {
+      if ($householdRestoreConfirmBtn.disabled) return;
+      var pass = ($householdRestorePass && $householdRestorePass.value) || '';
+      if (!pass.trim()) return;
+      closeHouseholdRestoreSheet();
+      restoreFromHouseholdCopy(pass);
+    });
+  }
+  if ($householdRestorePass) {
+    $householdRestorePass.addEventListener('input', updateHouseholdRestoreConfirmBtn);
+  }
+  if ($householdJoinConfirmCancelBtn) {
+    $householdJoinConfirmCancelBtn.addEventListener('click', function () {
+      clearPendingHouseholdJoin();
+    });
+  }
+  if ($householdJoinConfirmBtn) {
+    $householdJoinConfirmBtn.addEventListener('click', function () {
+      if (!pendingHouseholdJoin) return;
+      var p = pendingHouseholdJoin;
+      clearPendingHouseholdJoin();
+      setHouseholdJoinBusy(true);
+      applyHouseholdJoinFinish(p.workerUrl, p.viewerToken, p.passphrase, p.blob, p.snapshotId);
     });
   }
   if ($householdJoinBtn) $householdJoinBtn.addEventListener('click', runHouseholdJoin);
+  if ($householdJoinCancelBtn) $householdJoinCancelBtn.addEventListener('click', closeHouseholdJoinSheet);
   if ($householdJoinOpenBtn) $householdJoinOpenBtn.addEventListener('click', openHouseholdJoinSheet);
   if ($householdViewerRefreshBtn) {
     $householdViewerRefreshBtn.addEventListener('click', function () {
@@ -10456,7 +10692,7 @@
     });
   });
 
-  [$budgetModal, $catModal, $receiptModal, $importAccountModal, $addAccountModal, $wrappedModal, $backupRestoreModal].forEach(function (ov) {
+  [$budgetModal, $catModal, $receiptModal, $importAccountModal, $addAccountModal, $wrappedModal, $backupRestoreModal, $householdJoinSheet, $householdJoinConfirmSheet, $householdRestoreSheet].forEach(function (ov) {
     if (!ov) return;
     ov.addEventListener('click', function (e) {
       if (e.target === ov) {
@@ -10464,6 +10700,14 @@
         if (ov === $receiptModal) editingEntryId = null;
         if (ov === $importAccountModal) pendingImportAccount = null;
         if (ov === $backupRestoreModal) pendingBackupRestore = null;
+        if (ov === $householdJoinSheet) {
+          ov.hidden = true;
+        }
+        if (ov === $householdJoinConfirmSheet) clearPendingHouseholdJoin();
+        if (ov === $householdRestoreSheet) {
+          ov.hidden = true;
+          if ($householdRestorePass) $householdRestorePass.value = '';
+        }
       }
     });
   });
@@ -10873,6 +11117,9 @@
     encryptHouseholdSnapshot: encryptHouseholdSnapshot,
     restoreFromHouseholdCopy: restoreFromHouseholdCopy,
     finishHouseholdJoin: finishHouseholdJoin,
+    runHouseholdJoin: runHouseholdJoin,
+    phoneHasLedgerDataForJoinReplace: phoneHasLedgerDataForJoinReplace,
+    openHouseholdJoinSheet: openHouseholdJoinSheet,
     refreshViewerHouseholdSnapshot: refreshViewerHouseholdSnapshot,
     applyViewerHouseholdDocument: applyViewerHouseholdDocument,
     VIEWER_LAST_SNAP_KEY: VIEWER_LAST_SNAP_KEY,
