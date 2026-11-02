@@ -8114,6 +8114,14 @@
     saveHouseholdConfig(h);
   }
 
+  function setHouseholdBriefDirty(on) {
+    var h = loadHouseholdConfig();
+    if (h.role !== 'writer') return;
+    if (on) h.briefDirty = true;
+    else delete h.briefDirty;
+    saveHouseholdConfig(h);
+  }
+
   function pushHouseholdBriefs(workerUrl, deviceToken) {
     var l0 = buildBriefPayload('L0');
     var l1 = buildBriefPayload('L1');
@@ -8122,10 +8130,23 @@
       .then(function (r) { return r.status === 200; });
   }
 
+  function retryHouseholdBriefUpload() {
+    if (isViewMode()) return Promise.resolve(false);
+    var h = loadHouseholdConfig();
+    if (h.role !== 'writer' || !h.briefDirty || h.dirty) return Promise.resolve(false);
+    var sync = loadSyncState();
+    if (!sync) return Promise.resolve(false);
+    return pushHouseholdBriefs(sync.workerUrl, sync.deviceToken).then(function (briefOk) {
+      if (briefOk) setHouseholdBriefDirty(false);
+      return briefOk;
+    });
+  }
+
   function uploadHouseholdMirror() {
     if (isViewMode() || !HC) return Promise.resolve(false);
     var h = loadHouseholdConfig();
-    if (h.role !== 'writer' || !h.dirty) return Promise.resolve(false);
+    if (h.role !== 'writer') return Promise.resolve(false);
+    if (!h.dirty) return retryHouseholdBriefUpload();
     var pass = loadHouseholdPassphrase();
     if (!pass) return Promise.resolve(false);
     var sync = loadSyncState();
@@ -8139,8 +8160,9 @@
       }
       return workerRequest(url, '/snapshot', 'POST', 'Bearer ' + sync.deviceToken, { blob: enc.blob }).then(function (r) {
         if (r.status !== 200) return false;
+        clearHouseholdDirty();
         return pushHouseholdBriefs(url, sync.deviceToken).then(function (briefOk) {
-          if (briefOk) clearHouseholdDirty();
+          setHouseholdBriefDirty(!briefOk);
           return briefOk;
         });
       });
