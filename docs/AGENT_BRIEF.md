@@ -19,6 +19,12 @@ A small JSON document the phone builds with `brief.js`. Agents get the brief and
 
 Default: L0 for every agent, L1 only for agents Tri names (currently Claude).
 
+### Definitions
+
+- **Income**: deposits into checking, excluding transfers.
+- **Spend**: expenses from checking and the Chase card, **excluding transfers and card payments**. Chase purchases count on the day they are made (accrual), the same as the app, so paying the card never shows up as spending.
+- `savingsRate` = (income - spend) / income.
+
 ### Never included
 
 Account numbers or masks, Plaid ids, any token, `expenseLogger.sync.v1`, `bankText`, receipts or images, row-level transactions, and anything from client-intake. `scripts/brief-test.mjs` scans the serialized output for these.
@@ -38,16 +44,16 @@ Account numbers or masks, Plaid ids, any token, `expenseLogger.sync.v1`, `bankTe
 ### Tokens
 
 - Each agent has its own read-only bearer token, tied to one level, revocable on its own.
-- `GET /brief` returns the latest brief at or below the token's level. No other route accepts an agent token.
+- The Worker stores **one brief per level** (L0 and L1), each the latest. `GET /brief` returns the one matching the token's level. No other route accepts an agent token.
 - Tokens live only in the agent's own settings, never in the repo or in chat.
 
 ## 2. Household mirror
 
 - The phone stays the only writer.
-- **Encryption.** The key is derived from a household passphrase (PBKDF2 or Argon-class KDF, per-household salt, AES-GCM). The passphrase and key never leave the devices. The server stores ciphertext only.
+- **Encryption.** WebCrypto only, no libraries: the key is derived from the household passphrase with PBKDF2-SHA256 at a fixed 600,000 iterations and a random per-household salt (stored beside the ciphertext, not secret). Each snapshot is encrypted with AES-GCM using a fresh random 96-bit IV. The passphrase and key never leave the devices and are never sent to the Worker, which stores ciphertext, salt and IV only.
 - **Contents.** A backup-format snapshot (`BACKUP_FORMAT` 2 compatible), without `expenseLogger.sync.v1` and without receipt images.
-- **Upload.** When the app opens after a change, not in the background. The Worker keeps the last 5 snapshots.
+- **Upload.** When the app opens after a change, not in the background. The Worker keeps the last 5 snapshots (and one brief per level).
 - **Restore.** Settings gets "Restore from household copy" (needs the passphrase). Old backup formats 1 and 2 must still restore.
-- **Second phone.** One "Join household" field, a separate setup code, a read-only token. It downloads the newest snapshot and shows every screen, including forecasts and Wrapped.
+- **Second phone.** A single "Join household" form with two inputs: the setup code and the passphrase. The setup code goes to the Worker, which returns a read-only token and the salt. The passphrase stays on the phone and only derives the key to decrypt the downloaded snapshot. The phone then shows every screen, including forecasts and Wrapped.
 - **View mode.** Edit, import, bank sync and backup-restore controls are hidden, and writes to `expenseLogger.*` are blocked in code. A test enforces this.
 - **Loss cases.** Lost passphrase means the server copy is unreadable; keep it in a password manager. Keep the manual backup export as the third copy.
