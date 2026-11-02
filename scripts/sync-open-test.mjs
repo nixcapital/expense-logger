@@ -45,8 +45,9 @@ async function run() {
     if (path === '/pull') {
       pulls.push(mode);
       if (mode === 'fail') return reply(500, { error: 'boom' });
-      return reply(200, { batchId: mode === 'rows' ? 'open-1' : null, added: mode === 'rows' ? [ROW] : [], modified: [], removed: [],
-        accounts: [{ itemId: 'i1', account_id: 'plaid-chk', appAccountId: 'acct-checking' }], needsReconnect: [], errors: [] });
+      return reply(200, { batchId: mode === 'rows' || mode === 'nomap' ? 'open-1' : null, added: mode === 'rows' || mode === 'nomap' ? [ROW] : [], modified: [], removed: [],
+        accounts: mode === 'nomap' ? [] : [{ itemId: 'i1', account_id: 'plaid-chk', appAccountId: 'acct-checking' }],
+        accountMap: { 'plaid-chk': 'acct-checking' }, needsReconnect: [], errors: [] });
     }
     if (path === '/ack') { acks.push(JSON.parse(req.postData()).batchId); return reply(200, { ok: true }); }
     return reply(404, {});
@@ -118,6 +119,15 @@ async function run() {
   await settle();
   assert.strictEqual(pulls.length, 3, 'offline: no pull');
   assert.deepStrictEqual(acks, [], 'no ack in any quiet path');
+
+  // 7. Plaid sent no account list (map only comes from accountMap): rows still open review, not "unknown account".
+  mode = 'nomap';
+  await setSync({ lastAutoSyncAt: hoursAgo(5), accountMap: {} });
+  await page.evaluate(() => sessionStorage.removeItem('test.offline'));
+  await page.reload({ waitUntil: 'networkidle' });
+  await page.waitForSelector('#importModal.show', { timeout: 5000 });
+  const nm = await page.evaluate(() => window.ExpenseLoggerTest.pendingImportRows());
+  assert.ok(nm.some((r) => r.importRowKey === 'plaid:o-1'), 'accountMap alone is enough to map rows');
 
   assert.deepStrictEqual(errors, [], 'no page errors');
   await browser.close();

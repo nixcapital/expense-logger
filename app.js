@@ -60,7 +60,7 @@
   // Household mirror (plan #66): config and passphrase stay on-device only — never in backups or snapshots.
   var HOUSEHOLD_KEY = 'expenseLogger.household.v1';
   var HOUSEHOLD_PASS_KEY = 'expenseLogger.householdPass.v1';
-  var APP_VERSION = '2.6.0';
+  var APP_VERSION = '2.6.1';
   var BACKUP_FORMAT = 2;
   var BACKUP_FORMAT_LEGACY = 1;
   var DEFAULT_ACCOUNT_CHECKING = 'acct-checking';
@@ -8009,6 +8009,10 @@
       }
       var d = r.data;
       var map = s.accountMap || {};
+      // The Worker sends every linked account's mapping even when Plaid sent no account list.
+      if (d.accountMap && typeof d.accountMap === 'object') {
+        Object.keys(d.accountMap).forEach(function (k) { if (typeof d.accountMap[k] === 'string' && d.accountMap[k]) map[k] = d.accountMap[k]; });
+      }
       (d.accounts || []).forEach(function (a) { if (a && a.account_id && a.appAccountId) map[a.account_id] = a.appAccountId; });
       s.accountMap = map;
       s.needsReconnect = (d.needsReconnect || []).filter(function (x) { return typeof x === 'string' && x; }).map(function (x) { return { itemId: x }; });

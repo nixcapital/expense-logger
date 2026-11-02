@@ -1,7 +1,7 @@
 // Expense Logger sync Worker (plan: issue #46). Plumbing only: pairing, auth, CORS,
 // Plaid Link token + public_token exchange, plus sync / pull / ack.
 import { sha256Hex, secretsEqual, randomToken, encryptText, decryptText } from './crypto.js';
-import { createLinkToken, createUpdateLinkToken, exchangePublicToken } from './plaid.js';
+import { plaidCall, createLinkToken, createUpdateLinkToken, exchangePublicToken } from './plaid.js';
 import * as store from './store.js';
 import { route as householdRoute } from './household.js';
 import { syncItem, mergePayload, emptyPayload, payloadIsEmpty, publicAccounts, pendingTotals } from './sync.js';
@@ -64,11 +64,23 @@ async function authDevice(request, env) {
 
 // Sync every linked Item, fold new rows into the single unacknowledged batch, and
 // return it. The cursor and batch are saved together; nothing is logged.
+// Plaid's /transactions/sync often returns no accounts on a call that continues from a saved
+// cursor. Ask for them directly so balances still come through; failure just means no balances.
+async function fetchAccounts(env, fetchFn, token) {
+  try {
+    var res = await plaidCall(env, fetchFn, '/accounts/get', { access_token: token });
+    return Array.isArray(res.accounts) ? res.accounts : [];
+  } catch (e) {
+    return [];
+  }
+}
+
 async function runPull(env, fetchFn, now) {
   var current = await store.loadBatch(env.DB);
   var payload = current ? current.payload : emptyPayload();
   var batchId = current ? current.batchId : null;
   var accounts = [];
+  var accountMapAll = {};
   var needsReconnect = [];
   var errors = [];
   var syncedOk = {};
@@ -76,6 +88,7 @@ async function runPull(env, fetchFn, now) {
   for (var i = 0; i < items.length; i++) {
     var it = items[i];
     var accountMap = JSON.parse(it.account_map || '{}');
+    Object.keys(accountMap).forEach(function (k) { accountMapAll[k] = accountMap[k]; });
     try {
       var token = await decryptText(env.TOKEN_ENC_KEY, it.access_token_enc);
       var r = await syncItem(env, fetchFn, token, it.cursor, accountMap);
@@ -92,6 +105,7 @@ async function runPull(env, fetchFn, now) {
         });
         if (payloadIsEmpty(payload)) batchId = null;
       }
+      if (!r.accounts.length) r.accounts = await fetchAccounts(env, fetchFn, token);
       var hasCard = r.accounts.some(function (a) { return a.type === 'credit' && accountMap[a.account_id]; });
       var pend = hasCard ? await pendingTotals(env, fetchFn, token, accountMap, now) : null;
       accounts = accounts.concat(publicAccounts(r.accounts, accountMap, pend).map(function (a) {
@@ -112,7 +126,7 @@ async function runPull(env, fetchFn, now) {
   return {
     batchId: payloadIsEmpty(payload) ? null : batchId,
     added: payload.added, modified: payload.modified, removed: payload.removed,
-    accounts: accounts, needsReconnect: needsReconnect, errors: errors
+    accounts: accounts, accountMap: accountMapAll, needsReconnect: needsReconnect, errors: errors
   };
 }
 
