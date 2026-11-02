@@ -60,7 +60,7 @@
   // Household mirror (plan #66): config and passphrase stay on-device only — never in backups or snapshots.
   var HOUSEHOLD_KEY = 'expenseLogger.household.v1';
   var HOUSEHOLD_PASS_KEY = 'expenseLogger.householdPass.v1';
-  var APP_VERSION = '2.5.0';
+  var APP_VERSION = '2.6.0';
   var BACKUP_FORMAT = 2;
   var BACKUP_FORMAT_LEGACY = 1;
   var DEFAULT_ACCOUNT_CHECKING = 'acct-checking';
@@ -84,19 +84,37 @@
     return !!(h && h.role === 'viewer');
   }
 
+  var viewModeNativeSetItem = null;
+  var viewModeNativeRemoveItem = null;
+  var VIEWER_LAST_SNAP_KEY = 'el.viewerLastSnapshotId.v1';
+
   (function installViewModeWriteBlock() {
     if (!isViewMode()) return;
-    var set = Storage.prototype.setItem;
-    var rem = Storage.prototype.removeItem;
+    viewModeNativeSetItem = Storage.prototype.setItem;
+    viewModeNativeRemoveItem = Storage.prototype.removeItem;
     Storage.prototype.setItem = function (k, v) {
       if (typeof k === 'string' && k.indexOf('expenseLogger.') === 0) return;
-      return set.call(this, k, v);
+      return viewModeNativeSetItem.call(this, k, v);
     };
     Storage.prototype.removeItem = function (k) {
       if (typeof k === 'string' && k.indexOf('expenseLogger.') === 0) return;
-      return rem.call(this, k);
+      return viewModeNativeRemoveItem.call(this, k);
     };
   })();
+
+  function ledgerStorageSetItem(key, val) {
+    if (viewModeNativeSetItem && typeof key === 'string' && key.indexOf('expenseLogger.') === 0) {
+      return viewModeNativeSetItem.call(localStorage, key, val);
+    }
+    return localStorage.setItem(key, val);
+  }
+
+  function ledgerStorageRemoveItem(key) {
+    if (viewModeNativeRemoveItem && typeof key === 'string' && key.indexOf('expenseLogger.') === 0) {
+      return viewModeNativeRemoveItem.call(localStorage, key);
+    }
+    return localStorage.removeItem(key);
+  }
 
   function markHouseholdDirty() {
     if (isViewMode()) return;
@@ -1600,15 +1618,15 @@
     });
     try {
       // Old keys go first so a restore never needs more room than the data it replaces.
-      Object.keys(old).forEach(function (k) { localStorage.removeItem(k); });
-      next.forEach(function (k) { localStorage.setItem(k, storage[k]); });
+      Object.keys(old).forEach(function (k) { ledgerStorageRemoveItem(k); });
+      next.forEach(function (k) { ledgerStorageSetItem(k, storage[k]); });
       return true;
     } catch (e) {
       next.forEach(function (k) {
-        try { localStorage.removeItem(k); } catch (e2) {}
+        try { ledgerStorageRemoveItem(k); } catch (e2) {}
       });
       Object.keys(old).forEach(function (k) {
-        try { localStorage.setItem(k, old[k]); } catch (e2) {}
+        try { ledgerStorageSetItem(k, old[k]); } catch (e2) {}
       });
       return false;
     }
@@ -8040,7 +8058,7 @@
   var HC = window.ExpenseHouseholdCrypto;
   var $householdWriterGroup = $('householdWriterGroup');
   var $householdViewerGroup = $('householdViewerGroup');
-  var $householdViewerStatus = $('householdViewerStatus');
+  var $householdViewerRefreshBtn = $('householdViewerRefreshBtn');
   var $householdPassInput = $('householdPassInput');
   var $householdPassSaveBtn = $('householdPassSaveBtn');
   var $householdRestoreBtn = $('householdRestoreBtn');
@@ -8188,7 +8206,55 @@
     });
   }
 
-  function finishHouseholdJoin(workerUrl, viewerToken, passphrase, blob) {
+  function rememberViewerSnapshotId(id) {
+    if (id == null) return;
+    try { localStorage.setItem(VIEWER_LAST_SNAP_KEY, String(id)); } catch (e) {}
+  }
+
+  function applyViewerHouseholdDocument(doc) {
+    var deviceMetaKeep = pickDeviceBackupMeta(loadMetaObj());
+    return applyBackupStorageReplacingAppData(doc.storage, deviceMetaKeep);
+  }
+
+  function refreshViewerHouseholdSnapshot(manual) {
+    if (!isViewMode()) return Promise.resolve(false);
+    var h = loadHouseholdConfig();
+    var url = normalizeWorkerUrl(h.workerUrl || '');
+    var token = h.viewerToken;
+    var pass = loadHouseholdPassphrase();
+    if (!url || typeof token !== 'string' || !token || !pass) {
+      if (manual) toast('Household not ready');
+      return Promise.resolve(false);
+    }
+    return workerRequest(url, '/snapshot', 'GET', 'Bearer ' + token, null).then(function (r) {
+      if (r.status !== 200 || !r.data.blob) {
+        toast(manual ? 'Could not refresh household copy' : 'Could not update household copy');
+        return false;
+      }
+      if (!manual && r.data.id != null) {
+        try {
+          if (localStorage.getItem(VIEWER_LAST_SNAP_KEY) === String(r.data.id)) return false;
+        } catch (e) {}
+      }
+      return decryptHouseholdSnapshot(pass, r.data.blob).then(function (doc) {
+        if (!applyViewerHouseholdDocument(doc)) {
+          toast('Restore failed: storage is full. Your data is unchanged');
+          return false;
+        }
+        rememberViewerSnapshotId(r.data.id);
+        window.location.reload();
+        return true;
+      }).catch(function () {
+        toast('Could not decrypt — check the passphrase');
+        return false;
+      });
+    }).catch(function () {
+      toast('Could not reach the Worker');
+      return false;
+    });
+  }
+
+  function finishHouseholdJoin(workerUrl, viewerToken, passphrase, blob, snapshotId) {
     return decryptHouseholdSnapshot(passphrase, blob).then(function (doc) {
       return commitBackupRestore(doc).then(function (ok) {
         if (!ok) return false;
@@ -8198,6 +8264,7 @@
           workerUrl: workerUrl,
           viewerToken: viewerToken
         });
+        rememberViewerSnapshotId(snapshotId);
         return true;
       });
     });
@@ -8213,7 +8280,7 @@
       var vt = pr.data.viewerToken;
       workerRequest(url, '/snapshot', 'GET', 'Bearer ' + vt, null).then(function (sr) {
         if (sr.status !== 200 || !sr.data.blob) { toast('No snapshot on the server yet'); return; }
-        finishHouseholdJoin(url, vt, pass, sr.data.blob).then(function (ok) {
+        finishHouseholdJoin(url, vt, pass, sr.data.blob, sr.data.id).then(function (ok) {
           if (!ok) return;
           if ($householdJoinSheet) $householdJoinSheet.hidden = true;
           toast('Joined household');
@@ -8259,7 +8326,6 @@
     hide('householdWriterGroup');
     hide('householdRestoreBtn');
     if ($householdViewerGroup) $householdViewerGroup.hidden = false;
-    if ($householdViewerStatus) $householdViewerStatus.textContent = 'View only — edits are disabled';
     var addTab = document.querySelector('.tab-btn-add');
     if (addTab) addTab.hidden = true;
   }
@@ -8296,6 +8362,11 @@
   }
   if ($householdJoinBtn) $householdJoinBtn.addEventListener('click', runHouseholdJoin);
   if ($householdJoinOpenBtn) $householdJoinOpenBtn.addEventListener('click', openHouseholdJoinSheet);
+  if ($householdViewerRefreshBtn) {
+    $householdViewerRefreshBtn.addEventListener('click', function () {
+      refreshViewerHouseholdSnapshot(true);
+    });
+  }
 
   // ---------- Clear all ----------
   $('clearAllBtn').addEventListener('click', function () {
@@ -10642,6 +10713,9 @@
       });
     } catch (e) {}
   }, HOUSEHOLD_UPLOAD_DELAY_MS);
+  setTimeout(function () {
+    try { refreshViewerHouseholdSnapshot(false); } catch (e) {}
+  }, HOUSEHOLD_UPLOAD_DELAY_MS);
   if (EI && EI.preloadIcons) {
     EI.preloadIcons(function () {
       refreshCategorySurfacesAfterIcons();
@@ -10795,6 +10869,9 @@
     encryptHouseholdSnapshot: encryptHouseholdSnapshot,
     restoreFromHouseholdCopy: restoreFromHouseholdCopy,
     finishHouseholdJoin: finishHouseholdJoin,
+    refreshViewerHouseholdSnapshot: refreshViewerHouseholdSnapshot,
+    applyViewerHouseholdDocument: applyViewerHouseholdDocument,
+    VIEWER_LAST_SNAP_KEY: VIEWER_LAST_SNAP_KEY,
     loadHouseholdConfig: loadHouseholdConfig,
     saveHouseholdConfig: saveHouseholdConfig,
     saveHouseholdPassphrase: saveHouseholdPassphrase,
