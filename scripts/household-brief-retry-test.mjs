@@ -125,7 +125,7 @@ async function run() {
   assert.strictEqual(briefPostCount(), 2, 'brief retried');
 
   briefReject = false;
-  await page.evaluate(() => window.ExpenseLoggerTest.uploadHouseholdMirror());
+  await page.evaluate(() => window.ExpenseLoggerTest.retryHouseholdBriefUpload());
   await page.waitForFunction(() => {
     const h = JSON.parse(localStorage.getItem('expenseLogger.household.v1') || '{}');
     return h.briefDirty !== true;

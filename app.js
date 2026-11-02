@@ -108,6 +108,13 @@
     } catch (e) {}
   }
 
+  function setLedgerItem(key, value) {
+    var json = typeof value === 'string' ? value : JSON.stringify(value);
+    if (localStorage.getItem(key) === json) return;
+    localStorage.setItem(key, json);
+    markHouseholdDirty();
+  }
+
   function iconBadge(cat, size) {
     return EI ? EI.badgeHTML(cat, { size: size || 'md' }) : '';
   }
@@ -699,8 +706,7 @@
   function saveCategories() {
     if (storageGuardBlocksSave(CATS_KEY)) return false;
     try {
-      localStorage.setItem(CATS_KEY, JSON.stringify(categories));
-      markHouseholdDirty();
+      setLedgerItem(CATS_KEY, categories);
       return true;
     } catch (e) {
       toast('Could not save categories');
@@ -718,7 +724,7 @@
     return {};
   }
   function saveBudgets() {
-    try { localStorage.setItem(BUDGETS_KEY, JSON.stringify(budgets)); markHouseholdDirty(); } catch (e) {}
+    try { setLedgerItem(BUDGETS_KEY, budgets); } catch (e) {}
   }
   function loadRecurring() {
     try {
@@ -731,7 +737,7 @@
     return [];
   }
   function saveRecurring() {
-    try { localStorage.setItem(RECURRING_KEY, JSON.stringify(recurringItems)); markHouseholdDirty(); } catch (e) {}
+    try { setLedgerItem(RECURRING_KEY, recurringItems); } catch (e) {}
   }
   function loadImportRules() {
     try {
@@ -748,7 +754,7 @@
     return [];
   }
   function saveImportRules() {
-    try { localStorage.setItem(IMPORT_RULES_KEY, JSON.stringify(importRules)); markHouseholdDirty(); } catch (e) {}
+    try { setLedgerItem(IMPORT_RULES_KEY, importRules); } catch (e) {}
   }
   function loadImportSettings() {
     try {
@@ -761,7 +767,7 @@
     return { countCardPayments: false };
   }
   function saveImportSettings() {
-    try { localStorage.setItem(IMPORT_SETTINGS_KEY, JSON.stringify(importSettings)); markHouseholdDirty(); } catch (e) {}
+    try { setLedgerItem(IMPORT_SETTINGS_KEY, importSettings); } catch (e) {}
   }
   function loadEntries() {
     try {
@@ -787,8 +793,7 @@
   function saveEntries() {
     if (storageGuardBlocksSave(STORAGE_KEY)) return false;
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(entries));
-      markHouseholdDirty();
+      setLedgerItem(STORAGE_KEY, entries);
       return true;
     }
     catch (e) { toast('Could not save — storage full or blocked'); return false; }
@@ -908,8 +913,7 @@
   function saveAccounts() {
     if (storageGuardBlocksSave(ACCOUNTS_KEY)) return false;
     try {
-      localStorage.setItem(ACCOUNTS_KEY, JSON.stringify(accounts));
-      markHouseholdDirty();
+      setLedgerItem(ACCOUNTS_KEY, accounts);
       return true;
     } catch (e) { return false; }
   }
@@ -930,7 +934,7 @@
   }
 
   function saveTransferPatterns() {
-    try { localStorage.setItem(TRANSFER_PATTERNS_KEY, JSON.stringify(transferPatterns)); markHouseholdDirty(); } catch (e) {}
+    try { setLedgerItem(TRANSFER_PATTERNS_KEY, transferPatterns); } catch (e) {}
   }
 
   function loadForecastOverrides() {
@@ -945,7 +949,7 @@
   }
 
   function saveForecastOverrides() {
-    try { localStorage.setItem(FORECAST_OVERRIDES_KEY, JSON.stringify(forecastOverrides)); markHouseholdDirty(); } catch (e) {}
+    try { setLedgerItem(FORECAST_OVERRIDES_KEY, forecastOverrides); } catch (e) {}
   }
 
   function refreshForecastOverridesFromStorage() {
@@ -970,7 +974,7 @@
   }
 
   function saveForecastCountedOneOffs() {
-    try { localStorage.setItem(FORECAST_ONEOFFS_KEY, JSON.stringify(forecastCountedOneOffs)); markHouseholdDirty(); } catch (e) {}
+    try { setLedgerItem(FORECAST_ONEOFFS_KEY, forecastCountedOneOffs); } catch (e) {}
   }
 
   function forecastCountedOneOffsList() {
@@ -1161,7 +1165,7 @@
   }
 
   function saveTransferPairs() {
-    try { localStorage.setItem(TRANSFER_PAIRS_KEY, JSON.stringify(transferPairs)); markHouseholdDirty(); } catch (e) {}
+    try { setLedgerItem(TRANSFER_PAIRS_KEY, transferPairs); } catch (e) {}
   }
 
   function loadTransferUnlinkKeys() {
@@ -1176,7 +1180,7 @@
   }
 
   function saveTransferUnlinkKeys() {
-    try { localStorage.setItem(TRANSFER_UNLINK_KEY, JSON.stringify(transferUnlinkKeys)); markHouseholdDirty(); } catch (e) {}
+    try { setLedgerItem(TRANSFER_UNLINK_KEY, transferUnlinkKeys); } catch (e) {}
   }
 
   function loadImportAccountPrefs() {
@@ -1191,7 +1195,7 @@
   }
 
   function saveImportAccountPrefs() {
-    try { localStorage.setItem(IMPORT_ACCOUNT_PREFS_KEY, JSON.stringify(importAccountPrefs)); markHouseholdDirty(); } catch (e) {}
+    try { setLedgerItem(IMPORT_ACCOUNT_PREFS_KEY, importAccountPrefs); } catch (e) {}
   }
 
   function getAccount(id) {
@@ -8146,7 +8150,7 @@
     if (isViewMode() || !HC) return Promise.resolve(false);
     var h = loadHouseholdConfig();
     if (h.role !== 'writer') return Promise.resolve(false);
-    if (!h.dirty) return retryHouseholdBriefUpload();
+    if (!h.dirty) return Promise.resolve(false);
     var pass = loadHouseholdPassphrase();
     if (!pass) return Promise.resolve(false);
     var sync = loadSyncState();
@@ -10631,7 +10635,13 @@
   }
   registerSW();
   setTimeout(function () { try { autoSyncBankOnOpen(); } catch (e) {} }, AUTO_SYNC_DELAY_MS);
-  setTimeout(function () { try { uploadHouseholdMirror(); } catch (e) {} }, HOUSEHOLD_UPLOAD_DELAY_MS);
+  setTimeout(function () {
+    try {
+      Promise.resolve(uploadHouseholdMirror()).finally(function () {
+        try { retryHouseholdBriefUpload(); } catch (e) {}
+      });
+    } catch (e) {}
+  }, HOUSEHOLD_UPLOAD_DELAY_MS);
   if (EI && EI.preloadIcons) {
     EI.preloadIcons(function () {
       refreshCategorySurfacesAfterIcons();
@@ -10781,6 +10791,7 @@
     isViewMode: isViewMode,
     markHouseholdDirty: markHouseholdDirty,
     uploadHouseholdMirror: uploadHouseholdMirror,
+    retryHouseholdBriefUpload: retryHouseholdBriefUpload,
     encryptHouseholdSnapshot: encryptHouseholdSnapshot,
     restoreFromHouseholdCopy: restoreFromHouseholdCopy,
     finishHouseholdJoin: finishHouseholdJoin,
