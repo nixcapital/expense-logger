@@ -85,7 +85,7 @@ async function mockWorker(context) {
 function entryDoc(entryId) {
   return {
     backupFormat: 2,
-    appVersion: '2.6.1',
+    appVersion: '2.6.2',
     createdAt: new Date().toISOString(),
     storage: {
       'expenseLogger.entries.v1': JSON.stringify([
@@ -125,7 +125,7 @@ async function run() {
   const encOld = await page.evaluate(async (pass) => {
     const doc = {
       backupFormat: 2,
-      appVersion: '2.6.1',
+      appVersion: '2.6.2',
       createdAt: new Date().toISOString(),
       storage: {
         'expenseLogger.entries.v1': JSON.stringify([
@@ -150,7 +150,7 @@ async function run() {
     localStorage.setItem(lastKey, '1');
     window.ExpenseLoggerBackup.commitBackupRestore({
       backupFormat: 2,
-      appVersion: '2.6.1',
+      appVersion: '2.6.2',
       createdAt: new Date().toISOString(),
       storage: {
         'expenseLogger.entries.v1': JSON.stringify([
@@ -171,7 +171,7 @@ async function run() {
   const encNew = await page.evaluate(async (pass) => {
     const doc = {
       backupFormat: 2,
-      appVersion: '2.6.1',
+      appVersion: '2.6.2',
       createdAt: new Date().toISOString(),
       storage: {
         'expenseLogger.entries.v1': JSON.stringify([

@@ -13,8 +13,8 @@
 <link rel="manifest" href="manifest.json">
 <link rel="icon" href="icon-192.png">
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
-<link rel="stylesheet" href="styles.css?v=2.6.1">
-<link rel="stylesheet" href="icon-animations.css?v=2.6.1">
+<link rel="stylesheet" href="styles.css?v=2.6.2">
+<link rel="stylesheet" href="icon-animations.css?v=2.6.2">
 <title>Expense Logger</title>
 </head>
 <body>
@@ -1017,12 +1017,38 @@
   </div>
 </div>
 
-<script src="icon-system.js?v=2.6.1"></script>
-<script src="forecast.js?v=2.6.1"></script>
-<script src="wrapped.js?v=2.6.1"></script>
-<script src="brief.js?v=2.6.1"></script>
-<script src="household-crypto.js?v=2.6.1"></script>
-<script src="app.js?v=2.6.1"></script>
+<div class="modal-overlay sheet" id="householdJoinConfirmSheet" hidden>
+  <div class="modal sheet-modal">
+    <div class="sheet-grabber" aria-hidden="true"></div>
+    <div class="sheet-header">
+      <button class="btn-secondary sheet-cancel" id="householdJoinConfirmCancelBtn" type="button">Cancel</button>
+      <h3>Replace data?</h3>
+      <button class="link-btn" id="householdJoinConfirmBtn" type="button">Join</button>
+    </div>
+    <p class="import-account-hint" id="householdJoinConfirmText">Joining replaces all data on this phone with the household copy.</p>
+  </div>
+</div>
+
+<div class="modal-overlay sheet" id="householdRestoreSheet" hidden>
+  <div class="modal sheet-modal">
+    <div class="sheet-grabber" aria-hidden="true"></div>
+    <div class="sheet-header">
+      <button class="btn-secondary sheet-cancel" id="householdRestoreCancelBtn" type="button">Cancel</button>
+      <h3>Restore copy</h3>
+      <button class="link-btn" id="householdRestoreConfirmBtn" type="button">Restore</button>
+    </div>
+    <div class="bank-sync-form">
+      <input type="password" id="householdRestorePass" autocomplete="off" aria-label="Household passphrase">
+    </div>
+  </div>
+</div>
+
+<script src="icon-system.js?v=2.6.2"></script>
+<script src="forecast.js?v=2.6.2"></script>
+<script src="wrapped.js?v=2.6.2"></script>
+<script src="brief.js?v=2.6.2"></script>
+<script src="household-crypto.js?v=2.6.2"></script>
+<script src="app.js?v=2.6.2"></script>
 <script>
 (function () {
   'use strict';
