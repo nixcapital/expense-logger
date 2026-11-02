@@ -102,6 +102,16 @@ r = await handle(req('GET', '/pull', { headers: auth }), env, deps);
 var p2 = await r.json();
 assert.equal(p2.batchId, p1.batchId);
 assert.equal(p2.added.length, 2);
+// Plaid sent no accounts on this call: the map still comes from the Worker, and balances from /accounts/get
+assert.deepEqual(p2.accountMap, { chk: 'acct-checking', crd: 'acct-chase' });
+assert.deepEqual(p1.accountMap, p2.accountMap);
+script = [ok({ added: [], modified: [], removed: [], next_cursor: 'c2', has_more: false, accounts: [] }),
+  ok({ accounts: [{ account_id: 'chk', mask: '0001', type: 'depository', balances: { current: 2000, available: 1990 } }] })];
+var p2b = await (await handle(req('GET', '/pull', { headers: auth }), env, deps)).json();
+assert.equal(p2b.accounts.length, 1);
+assert.equal(p2b.accounts[0].current, 2000);
+assert.ok(calls.some(function (c) { return c.url.endsWith('/accounts/get'); }));
+script = [];
 
 // 3) new rows while unacked fold in with a new batch id; remove of a never-seen row cancels it
 script = [ok({ added: [tx('a3', 'chk', 7.01)], modified: [tx('a2', 'crd', 26)], removed: [{ transaction_id: 'a1', account_id: 'chk' }],
