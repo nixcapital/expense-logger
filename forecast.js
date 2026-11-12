@@ -212,7 +212,7 @@
   function applyCardStatementToEvents(events, schedule, statement, nowMs) {
     var st = validCardStatement(statement, nowMs);
     if (!st || !schedule) return events;
-    var cutoff = addDays(st.dueTs, 15);
+    var cutoff = addDays(st.dueTs, 20);
     var out = events.filter(function (ev) {
       return !(ev.itemKey === schedule.itemKey && ev.ts <= cutoff);
     });

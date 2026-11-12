@@ -9071,10 +9071,14 @@
     var stRaw = ($('chaseStatementAmountInput') && $('chaseStatementAmountInput').value || '').trim();
     var stDue = ($('chaseStatementDueInput') && $('chaseStatementDueInput').value) || '';
     var stVal = stRaw ? parseMoneyInput(stRaw) : NaN;
-    if (stRaw && !isNaN(stVal) && stVal >= 0 && stDue) {
+    if ((stRaw || stDue) && (!stRaw || !stDue || isNaN(stVal) || stVal < 0)) {
+      setChaseBalanceAmountError('Enter both the autopay amount and its due date, or clear both.');
+      return;
+    }
+    if (stRaw) {
       chase.statementBalance = stVal;
       chase.statementDue = stDue;
-    } else if (!stRaw && !stDue) {
+    } else {
       delete chase.statementBalance;
       delete chase.statementDue;
     }
