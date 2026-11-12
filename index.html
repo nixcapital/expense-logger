@@ -13,8 +13,8 @@
 <link rel="manifest" href="manifest.json">
 <link rel="icon" href="icon-192.png">
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
-<link rel="stylesheet" href="styles.css?v=2.6.3">
-<link rel="stylesheet" href="icon-animations.css?v=2.6.3">
+<link rel="stylesheet" href="styles.css?v=2.6.4">
+<link rel="stylesheet" href="icon-animations.css?v=2.6.4">
 <title>Expense Logger</title>
 </head>
 <body>
@@ -790,9 +790,17 @@
         <span class="chevron">›</span>
       </button>
       <input type="date" id="chaseBalanceAsOfInput" class="visually-hidden-input" tabindex="-1">
+      <label class="balance-input-wrap chase-balance-input-wrap">
+        <span class="balance-input-label">Next autopay (statement balance)</span>
+        <input type="text" id="chaseStatementAmountInput" inputmode="decimal" autocomplete="off" placeholder="Optional" aria-label="Statement balance for the next autopay">
+      </label>
+      <label class="balance-input-wrap chase-balance-input-wrap">
+        <span class="balance-input-label">Autopay due date</span>
+        <input type="date" id="chaseStatementDueInput" aria-label="Autopay due date">
+      </label>
       <div class="balance-info-callout chase-balance-callout">
         <span class="balance-info-icon" aria-hidden="true"><svg width="16" height="16" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6.25" stroke="currentColor"/><path d="M8 7v4M8 5.2h.01" stroke="currentColor" stroke-width="1.25" stroke-linecap="round"/></svg></span>
-        <p>Use the current balance in the Chase app, not the statement balance. A correction isn&rsquo;t spending and doesn&rsquo;t change Checking.</p>
+        <p>Use the current balance in the Chase app, not the statement balance. For the autopay, enter the statement balance and due date above; the forecast uses them for the next payment only. A correction isn&rsquo;t spending and doesn&rsquo;t change Checking.</p>
       </div>
     </div>
   </div>
@@ -1060,12 +1068,12 @@
   </div>
 </div>
 
-<script src="icon-system.js?v=2.6.3"></script>
-<script src="forecast.js?v=2.6.3"></script>
-<script src="wrapped.js?v=2.6.3"></script>
-<script src="brief.js?v=2.6.3"></script>
-<script src="household-crypto.js?v=2.6.3"></script>
-<script src="app.js?v=2.6.3"></script>
+<script src="icon-system.js?v=2.6.4"></script>
+<script src="forecast.js?v=2.6.4"></script>
+<script src="wrapped.js?v=2.6.4"></script>
+<script src="brief.js?v=2.6.4"></script>
+<script src="household-crypto.js?v=2.6.4"></script>
+<script src="app.js?v=2.6.4"></script>
 <script>
 (function () {
   'use strict';

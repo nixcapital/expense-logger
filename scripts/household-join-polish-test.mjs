@@ -67,7 +67,7 @@ async function encryptDoc(page, entryId) {
   return page.evaluate(async ({ pass, entryId }) => {
     const doc = {
       backupFormat: 2,
-      appVersion: '2.6.3',
+      appVersion: '2.6.4',
       createdAt: new Date().toISOString(),
       storage: {
         'expenseLogger.entries.v1': JSON.stringify([

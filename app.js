@@ -60,7 +60,7 @@
   // Household mirror (plan #66): config and passphrase stay on-device only — never in backups or snapshots.
   var HOUSEHOLD_KEY = 'expenseLogger.household.v1';
   var HOUSEHOLD_PASS_KEY = 'expenseLogger.householdPass.v1';
-  var APP_VERSION = '2.6.3';
+  var APP_VERSION = '2.6.4';
   var BACKUP_FORMAT = 2;
   var BACKUP_FORMAT_LEGACY = 1;
   var DEFAULT_ACCOUNT_CHECKING = 'acct-checking';
@@ -9036,6 +9036,8 @@
     }
     var inp = $('chaseBalanceAmountInput');
     if (inp) inp.value = startVal != null && !isNaN(startVal) ? fmtMoneyDisplay(startVal) : '';
+    if ($('chaseStatementAmountInput')) $('chaseStatementAmountInput').value = typeof chase.statementBalance === 'number' ? fmtMoneyDisplay(chase.statementBalance) : '';
+    if ($('chaseStatementDueInput')) $('chaseStatementDueInput').value = chase.statementDue || '';
     if ($('chaseBalanceAsOfInput')) $('chaseBalanceAsOfInput').value = asOf;
     if ($('chaseBalanceAsOfPreview')) $('chaseBalanceAsOfPreview').textContent = formatBalanceAsOfLabel(asOf);
     updateChaseBalanceChangeLine();
@@ -9066,12 +9068,33 @@
     }
     chase.currentBalance = val;
     chase.balanceAsOf = asOf;
+    var stRaw = ($('chaseStatementAmountInput') && $('chaseStatementAmountInput').value || '').trim();
+    var stDue = ($('chaseStatementDueInput') && $('chaseStatementDueInput').value) || '';
+    var stVal = stRaw ? parseMoneyInput(stRaw) : NaN;
+    if (stRaw && !isNaN(stVal) && stVal >= 0 && stDue) {
+      chase.statementBalance = stVal;
+      chase.statementDue = stDue;
+    } else if (!stRaw && !stDue) {
+      delete chase.statementBalance;
+      delete chase.statementDue;
+    }
     saveAccounts();
     closeChaseBalanceSheet();
     renderSettingsAccounts();
     renderHomeForecastCard();
     if (forecastScreenOpen) renderForecastScreen();
     toast('Balance saved');
+  }
+
+  // Next card autopay = statement balance on its due date (user-entered in the Chase balance sheet).
+  function getCardStatementInput() {
+    var chase = getChaseAccount();
+    if (!chase || typeof chase.statementBalance !== 'number' || !chase.statementDue) return null;
+    var p = String(chase.statementDue).split('-');
+    if (p.length !== 3) return null;
+    var due = new Date(+p[0], +p[1] - 1, +p[2]).getTime();
+    if (isNaN(due)) return null;
+    return { amount: chase.statementBalance, dueTs: due };
   }
 
   function buildForecastPayload(chartDays) {
@@ -9088,6 +9111,7 @@
       balance: typeof checking.currentBalance === 'number' ? checking.currentBalance : null,
       balanceAsOfMs: asOfMs,
       cardBalanceOwed: cardSnap && cardSnap.ok ? cardSnap.owed : null,
+      cardStatement: getCardStatementInput(),
       cushion: getForecastCushion(),
       entries: entries,
       recurringItems: recurringItems,
@@ -9632,7 +9656,8 @@
       chartDays: forecastChartDays,
       maxLookaheadDays: 365,
       cushion: getForecastCushion(),
-      cardBalanceOwed: payload.cardBalanceOwed
+      cardBalanceOwed: payload.cardBalanceOwed,
+      cardStatement: payload.cardStatement
     });
     if (sim.schedules) lastForecastSchedules = sim.schedules;
     lastForecastSim = sim;
@@ -9658,7 +9683,8 @@
       overrides: forecastOverrides,
       countedOneOffs: forecastCountedOneOffsList(),
       maxLookaheadDays: 365,
-      cardBalanceOwed: payload.cardBalanceOwed
+      cardBalanceOwed: payload.cardBalanceOwed,
+      cardStatement: payload.cardStatement
     });
     lastForecastBreakdown = breakdown.ok ? breakdown : null;
     if (breakdown.ok) renderForecastBreakdownCard(breakdown, result, sim.schedules);

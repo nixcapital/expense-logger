@@ -29,9 +29,9 @@ const FORBIDDEN_KEYS = [
 
 const html = readFileSync(join(ROOT, 'index.html'), 'utf8');
 const appSrc = readFileSync(join(ROOT, 'app.js'), 'utf8');
-assert.ok(html.includes('brief.js?v=2.6.3'));
-assert.ok(readFileSync(join(ROOT, 'sw.js'), 'utf8').includes("CACHE_VERSION = 'expense-logger-v2.6.3'"));
-assert.ok(appSrc.includes("APP_VERSION = '2.6.3'"));
+assert.ok(html.includes('brief.js?v=2.6.4'));
+assert.ok(readFileSync(join(ROOT, 'sw.js'), 'utf8').includes("CACHE_VERSION = 'expense-logger-v2.6.4'"));
+assert.ok(appSrc.includes("APP_VERSION = '2.6.4'"));
 const copyFn = appSrc.slice(appSrc.indexOf('function copyAgentBrief('), appSrc.indexOf('function saveAgentBriefFile'));
 const saveFn = appSrc.slice(appSrc.indexOf('function saveAgentBriefFile'), appSrc.indexOf('function exportCSV'));
 assert.ok(!/publishAgentBrief|buildAgentBrief|Date\.now\(/.test(copyFn + saveFn));
@@ -180,7 +180,7 @@ async function run() {
 
     const still = await page.evaluate((key) => localStorage.getItem(key), SYNC_KEY);
     assert.ok(still && still.includes(TOKEN));
-    assert.strictEqual(await page.evaluate(() => window.ExpenseLoggerTest.APP_VERSION), '2.6.3');
+    assert.strictEqual(await page.evaluate(() => window.ExpenseLoggerTest.APP_VERSION), '2.6.4');
     assert.strictEqual(await page.locator('#agentBriefGroup .hint, #agentBriefGroup p').count(), 0);
     await page.evaluate(() => {
       const header = document.querySelector('#tab-settings .screen-header-wrap');

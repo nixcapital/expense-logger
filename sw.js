@@ -5,8 +5,8 @@
    link.html (Plaid Link + OAuth redirect, Safari only) is never precached or intercepted:
    it needs the network anyway, and a cached copy must never answer an OAuth redirect.
 */
-const CACHE_VERSION = 'expense-logger-v2.6.3';
-const ASSET_V = '2.6.3';
+const CACHE_VERSION = 'expense-logger-v2.6.4';
+const ASSET_V = '2.6.4';
 const SHELL_URLS = [
   './',
   './index.html',
