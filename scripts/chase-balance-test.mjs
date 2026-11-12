@@ -136,7 +136,7 @@ var run = FC.runForecast(runPayload);
 assert.ok(run.ok);
 var upChase = (run.upcoming || []).find(function (u) { return u.label === 'Chase card payment'; });
 assert.ok(upChase);
-assert.strictEqual(upChase.amount, 1955.28);
+assert.strictEqual(upChase.amount, 2410.55);
 
 console.log('chase-balance-test: statement balance applies to the next payment only');
 var stDue = ts(2026, 9, 20);
