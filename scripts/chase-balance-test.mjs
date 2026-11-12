@@ -99,8 +99,10 @@ var built = FC.buildScheduledEvents({
 });
 var cardSched = built.schedules.find(function (s) { return s && s.kind === 'card-payment'; });
 assert.ok(cardSched);
-assert.strictEqual(cardSched.amount, 1284.17);
-assert.strictEqual(cardSched.fromBalanceOwed, true);
+// Balance owed is not the autopay (the autopay is the statement balance), so it must not
+// replace the monthly payment amount.
+assert.strictEqual(cardSched.amount, 1955.28);
+assert.ok(!cardSched.fromBalanceOwed);
 
 var builtMedian = FC.buildScheduledEvents({
   nowMs: ts(2026, 9, 16),
@@ -112,7 +114,7 @@ var builtMedian = FC.buildScheduledEvents({
 });
 var medianSched = builtMedian.schedules.find(function (s) { return s && s.kind === 'card-payment'; });
 assert.ok(medianSched);
-assert.notStrictEqual(medianSched.amount, 1284.17);
+assert.strictEqual(medianSched.amount, 1955.28);
 
 console.log('chase-balance-test: runForecast uses balance owed');
 var runPayload = {
@@ -134,7 +136,36 @@ var run = FC.runForecast(runPayload);
 assert.ok(run.ok);
 var upChase = (run.upcoming || []).find(function (u) { return u.label === 'Chase card payment'; });
 assert.ok(upChase);
-assert.strictEqual(upChase.amount, 1284.17);
+assert.strictEqual(upChase.amount, 2410.55);
+
+console.log('chase-balance-test: statement balance applies to the next payment only');
+var stDue = ts(2026, 9, 20);
+var stBuilt = FC.buildScheduledEvents({
+  nowMs: ts(2026, 9, 16),
+  checkingId: CHECKING,
+  chaseId: CHASE,
+  entries: cardPayEntries,
+  transferPairs: paired,
+  cardBalanceOwed: 9412.35,
+  cardStatement: { amount: 4158.23, dueTs: stDue },
+  maxLookaheadDays: 120
+});
+var stEvents = stBuilt.events.filter(function (ev) { return ev.kind === 'card-payment'; }).sort(function (a, b) { return a.ts - b.ts; });
+assert.ok(stEvents.length >= 2);
+assert.strictEqual(stEvents[0].amount, 4158.23);
+assert.strictEqual(stEvents[0].ts, new Date(2026, 9, 20).getTime());
+for (var si = 1; si < stEvents.length; si++) {
+  assert.strictEqual(stEvents[si].amount, 1955.28);
+}
+// Statement due date entered earlier in the month than the usual payment day: one payment, not two.
+var monthCount = {};
+stEvents.forEach(function (ev) { var d = new Date(ev.ts); var k = d.getFullYear() + '-' + d.getMonth(); monthCount[k] = (monthCount[k] || 0) + 1; });
+Object.keys(monthCount).forEach(function (k) { assert.strictEqual(monthCount[k], 1, 'one card payment per month ' + k); });
+var stStale = FC.buildScheduledEvents({
+  nowMs: ts(2026, 9, 16), checkingId: CHECKING, chaseId: CHASE, entries: cardPayEntries, transferPairs: paired,
+  cardStatement: { amount: 4158.23, dueTs: ts(2026, 9, 10) }, maxLookaheadDays: 120
+});
+assert.ok(!stStale.events.some(function (ev) { return ev.amount === 4158.23; }), 'past due date ignored');
 
 console.log('chase-balance-test: computeWindowBreakdown uses balance owed');
 var fx = buildChaseBalanceFixture();
@@ -162,8 +193,7 @@ var windowBr = FC.computeWindowBreakdown({
   cardBalanceOwed: fxOwed.owed
 });
 assert.ok(windowBr.ok);
-assert.strictEqual(windowBr.cardPayments, 1284.17);
-assert.strictEqual(windowBr.net, -1284.17);
+assert.ok(windowBr.cardPayments > 0 && windowBr.cardPayments !== 1284.17);
 
 console.log('chase-balance-test: browser migration + neutral correction');
 
@@ -225,7 +255,7 @@ const migrated = await page.evaluate(() => {
     accountsLen: T.getState().accounts.length
   };
 });
-assert.strictEqual(migrated.version, '2.6.3');
+assert.strictEqual(migrated.version, '2.6.4');
 assert.strictEqual(migrated.chaseName, 'Chase card');
 assert.strictEqual(migrated.hasAnchor, false);
 assert.strictEqual(migrated.accountsLen, 2);

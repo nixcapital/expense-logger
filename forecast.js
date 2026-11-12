@@ -198,12 +198,37 @@
     };
   }
 
-  function applyBalanceOwedToCardSchedule(sched, cardBalanceOwed) {
-    if (!sched || cardBalanceOwed == null || isNaN(cardBalanceOwed)) return sched;
-    sched.amount = roundMoney(Math.max(0, cardBalanceOwed));
-    sched.inferenceDetail = 'Balance owed today';
-    sched.fromBalanceOwed = true;
-    return sched;
+  // The card autopay is the statement balance, not today's balance owed. When the user has
+  // entered the statement balance and due date, the next payment uses them (and lands on the
+  // due date). Every later month keeps the normal estimate.
+  function validCardStatement(st, nowMs) {
+    if (!st || typeof st.amount !== 'number' || isNaN(st.amount) || st.amount < 0) return null;
+    if (typeof st.dueTs !== 'number' || !validMs(st.dueTs)) return null;
+    var due = startOfDay(st.dueTs);
+    if (due <= nowMs || due > addDays(nowMs, 62)) return null;
+    return { amount: roundMoney(st.amount), dueTs: due };
+  }
+
+  function applyCardStatementToEvents(events, schedule, statement, nowMs) {
+    var st = validCardStatement(statement, nowMs);
+    if (!st || !schedule) return events;
+    var cutoff = addDays(st.dueTs, 20);
+    var out = events.filter(function (ev) {
+      return !(ev.itemKey === schedule.itemKey && ev.ts <= cutoff);
+    });
+    out.push({
+      ts: st.dueTs,
+      amount: st.amount,
+      kind: 'card-payment',
+      inflow: false,
+      label: schedule.label,
+      itemKey: schedule.itemKey,
+      recurringKey: schedule.itemKey,
+      fromStatement: true
+    });
+    schedule.statementAmount = st.amount;
+    schedule.statementDueTs = st.dueTs;
+    return out;
   }
 
   function descriptionKey(note) {
@@ -1467,6 +1492,8 @@
       });
     });
 
+    var cardSched = detectCardPaymentSchedule(input.entries, input.transferPairs, checkingId);
+    var unpairedCard = null;
     detectUnpairedTransferSchedules(input.entries, {
       checkingId: checkingId,
       sinceMs: addDays(nowMs, -400),
@@ -1475,13 +1502,19 @@
     }).forEach(function (s) {
       var dup = schedules.some(function (x) { return x.itemKey === s.itemKey; });
       if (dup) return;
+      // One card payment per card: a paired Chase schedule already covers the Chase autopay, so
+      // an unpaired Chase-looking card-payment schedule would count the same payment twice.
+      // Other issuers (e.g. Discover) are separate cards and stay.
+      var isChaseNote = /chase/i.test((s.label || '') + ' ' + (s.merchantKey || ''));
+      if (s.kind === 'card-payment' && cardSched && isChaseNote) return;
+      if (s.kind === 'card-payment' && isChaseNote && !unpairedCard) unpairedCard = s;
       schedules.push(s);
       events = events.concat(expandSchedule(s, nowMs, untilMs, input.entries, checkingId));
     });
 
-    var cardSched = detectCardPaymentSchedule(input.entries, input.transferPairs, checkingId);
+    var statementTarget = unpairedCard;
     if (cardSched) {
-      applyBalanceOwedToCardSchedule(cardSched, input.cardBalanceOwed);
+      statementTarget = cardSched;
       schedules.push(cardSched);
       events = events.concat(expandSchedule(cardSched, nowMs, untilMs, input.entries, checkingId));
     } else {
@@ -1498,7 +1531,7 @@
           inferenceDetail: 'Estimated from recent card spend',
           lastTs: cardEst.lastTs
         };
-        applyBalanceOwedToCardSchedule(fallback, input.cardBalanceOwed);
+        statementTarget = fallback;
         schedules.push(fallback);
         events = events.concat(expandSchedule(fallback, nowMs, untilMs, input.entries, checkingId));
       }
@@ -1543,6 +1576,14 @@
       schedules.push(s);
       events = events.concat(expandSchedule(s, nowMs, untilMs, input.entries, checkingId));
     });
+
+    if (input.cardStatement) {
+      if (!statementTarget) {
+        statementTarget = { itemKey: 'card-payment|chase', label: 'Chase card payment', amount: 0, kind: 'card-payment' };
+        schedules.push(statementTarget);
+      }
+      events = applyCardStatementToEvents(events, statementTarget, input.cardStatement, nowMs);
+    }
 
     events = applyForecastOverrides(events, input.overrides, nowMs);
 
@@ -2201,7 +2242,8 @@
       dailySpend: input.dailySpend,
       overrides: input.overrides,
       countedOneOffs: input.countedOneOffs,
-      cardBalanceOwed: input.cardBalanceOwed
+      cardBalanceOwed: input.cardBalanceOwed,
+      cardStatement: input.cardStatement
     });
     if (!sim.ok) return sim;
     var incomeSince = addDays(nowMs, -400);
