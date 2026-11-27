@@ -6658,19 +6658,23 @@
   }
 
   // Short list: first five non-income categories, then "More…". "More…" swaps in
-  // every category (income included) inline, so no prompt() and no unknown ids.
-  function importCategoryChipHTML(catId, idx) {
+  // every category inline, so no prompt() and no unknown ids. Income is listed only
+  // for deposits (or a row already in Income) so a purchase can't be filed as income.
+  function importCategoryChipHTML(row, idx) {
+    var catId = row.categoryId;
     var html = '<div class="import-cat-chips" data-idx="' + idx + '">';
     var quick = categories.filter(function (c) { return c.id !== INCOME_CATEGORY_ID; }).slice(0, 5);
+    var allowIncome = !!row.isDeposit || catId === INCOME_CATEGORY_ID;
+    var all = categories.filter(function (c) { return allowIncome || c.id !== INCOME_CATEGORY_ID; });
     var showAll = importCatShowAllIdx === idx;
-    var shown = showAll ? categories : quick;
+    var shown = showAll ? all : quick;
     shown.forEach(function (c) {
       html += '<button type="button" class="import-cat-chip' + (c.id === catId ? ' is-selected' : '') + '" data-cat="' + escHtml(c.id) + '">'
         + iconBadge(c, 'xs') + '<span>' + escHtml(c.name) + '</span></button>';
     });
     if (showAll) {
       html += '<button type="button" class="import-cat-chip import-cat-chip--more" data-less="1" aria-expanded="true">Less</button>';
-    } else if (categories.length > quick.length) {
+    } else if (all.length > quick.length) {
       html += '<button type="button" class="import-cat-chip import-cat-chip--more" data-more="1" aria-expanded="false">More\u2026</button>';
     }
     html += '</div>';
@@ -6807,7 +6811,7 @@
       listHtml += '<span class="import-row-chevron" aria-hidden="true">' + (expanded ? '\u2304' : '\u203A') + '</span></button>';
       if (expanded) {
         listHtml += '<div class="import-row-expanded">';
-        listHtml += importCategoryChipHTML(r.categoryId, i);
+        listHtml += importCategoryChipHTML(r, i);
         listHtml += '<div class="seg-control import-xfer-seg import-xfer-seg--4" role="group" aria-label="Row type" data-idx="' + i + '">';
         listHtml += '<button type="button" class="seg-btn' + (rowMode === 'expense' ? ' is-active' : '') + '" data-mode="expense">Expense</button>';
         listHtml += '<button type="button" class="seg-btn' + (rowMode === 'income' ? ' is-active' : '') + '" data-mode="income">Income</button>';

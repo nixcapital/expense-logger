@@ -188,7 +188,8 @@ async function run() {
   await page.click(sbuxSel + ' .import-row-hit');
   assert.deepStrictEqual(await chipIds(sbuxSel), ['groceries', 'dining', 'gas', 'bills', 'fun'], 'short list is first five non-income');
   await page.click(sbuxSel + ' [data-more]');
-  assert.deepStrictEqual(await chipIds(sbuxSel), cats8.map((c) => c.id), 'More… shows every category');
+  const allButIncome = cats8.map((c) => c.id).filter((id) => id !== 'income');
+  assert.deepStrictEqual(await chipIds(sbuxSel), allButIncome, 'More… shows every category (no Income on a purchase)');
   assert.strictEqual(await page.locator(sbuxSel + ' [data-less]').getAttribute('aria-expanded'), 'true');
   await page.click(sbuxSel + ' .import-cat-chip[data-cat="pets"]');
   let after = await reviewRows();
@@ -213,7 +214,7 @@ async function run() {
   const uberSel = `.import-row[data-idx="${uber.i}"]`;
   await page.click(uberSel + ' .import-row-hit');
   await page.click(uberSel + ' [data-more]');
-  assert.strictEqual(await page.locator(uberSel + ' .import-cat-chip[data-cat]').count(), cats8.length);
+  assert.strictEqual(await page.locator(uberSel + ' .import-cat-chip[data-cat]').count(), allButIncome.length);
   await page.click(uberSel + ' [data-less]');
   assert.deepStrictEqual(await chipIds(uberSel), ['groceries', 'dining', 'gas', 'bills', 'fun']);
   assert.strictEqual(await page.locator(uberSel + ' [data-more]').getAttribute('aria-expanded'), 'false');
@@ -226,6 +227,22 @@ async function run() {
   await page.click(uberSel + ' .import-cat-chip[data-cat="other"]');
   after = await reviewRows();
   assert.strictEqual(after[uber.i].categoryId, 'other', 'can move a row back to Other');
+
+  // A deposit row lists Income too (and shows it selected); switching back to Expense keeps it listed until moved.
+  const third = before.find((r) => r.status === 'import' && r.categoryId === 'other' && !/STARBUCKS|UBER/.test(r.note));
+  assert.ok(third, 'a third Other row');
+  const thirdSel = `.import-row[data-idx="${third.i}"]`;
+  await page.click(thirdSel + ' .import-row-hit');
+  await page.click(thirdSel + ' .seg-btn[data-mode="income"]');
+  await page.click(thirdSel + ' [data-more]');
+  assert.deepStrictEqual(await chipIds(thirdSel), cats8.map((c) => c.id), 'deposit row lists Income');
+  assert.strictEqual(await page.locator(thirdSel + ' .import-cat-chip.is-selected').getAttribute('data-cat'), 'income');
+  await page.click(thirdSel + ' .seg-btn[data-mode="expense"]');
+  assert.ok((await chipIds(thirdSel)).includes('income'), 'row still in Income keeps the chip so it can be seen');
+  await page.click(thirdSel + ' .import-cat-chip[data-cat="groceries"]');
+  assert.deepStrictEqual(await chipIds(thirdSel), allButIncome, 'Income drops once the purchase leaves it');
+  after = await reviewRows();
+  assert.strictEqual(after[third.i].categoryId, 'groceries');
 
   await page.click('#importConfirmBtn');
   await page.waitForFunction(() => !document.getElementById('importModal').classList.contains('show'), { timeout: 5000 });
