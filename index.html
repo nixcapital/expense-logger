@@ -13,8 +13,8 @@
 <link rel="manifest" href="manifest.json">
 <link rel="icon" href="icon-192.png">
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
-<link rel="stylesheet" href="styles.css?v=2.6.5">
-<link rel="stylesheet" href="icon-animations.css?v=2.6.5">
+<link rel="stylesheet" href="styles.css?v=2.6.6">
+<link rel="stylesheet" href="icon-animations.css?v=2.6.6">
 <title>Expense Logger</title>
 </head>
 <body>
@@ -1068,12 +1068,22 @@
   </div>
 </div>
 
-<script src="icon-system.js?v=2.6.5"></script>
-<script src="forecast.js?v=2.6.5"></script>
-<script src="wrapped.js?v=2.6.5"></script>
-<script src="brief.js?v=2.6.5"></script>
-<script src="household-crypto.js?v=2.6.5"></script>
-<script src="app.js?v=2.6.5"></script>
+<div id="destructiveConfirmScrim" class="import-review-discard-scrim destructive-confirm-scrim" aria-hidden="true">
+  <div class="import-discard-card" role="dialog" aria-labelledby="destructiveConfirmTitle" aria-modal="true">
+    <h3 id="destructiveConfirmTitle"></h3>
+    <p class="hint" id="destructiveConfirmHint" hidden></p>
+    <div class="import-discard-actions">
+      <button type="button" class="save-btn" id="destructiveConfirmCancelBtn">Cancel</button>
+      <button type="button" class="btn-secondary danger" id="destructiveConfirmConfirmBtn">Delete</button>
+    </div>
+  </div>
+</div>
+<script src="icon-system.js?v=2.6.6"></script>
+<script src="forecast.js?v=2.6.6"></script>
+<script src="wrapped.js?v=2.6.6"></script>
+<script src="brief.js?v=2.6.6"></script>
+<script src="household-crypto.js?v=2.6.6"></script>
+<script src="app.js?v=2.6.6"></script>
 <script>
 (function () {
   'use strict';

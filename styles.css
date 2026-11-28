@@ -1,4 +1,4 @@
-/* Expense Logger 2.6.5 — dark-first, iOS-style */
+/* Expense Logger 2.6.6 — dark-first, iOS-style */
 
 :root {
   --bg: #0B0C10;
@@ -3129,6 +3129,34 @@ a.settings-row-btn { text-decoration: none; }
   text-align: center;
   box-shadow: 0 12px 40px rgba(0, 0, 0, 0.35);
 }
+.destructive-confirm-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 6500;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  padding: var(--gutter);
+  background: rgba(0, 0, 0, 0.62);
+  box-sizing: border-box;
+}
+@media (prefers-color-scheme: light) {
+  .destructive-confirm-scrim { background: rgba(0, 0, 0, 0.72); }
+}
+.destructive-confirm-scrim.show { display: flex; }
+.destructive-confirm-scrim .import-discard-card {
+  width: 100%;
+  max-width: 340px;
+  background-color: var(--card);
+  color: var(--text);
+  opacity: 1;
+  border-radius: var(--radius-card);
+  padding: var(--sp-4) var(--sp-4) var(--sp-3);
+  text-align: center;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.35);
+}
+.destructive-confirm-scrim .import-discard-card h3 { margin: 0 0 var(--sp-2); font-size: 20px; }
+.destructive-confirm-scrim .import-discard-card .hint { margin: 0; }
 .chase-balance-topbar {
   display: flex;
   align-items: center;
