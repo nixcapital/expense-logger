@@ -48,7 +48,22 @@ async function tapCancel(page) {
 
 async function tapConfirm(page) {
   await waitScrim(page);
+  await page.waitForFunction(() => {
+    const btn = document.getElementById('destructiveConfirmConfirmBtn');
+    return btn && !btn.disabled;
+  });
   await page.click('#destructiveConfirmConfirmBtn');
+}
+
+async function expenseLoggerKeys(page) {
+  return page.evaluate(() => {
+    const keys = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (k && k.startsWith('expenseLogger.')) keys.push(k);
+    }
+    return keys.sort();
+  });
 }
 
 async function run() {
@@ -95,6 +110,54 @@ async function run() {
   });
   assert.strictEqual(stillThere, true, '$8 entry survives cancel');
 
+  console.log('destructive-confirm-test: delete receipt cancel');
+  await page.evaluate(async () => {
+    const db = await new Promise((res, rej) => {
+      const r = indexedDB.open('expenseLogger', 1);
+      r.onupgradeneeded = () => {
+        if (!r.result.objectStoreNames.contains('receipts')) {
+          r.result.createObjectStore('receipts', { keyPath: 'id' });
+        }
+      };
+      r.onsuccess = () => res(r.result);
+      r.onerror = () => rej(r.error);
+    });
+    await new Promise((res, rej) => {
+      const tx = db.transaction('receipts', 'readwrite');
+      tx.objectStore('receipts').put({
+        id: 'receipt:rcp1',
+        dataURL: 'data:image/png;base64,QUFBQQ==',
+        ts: Date.now()
+      });
+      tx.oncomplete = res;
+      tx.onerror = () => rej(tx.error);
+    });
+    const list = [{ id: 'rcp1', amount: 3.5, categoryId: 'dining', note: 'fake receipt meal', ts: Date.UTC(2026, 10, 3), hasReceipt: true }];
+    localStorage.setItem('expenseLogger.entries.v1', JSON.stringify(list));
+  });
+  await page.reload({ waitUntil: 'networkidle' });
+  await page.evaluate(() => window.ExpenseLoggerTest.openEntryEditor('rcp1'));
+  await page.waitForSelector('#receiptModal.show');
+  await page.waitForSelector('#receiptModalDelete:not([hidden])');
+  await page.click('#receiptModalDelete');
+  await tapCancel(page);
+  const receiptKept = await page.evaluate(async () => {
+    const entry = JSON.parse(localStorage.getItem('expenseLogger.entries.v1') || '[]')[0];
+    const db = await new Promise((res, rej) => {
+      const r = indexedDB.open('expenseLogger', 1);
+      r.onsuccess = () => res(r.result);
+      r.onerror = () => rej(r.error);
+    });
+    const rec = await new Promise((res) => {
+      const tx = db.transaction('receipts', 'readonly');
+      const g = tx.objectStore('receipts').get('receipt:rcp1');
+      g.onsuccess = () => res(g.result);
+      g.onerror = () => res(null);
+    });
+    return entry && entry.hasReceipt === true && rec && rec.dataURL;
+  });
+  assert.ok(receiptKept, 'receipt photo survives cancel');
+
   console.log('destructive-confirm-test: delete entry confirm');
   await page.click('#editDeleteBtn');
   await tapConfirm(page);
@@ -135,39 +198,50 @@ async function run() {
   assert.strictEqual(moved.allOther, true);
   assert.strictEqual(moved.groceriesGone, true);
 
-  console.log('destructive-confirm-test: clear all two-step cancel');
-  const keysBefore = await page.evaluate(() => {
-    const keys = [];
-    for (let i = 0; i < localStorage.length; i++) {
-      const k = localStorage.key(i);
-      if (k && k.startsWith('expenseLogger.')) keys.push(k);
-    }
-    return keys.sort();
+  console.log('destructive-confirm-test: delete Other names first remaining category');
+  await page.evaluate(() => {
+    const rows = [
+      { id: 'o1', amount: 2, categoryId: 'other', note: 'fake misc', ts: Date.UTC(2026, 10, 4) },
+      { id: 'o2', amount: 4, categoryId: 'other', note: 'fake misc 2', ts: Date.UTC(2026, 10, 5) }
+    ];
+    localStorage.setItem('expenseLogger.entries.v1', JSON.stringify(rows));
   });
+  await page.reload({ waitUntil: 'networkidle' });
+  await page.click('.tab-btn[data-tab="settings"]');
+  await page.locator('#categoryList [data-del="other"]').click();
+  await waitScrim(page);
+  const otherHint = await page.locator('#destructiveConfirmHint').innerText();
+  assert.match(otherHint, /2 expenses will move to Dining/, otherHint);
+  await tapCancel(page);
+
+  console.log('destructive-confirm-test: clear all two-step cancel');
+  const keysBefore = await expenseLoggerKeys(page);
   await page.click('#clearAllBtn');
   await tapCancel(page);
-  let keysAfter = await page.evaluate(() => {
-    const keys = [];
-    for (let i = 0; i < localStorage.length; i++) {
-      const k = localStorage.key(i);
-      if (k && k.startsWith('expenseLogger.')) keys.push(k);
-    }
-    return keys.sort();
-  });
+  let keysAfter = await expenseLoggerKeys(page);
   assert.deepStrictEqual(keysAfter, keysBefore, 'cancel step 1 keeps keys');
+
+  console.log('destructive-confirm-test: clear all double-tap step 2 guard');
+  await page.click('#clearAllBtn');
+  await waitScrim(page);
+  const confirmBtn = page.locator('#destructiveConfirmConfirmBtn');
+  await confirmBtn.click({ clickCount: 2, delay: 0 });
+  await page.waitForTimeout(50);
+  const afterDouble = await page.evaluate(() => ({
+    title: document.getElementById('destructiveConfirmTitle').textContent,
+    showing: document.getElementById('destructiveConfirmScrim').classList.contains('show')
+  }));
+  assert.strictEqual(afterDouble.showing, true, 'step 2 scrim still open');
+  assert.strictEqual(afterDouble.title, 'Really sure?', 'step 2 title after double-tap');
+  keysAfter = await expenseLoggerKeys(page);
+  assert.deepStrictEqual(keysAfter, keysBefore, 'double-tap does not wipe data');
+  await tapCancel(page);
 
   await page.click('#clearAllBtn');
   await tapConfirm(page);
   await waitScrim(page);
   await tapCancel(page);
-  keysAfter = await page.evaluate(() => {
-    const keys = [];
-    for (let i = 0; i < localStorage.length; i++) {
-      const k = localStorage.key(i);
-      if (k && k.startsWith('expenseLogger.')) keys.push(k);
-    }
-    return keys.sort();
-  });
+  keysAfter = await expenseLoggerKeys(page);
   assert.deepStrictEqual(keysAfter, keysBefore, 'cancel step 2 keeps keys');
 
   console.log('destructive-confirm-test: clear all confirm keeps accounts and sync');

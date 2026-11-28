@@ -438,6 +438,8 @@
   var $destructiveConfirmCancelBtn = $('destructiveConfirmCancelBtn');
   var $destructiveConfirmConfirmBtn = $('destructiveConfirmConfirmBtn');
   var destructiveConfirmOnConfirm = null;
+  var destructiveConfirmGuardTimer = null;
+  var DESTRUCTIVE_CONFIRM_GUARD_MS = 400;
   var $importSummary = $('importSummary');
   var $importReviewToolbar = $('importReviewToolbar');
   var $importRowList = $('importRowList');
@@ -6599,6 +6601,11 @@
 
   function hideDestructiveConfirm() {
     destructiveConfirmOnConfirm = null;
+    if (destructiveConfirmGuardTimer) {
+      clearTimeout(destructiveConfirmGuardTimer);
+      destructiveConfirmGuardTimer = null;
+    }
+    if ($destructiveConfirmConfirmBtn) $destructiveConfirmConfirmBtn.disabled = false;
     if ($destructiveConfirmScrim) {
       $destructiveConfirmScrim.classList.remove('show');
       $destructiveConfirmScrim.setAttribute('aria-hidden', 'true');
@@ -6619,7 +6626,15 @@
       }
     }
     if ($destructiveConfirmCancelBtn) $destructiveConfirmCancelBtn.textContent = opts.cancelLabel || 'Cancel';
-    if ($destructiveConfirmConfirmBtn) $destructiveConfirmConfirmBtn.textContent = opts.confirmLabel || 'Delete';
+    if ($destructiveConfirmConfirmBtn) {
+      $destructiveConfirmConfirmBtn.textContent = opts.confirmLabel || 'Delete';
+      $destructiveConfirmConfirmBtn.disabled = true;
+      if (destructiveConfirmGuardTimer) clearTimeout(destructiveConfirmGuardTimer);
+      destructiveConfirmGuardTimer = setTimeout(function () {
+        if ($destructiveConfirmConfirmBtn) $destructiveConfirmConfirmBtn.disabled = false;
+        destructiveConfirmGuardTimer = null;
+      }, DESTRUCTIVE_CONFIRM_GUARD_MS);
+    }
     if ($destructiveConfirmScrim) {
       $destructiveConfirmScrim.classList.add('show');
       $destructiveConfirmScrim.setAttribute('aria-hidden', 'false');
@@ -7652,6 +7667,7 @@
   }
   if ($destructiveConfirmConfirmBtn) {
     $destructiveConfirmConfirmBtn.addEventListener('click', function () {
+      if ($destructiveConfirmConfirmBtn.disabled) return;
       if (destructiveConfirmOnConfirm) destructiveConfirmOnConfirm();
     });
   }
