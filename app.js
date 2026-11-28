@@ -60,7 +60,7 @@
   // Household mirror (plan #66): config and passphrase stay on-device only — never in backups or snapshots.
   var HOUSEHOLD_KEY = 'expenseLogger.household.v1';
   var HOUSEHOLD_PASS_KEY = 'expenseLogger.householdPass.v1';
-  var APP_VERSION = '2.6.4';
+  var APP_VERSION = '2.6.5';
   var BACKUP_FORMAT = 2;
   var BACKUP_FORMAT_LEGACY = 1;
   var DEFAULT_ACCOUNT_CHECKING = 'acct-checking';
@@ -272,6 +272,7 @@
   var pendingImportAccount = null; // pre-review: { batchId, rows, fileName, layout, rowCount, balanceOffer? }
   var importReviewFilter = 'review';
   var importReviewExpandedIdx = null;
+  var importCatShowAllIdx = null;
   var importApplyPrompt = null;
   var pendingBulkRecategorize = null;
   var editSelectedCatId = null;
@@ -6656,14 +6657,27 @@
     return n;
   }
 
-  function importCategoryChipHTML(catId, idx) {
+  // Short list: first five non-income categories, then "More…". "More…" swaps in
+  // every category inline, so no prompt() and no unknown ids. Income is listed only
+  // for deposits (or a row already in Income) so a purchase can't be filed as income.
+  function importCategoryChipHTML(row, idx) {
+    var catId = row.categoryId;
     var html = '<div class="import-cat-chips" data-idx="' + idx + '">';
-    var shown = categories.filter(function (c) { return c.id !== INCOME_CATEGORY_ID; }).slice(0, 5);
+    var quick = categories.filter(function (c) { return c.id !== INCOME_CATEGORY_ID; }).slice(0, 5);
+    var allowIncome = !!row.isDeposit || catId === INCOME_CATEGORY_ID;
+    var all = categories.filter(function (c) { return allowIncome || c.id !== INCOME_CATEGORY_ID; });
+    var showAll = importCatShowAllIdx === idx;
+    var shown = showAll ? all : quick;
     shown.forEach(function (c) {
       html += '<button type="button" class="import-cat-chip' + (c.id === catId ? ' is-selected' : '') + '" data-cat="' + escHtml(c.id) + '">'
         + iconBadge(c, 'xs') + '<span>' + escHtml(c.name) + '</span></button>';
     });
-    html += '<button type="button" class="import-cat-chip import-cat-chip--more" data-more="1">More\u2026</button></div>';
+    if (showAll) {
+      html += '<button type="button" class="import-cat-chip import-cat-chip--more" data-less="1" aria-expanded="true">Less</button>';
+    } else if (all.length > quick.length) {
+      html += '<button type="button" class="import-cat-chip import-cat-chip--more" data-more="1" aria-expanded="false">More\u2026</button>';
+    }
+    html += '</div>';
     return html;
   }
 
@@ -6771,6 +6785,7 @@
         btn.addEventListener('click', function () {
           importReviewFilter = btn.dataset.filter;
           importReviewExpandedIdx = null;
+          importCatShowAllIdx = null;
           renderImportReview();
         });
       });
@@ -6778,7 +6793,10 @@
 
     var listHtml = '';
     rows.forEach(function (r, i) {
-      if (!importRowPassesFilter(r)) return;
+      // Keep the open row in place after a pick moves it out of the filter, so its
+      // apply-to-similar prompt can still show. It drops out once collapsed.
+      var keepOpen = i === importReviewExpandedIdx && (r.status === 'import' || r.status === 'transfer');
+      if (!importRowPassesFilter(r) && !keepOpen) return;
       if (importRowIsBankChange(r)) { listHtml += bankChangeRowHTML(r, i); return; }
       var d = r.ts ? new Date(r.ts).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : '\u2014';
       var cat = getCat(r.categoryId || 'other');
@@ -6793,7 +6811,7 @@
       listHtml += '<span class="import-row-chevron" aria-hidden="true">' + (expanded ? '\u2304' : '\u203A') + '</span></button>';
       if (expanded) {
         listHtml += '<div class="import-row-expanded">';
-        listHtml += importCategoryChipHTML(r.categoryId, i);
+        listHtml += importCategoryChipHTML(r, i);
         listHtml += '<div class="seg-control import-xfer-seg import-xfer-seg--4" role="group" aria-label="Row type" data-idx="' + i + '">';
         listHtml += '<button type="button" class="seg-btn' + (rowMode === 'expense' ? ' is-active' : '') + '" data-mode="expense">Expense</button>';
         listHtml += '<button type="button" class="seg-btn' + (rowMode === 'income' ? ' is-active' : '') + '" data-mode="income">Income</button>';
@@ -6826,29 +6844,27 @@
       btn.addEventListener('click', function () {
         var idx = parseInt(btn.dataset.expand, 10);
         importReviewExpandedIdx = importReviewExpandedIdx === idx ? null : idx;
+        importCatShowAllIdx = null;
         importApplyPrompt = null;
         renderImportReview();
       });
     });
     Array.prototype.forEach.call($importRowList.querySelectorAll('.import-cat-chip'), function (chip) {
       chip.addEventListener('click', function () {
-        if (chip.dataset.more) {
-          var idx = parseInt(chip.closest('.import-cat-chips').dataset.idx, 10);
-          var row = pendingImport.rows[idx];
-          var pick = window.prompt('Category id', row.categoryId || 'other');
-          if (!pick) return;
-          row.categoryId = pick;
-        } else {
-          var idx = parseInt(chip.closest('.import-cat-chips').dataset.idx, 10);
-          var row = pendingImport.rows[idx];
-          row.categoryId = chip.dataset.cat;
+        var idx = parseInt(chip.closest('.import-cat-chips').dataset.idx, 10);
+        if (chip.dataset.more || chip.dataset.less) {
+          importCatShowAllIdx = chip.dataset.more ? idx : null;
+          renderImportReview();
+          return;
         }
-        var row = pendingImport.rows[parseInt(chip.closest('.import-cat-chips').dataset.idx, 10)];
+        var row = pendingImport.rows[idx];
+        if (!row || !categories.some(function (c) { return c.id === chip.dataset.cat; })) return;
+        row.categoryId = chip.dataset.cat;
         row.userSetCategory = row.categoryId !== row.initialCategoryId;
         var similar = countSimilarImportRows(row, row.categoryId);
         if (similar > 0) {
           importApplyPrompt = {
-            idx: parseInt(chip.closest('.import-cat-chips').dataset.idx, 10),
+            idx: idx,
             categoryId: row.categoryId,
             count: similar,
             merchantLabel: (row.note || '').split(/\s+/).slice(0, 2).join(' ').toUpperCase()
@@ -7239,6 +7255,7 @@
     var balanceOffer = extractCheckingBalanceOffer(table, layout);
     importReviewFilter = 'review';
     importReviewExpandedIdx = null;
+    importCatShowAllIdx = null;
     pendingImportAccount = {
       batchId: batchId,
       rows: rows,
@@ -7977,6 +7994,7 @@
     plaidSyncRun.reviewed = true;
     importReviewFilter = 'review';
     importReviewExpandedIdx = null;
+    importCatShowAllIdx = null;
     renderImportReview();
   }
 

@@ -11,7 +11,7 @@ import { createRequire } from 'module';
 
 const require = createRequire(import.meta.url);
 const PORT = 8919;
-const ROOT = '/workspace';
+const ROOT = process.env.EL_ROOT || '/workspace';
 const FIX = join(ROOT, 'test/fixtures');
 
 const MIME = {
@@ -84,7 +84,7 @@ async function run() {
   await page.reload({ waitUntil: 'networkidle' });
 
   const version = await page.evaluate(() => window.ExpenseLoggerTest.APP_VERSION);
-  assert.strictEqual(version, '2.6.4');
+  assert.strictEqual(version, '2.6.5');
 
   console.log('qol-190-test: apply-to-similar import rows');
   const messy = readFileSync(join(FIX, 'fake-chase-oct-messy.csv'), 'utf8');
@@ -144,6 +144,118 @@ async function run() {
   });
   assert.strictEqual(spend.before, true);
   assert.strictEqual(spend.after, false);
+
+  console.log('qol-190-test: import review More… lists every category (no prompt)');
+  const dialogs = [];
+  page.on('dialog', (d) => { dialogs.push(d.type() + ': ' + d.message()); d.dismiss().catch(() => {}); });
+  const cats8 = [
+    { id: 'groceries', name: 'Groceries', icon: 'shopping-cart', color: '#4dabf7' },
+    { id: 'dining', name: 'Dining', icon: 'utensils', color: '#ff922b' },
+    { id: 'gas', name: 'Gas', icon: 'fuel', color: '#51cf66' },
+    { id: 'bills', name: 'Bills', icon: 'receipt', color: '#cc5de8' },
+    { id: 'fun', name: 'Fun', icon: 'ticket', color: '#f783ac' },
+    { id: 'other', name: 'Other', icon: 'boxes', color: '#878e96' },
+    { id: 'income', name: 'Income', icon: 'circle-dot', color: '#34C77B' },
+    { id: 'pets', name: 'Pets', icon: 'boxes', color: '#e8590c' }
+  ];
+  await page.evaluate((cats) => {
+    localStorage.setItem('expenseLogger.categories.v1', JSON.stringify(cats));
+    localStorage.setItem('expenseLogger.entries.v1', '[]');
+    localStorage.setItem('expenseLogger.importRules.v1', '[]');
+  }, cats8);
+  await page.reload({ waitUntil: 'networkidle' });
+  await page.click('button[data-tab="settings"]');
+  await page.locator('#importFileInput').setInputFiles(join(FIX, 'fake-chase-oct-messy.csv'));
+  await page.waitForSelector('#importAccountModal.show');
+  await page.waitForTimeout(300);
+  await page.locator('[data-account-pick="acct-chase"]').click();
+  await page.click('#importAccountContinueBtn');
+  await page.waitForSelector('#importModal.show');
+  await page.waitForTimeout(300);
+  // Stay on the default "Needs review" filter: the row must stay open after a pick moves it out of Other.
+
+  const reviewRows = () => page.evaluate(() => window.ExpenseLoggerTest.pendingImportRows().map((r, i) => ({
+    i, note: r.note, status: r.status, categoryId: r.categoryId || 'other', userSetCategory: !!r.userSetCategory
+  })));
+  const before = await reviewRows();
+  const sbux = before.find((r) => r.status === 'import' && r.note.indexOf('STARBUCKS STORE 1188') !== -1);
+  const uber = before.find((r) => r.status === 'import' && r.note.indexOf('UBER') !== -1);
+  assert.ok(sbux && uber, 'fixture rows present: ' + JSON.stringify(before.map((r) => r.note)));
+  assert.strictEqual(sbux.categoryId, 'other');
+  const sbuxSel = `.import-row[data-idx="${sbux.i}"]`;
+  const chipIds = (sel) => page.$$eval(sel + ' .import-cat-chip[data-cat]', (els) => els.map((e) => e.dataset.cat));
+
+  await page.click(sbuxSel + ' .import-row-hit');
+  assert.deepStrictEqual(await chipIds(sbuxSel), ['groceries', 'dining', 'gas', 'bills', 'fun'], 'short list is first five non-income');
+  await page.click(sbuxSel + ' [data-more]');
+  const allButIncome = cats8.map((c) => c.id).filter((id) => id !== 'income');
+  assert.deepStrictEqual(await chipIds(sbuxSel), allButIncome, 'More… shows every category (no Income on a purchase)');
+  assert.strictEqual(await page.locator(sbuxSel + ' [data-less]').getAttribute('aria-expanded'), 'true');
+  await page.click(sbuxSel + ' .import-cat-chip[data-cat="pets"]');
+  let after = await reviewRows();
+  assert.strictEqual(after[sbux.i].categoryId, 'pets', '8th category set on the row');
+  assert.strictEqual(after[sbux.i].userSetCategory, true);
+  assert.strictEqual(await page.locator(sbuxSel + ' .import-cat-chip.is-selected').getAttribute('data-cat'), 'pets');
+
+  // Apply-to-similar still runs after a pick from the full list, and only touches the same merchant.
+  const sameMerchant = before.filter((r) => r.status === 'import' && r.i !== sbux.i && /STARBUCKS STORE \d+/.test(r.note));
+  assert.ok(sameMerchant.length >= 2, 'similar Starbucks rows: ' + sameMerchant.length);
+  assert.strictEqual(await page.locator(sbuxSel).count(), 1, 'picked row stays open in Needs review');
+  await page.click(sbuxSel + ' [data-apply-all]');
+  after = await reviewRows();
+  sameMerchant.forEach((r) => assert.strictEqual(after[r.i].categoryId, 'pets', r.note));
+  before.filter((r) => r.status === 'import' && !/STARBUCKS/.test(r.note)).forEach((r) => {
+    assert.strictEqual(after[r.i].categoryId, r.categoryId, 'other merchant untouched: ' + r.note);
+  });
+  await page.click(sbuxSel + ' .import-row-hit');
+  assert.strictEqual(await page.locator(sbuxSel).count(), 0, 'collapsed row leaves Needs review');
+
+  // "Less" closes the full list without changing the row.
+  const uberSel = `.import-row[data-idx="${uber.i}"]`;
+  await page.click(uberSel + ' .import-row-hit');
+  await page.click(uberSel + ' [data-more]');
+  assert.strictEqual(await page.locator(uberSel + ' .import-cat-chip[data-cat]').count(), allButIncome.length);
+  await page.click(uberSel + ' [data-less]');
+  assert.deepStrictEqual(await chipIds(uberSel), ['groceries', 'dining', 'gas', 'bills', 'fun']);
+  assert.strictEqual(await page.locator(uberSel + ' [data-more]').getAttribute('aria-expanded'), 'false');
+  after = await reviewRows();
+  assert.strictEqual(after[uber.i].categoryId, uber.categoryId, 'Less leaves the category as it was');
+
+  // Other (6th) is reachable without typing.
+  await page.click(uberSel + ' [data-more]');
+  await page.click(uberSel + ' .import-cat-chip[data-cat="groceries"]');
+  await page.click(uberSel + ' .import-cat-chip[data-cat="other"]');
+  after = await reviewRows();
+  assert.strictEqual(after[uber.i].categoryId, 'other', 'can move a row back to Other');
+
+  // A deposit row lists Income too (and shows it selected); switching back to Expense keeps it listed until moved.
+  const third = before.find((r) => r.status === 'import' && r.categoryId === 'other' && !/STARBUCKS|UBER/.test(r.note));
+  assert.ok(third, 'a third Other row');
+  const thirdSel = `.import-row[data-idx="${third.i}"]`;
+  await page.click(thirdSel + ' .import-row-hit');
+  await page.click(thirdSel + ' .seg-btn[data-mode="income"]');
+  await page.click(thirdSel + ' [data-more]');
+  assert.deepStrictEqual(await chipIds(thirdSel), cats8.map((c) => c.id), 'deposit row lists Income');
+  assert.strictEqual(await page.locator(thirdSel + ' .import-cat-chip.is-selected').getAttribute('data-cat'), 'income');
+  await page.click(thirdSel + ' .seg-btn[data-mode="expense"]');
+  assert.ok((await chipIds(thirdSel)).includes('income'), 'row still in Income keeps the chip so it can be seen');
+  await page.click(thirdSel + ' .import-cat-chip[data-cat="groceries"]');
+  assert.deepStrictEqual(await chipIds(thirdSel), allButIncome, 'Income drops once the purchase leaves it');
+  after = await reviewRows();
+  assert.strictEqual(after[third.i].categoryId, 'groceries');
+
+  await page.click('#importConfirmBtn');
+  await page.waitForFunction(() => !document.getElementById('importModal').classList.contains('show'), { timeout: 5000 });
+  const saved = await page.evaluate(() => JSON.parse(localStorage.getItem('expenseLogger.entries.v1') || '[]'));
+  const savedSbux = saved.filter((e) => /STARBUCKS STORE \d+/.test(e.note || ''));
+  assert.ok(savedSbux.length >= 3, 'Starbucks rows saved: ' + savedSbux.length);
+  savedSbux.forEach((e) => assert.strictEqual(e.categoryId, 'pets', e.note));
+  const known = new Set(cats8.map((c) => c.id));
+  saved.forEach((e) => assert.ok(known.has(e.categoryId), 'saved under a real category: ' + e.categoryId));
+  const savedRules = await page.evaluate(() => JSON.parse(localStorage.getItem('expenseLogger.importRules.v1') || '[]'));
+  assert.ok(savedRules.some((r) => r.pattern === 'starbucks store #' && r.categoryId === 'pets'), JSON.stringify(savedRules));
+  assert.deepStrictEqual(dialogs, [], 'no browser dialogs');
+  assert.ok(!/\bprompt\(/.test(readFileSync(join(ROOT, 'app.js'), 'utf8').replace(/\/\/.*$/gm, '')), 'app.js has no prompt() call');
 
   await browser.close();
   server.close();
