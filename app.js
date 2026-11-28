@@ -60,7 +60,7 @@
   // Household mirror (plan #66): config and passphrase stay on-device only — never in backups or snapshots.
   var HOUSEHOLD_KEY = 'expenseLogger.household.v1';
   var HOUSEHOLD_PASS_KEY = 'expenseLogger.householdPass.v1';
-  var APP_VERSION = '2.6.5';
+  var APP_VERSION = '2.6.6';
   var BACKUP_FORMAT = 2;
   var BACKUP_FORMAT_LEGACY = 1;
   var DEFAULT_ACCOUNT_CHECKING = 'acct-checking';
@@ -432,6 +432,12 @@
   var $importReviewDiscardScrim = $('importReviewDiscardScrim');
   var $importDiscardKeepBtn = $('importDiscardKeepBtn');
   var $importDiscardConfirmBtn = $('importDiscardConfirmBtn');
+  var $destructiveConfirmScrim = $('destructiveConfirmScrim');
+  var $destructiveConfirmTitle = $('destructiveConfirmTitle');
+  var $destructiveConfirmHint = $('destructiveConfirmHint');
+  var $destructiveConfirmCancelBtn = $('destructiveConfirmCancelBtn');
+  var $destructiveConfirmConfirmBtn = $('destructiveConfirmConfirmBtn');
+  var destructiveConfirmOnConfirm = null;
   var $importSummary = $('importSummary');
   var $importReviewToolbar = $('importReviewToolbar');
   var $importRowList = $('importRowList');
@@ -5220,7 +5226,6 @@
   function deleteCategory(id) {
     if (categories.length <= 1) { toast('Need at least one category'); return; }
     var cat = getCat(id);
-    if (!window.confirm('Delete "' + cat.name + '"?\nExpenses in this category will be moved.')) return;
     var fallback = null;
     for (var i = 0; i < categories.length; i++) {
       if (categories[i].id === 'other' && categories[i].id !== id) { fallback = categories[i]; break; }
@@ -5229,16 +5234,28 @@
       if (categories[j].id !== id) { fallback = categories[j]; break; }
     }
     if (!fallback) return;
-    entries.forEach(function (e) { if (e.categoryId === id) e.categoryId = fallback.id; });
-    saveEntries();
-    categories = categories.filter(function (c) { return c.id !== id; });
-    delete budgets[id];
-    saveCategories(); saveBudgets();
-    recurringItems = recurringItems.filter(function (r) { return r.categoryId !== id; });
-    saveRecurring();
-    renderAll(); rebuildFilterDropdowns();
-    renderCategoryList(); renderBudgetSettings(); renderRecurringList();
-    toast('Category deleted');
+    var moveCount = 0;
+    entries.forEach(function (e) { if (e.categoryId === id) moveCount++; });
+    var hint = moveCount + ' expense' + (moveCount === 1 ? '' : 's') + ' will move to ' + fallback.name;
+    var fallbackId = fallback.id;
+    openDestructiveConfirm({
+      title: 'Delete "' + cat.name + '"?',
+      hint: hint,
+      confirmLabel: 'Delete',
+      onConfirm: function () {
+        hideDestructiveConfirm();
+        entries.forEach(function (e) { if (e.categoryId === id) e.categoryId = fallbackId; });
+        saveEntries();
+        categories = categories.filter(function (c) { return c.id !== id; });
+        delete budgets[id];
+        saveCategories(); saveBudgets();
+        recurringItems = recurringItems.filter(function (r) { return r.categoryId !== id; });
+        saveRecurring();
+        renderAll(); rebuildFilterDropdowns();
+        renderCategoryList(); renderBudgetSettings(); renderRecurringList();
+        toast('Category deleted');
+      }
+    });
   }
 
   function openCategoryModal(id) {
@@ -5740,12 +5757,18 @@
   function deleteEntryFromEditor() {
     if (!editingEntryId) return;
     var id = editingEntryId;
-    if (!window.confirm('Delete this expense?')) return;
-    $receiptModal.classList.remove('show');
-    editingEntryId = null;
-    softDeleteEntry(id);
-    buildYearSelect(true);
-    if (currentTab === 'report') renderReport();
+    openDestructiveConfirm({
+      title: 'Delete this expense?',
+      confirmLabel: 'Delete',
+      onConfirm: function () {
+        hideDestructiveConfirm();
+        $receiptModal.classList.remove('show');
+        editingEntryId = null;
+        softDeleteEntry(id);
+        buildYearSelect(true);
+        if (currentTab === 'report') renderReport();
+      }
+    });
   }
 
   // ---------- Receipt capture ----------
@@ -5800,16 +5823,22 @@
   $receiptModalDelete.addEventListener('click', function () {
     if (!editingEntryId) return;
     var id = editingEntryId;
-    if (!window.confirm('Delete this receipt?')) return;
-    idbDelete('receipt:' + id).then(function () {
-      var e = null;
-      for (var i = 0; i < entries.length; i++) if (entries[i].id === id) { e = entries[i]; break; }
-      if (e) { delete e.hasReceipt; saveEntries(); }
-      renderAll();
-      $receiptModalImg.removeAttribute('src');
-      $receiptModalImg.hidden = true;
-      $receiptModalDelete.hidden = true;
-      toast('Receipt deleted');
+    openDestructiveConfirm({
+      title: 'Delete this receipt?',
+      confirmLabel: 'Delete',
+      onConfirm: function () {
+        hideDestructiveConfirm();
+        idbDelete('receipt:' + id).then(function () {
+          var e = null;
+          for (var i = 0; i < entries.length; i++) if (entries[i].id === id) { e = entries[i]; break; }
+          if (e) { delete e.hasReceipt; saveEntries(); }
+          renderAll();
+          $receiptModalImg.removeAttribute('src');
+          $receiptModalImg.hidden = true;
+          $receiptModalDelete.hidden = true;
+          toast('Receipt deleted');
+        });
+      }
     });
   });
   if ($editSaveBtn) $editSaveBtn.addEventListener('click', saveEntryEdit);
@@ -6566,6 +6595,35 @@
     pendingImport = null;
     plaidSyncRun = null; // discarding a bank review never acks
     if ($importModal) $importModal.classList.remove('show');
+  }
+
+  function hideDestructiveConfirm() {
+    destructiveConfirmOnConfirm = null;
+    if ($destructiveConfirmScrim) {
+      $destructiveConfirmScrim.classList.remove('show');
+      $destructiveConfirmScrim.setAttribute('aria-hidden', 'true');
+    }
+  }
+
+  function openDestructiveConfirm(opts) {
+    opts = opts || {};
+    destructiveConfirmOnConfirm = opts.onConfirm || null;
+    if ($destructiveConfirmTitle) $destructiveConfirmTitle.textContent = opts.title || '';
+    if ($destructiveConfirmHint) {
+      if (opts.hint) {
+        $destructiveConfirmHint.textContent = opts.hint;
+        $destructiveConfirmHint.hidden = false;
+      } else {
+        $destructiveConfirmHint.textContent = '';
+        $destructiveConfirmHint.hidden = true;
+      }
+    }
+    if ($destructiveConfirmCancelBtn) $destructiveConfirmCancelBtn.textContent = opts.cancelLabel || 'Cancel';
+    if ($destructiveConfirmConfirmBtn) $destructiveConfirmConfirmBtn.textContent = opts.confirmLabel || 'Delete';
+    if ($destructiveConfirmScrim) {
+      $destructiveConfirmScrim.classList.add('show');
+      $destructiveConfirmScrim.setAttribute('aria-hidden', 'false');
+    }
   }
 
   function hideImportDiscardPrompt() {
@@ -7589,6 +7647,19 @@
       if (e.target === $importReviewDiscardScrim) hideImportDiscardPrompt();
     });
   }
+  if ($destructiveConfirmCancelBtn) {
+    $destructiveConfirmCancelBtn.addEventListener('click', hideDestructiveConfirm);
+  }
+  if ($destructiveConfirmConfirmBtn) {
+    $destructiveConfirmConfirmBtn.addEventListener('click', function () {
+      if (destructiveConfirmOnConfirm) destructiveConfirmOnConfirm();
+    });
+  }
+  if ($destructiveConfirmScrim) {
+    $destructiveConfirmScrim.addEventListener('click', function (e) {
+      if (e.target === $destructiveConfirmScrim) hideDestructiveConfirm();
+    });
+  }
   if ($importConfirmBtn) {
     $importConfirmBtn.addEventListener('click', commitImport);
   }
@@ -7832,8 +7903,14 @@
   if ($bankSyncPairBtn) $bankSyncPairBtn.addEventListener('click', pairBankSync);
   if ($bankSyncDisconnectBtn) {
     $bankSyncDisconnectBtn.addEventListener('click', function () {
-      if (!window.confirm('Disconnect this phone from bank sync?')) return;
-      disconnectBankSync();
+      openDestructiveConfirm({
+        title: 'Disconnect this phone from bank sync?',
+        confirmLabel: 'Disconnect',
+        onConfirm: function () {
+          hideDestructiveConfirm();
+          disconnectBankSync();
+        }
+      });
     });
   }
 
@@ -8626,10 +8703,7 @@
     });
   }
 
-  // ---------- Clear all ----------
-  $('clearAllBtn').addEventListener('click', function () {
-    if (!window.confirm('Delete ALL data? This cannot be undone.')) return;
-    if (!window.confirm('Really sure? Last chance.')) return;
+  function commitClearAllData() {
     entries = []; budgets = {}; recurringItems = [];
     categories = DEFAULT_CATEGORIES.slice();
     selectedCat = null;
@@ -8648,6 +8722,24 @@
     renderAll(); renderCategoryList(); renderBudgetSettings(); renderRecurringList();
     buildYearSelect(true); renderReport();
     toast('All data cleared');
+  }
+
+  // ---------- Clear all ----------
+  $('clearAllBtn').addEventListener('click', function () {
+    openDestructiveConfirm({
+      title: 'Delete ALL data?',
+      confirmLabel: 'Clear all data',
+      onConfirm: function () {
+        openDestructiveConfirm({
+          title: 'Really sure?',
+          confirmLabel: 'Clear data',
+          onConfirm: function () {
+            hideDestructiveConfirm();
+            commitClearAllData();
+          }
+        });
+      }
+    });
   });
 
   // ---------- Filters ----------
@@ -11040,6 +11132,8 @@
     reapplyImportDedupe: reapplyImportDedupe,
     importReviewHasUnsavedChanges: importReviewHasUnsavedChanges,
     requestDismissImportReview: requestDismissImportReview,
+    openDestructiveConfirm: openDestructiveConfirm,
+    hideDestructiveConfirm: hideDestructiveConfirm,
     merchantMatchKey: merchantMatchKey,
     countSimilarImportRows: countSimilarImportRows,
     countSimilarImportRowsForRows: function (rows, row, catId) {

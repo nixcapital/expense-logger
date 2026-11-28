@@ -123,8 +123,9 @@ async function run() {
   assert.strictEqual(JSON.parse(await page.evaluate((k) => localStorage.getItem(k), SYNC_KEY)).deviceToken, TOKEN, 'undo keeps pairing');
 
   // Disconnect calls the Worker with the bearer token and clears the key.
-  page.once('dialog', (d) => d.accept());
   await page.click('#bankSyncDisconnectBtn');
+  await page.waitForSelector('#destructiveConfirmScrim.show');
+  await page.click('#destructiveConfirmConfirmBtn');
   await page.waitForFunction((k) => localStorage.getItem(k) === null, SYNC_KEY);
   const disc = calls.filter((c) => c.path === '/disconnect');
   assert.strictEqual(disc.length, 1);
