@@ -73,7 +73,12 @@ async function run() {
   const browser = await chromium.launch();
   const page = await browser.newPage({ viewport: { width: 428, height: 926 } });
   const errors = [];
+  const nativeDialogs = [];
   page.on('pageerror', (e) => errors.push(String(e)));
+  page.on('dialog', (dialog) => {
+    nativeDialogs.push({ type: dialog.type(), message: dialog.message() });
+    dialog.dismiss().catch(() => {});
+  });
 
   await page.goto(`http://127.0.0.1:${PORT}/index.html`, { waitUntil: 'networkidle' });
   await page.waitForFunction(() => window.ExpenseLoggerTest && window.ExpenseLoggerTest.APP_VERSION === '2.6.6');
@@ -198,6 +203,17 @@ async function run() {
   assert.strictEqual(moved.allOther, true);
   assert.strictEqual(moved.groceriesGone, true);
 
+  console.log('destructive-confirm-test: category delete empty hides move hint');
+  const delDining = page.locator('#categoryList [data-del="dining"]');
+  await delDining.click();
+  await waitScrim(page);
+  const emptyHint = await page.evaluate(() => {
+    const h = document.getElementById('destructiveConfirmHint');
+    return { hidden: h.hidden, text: h.textContent.trim() };
+  });
+  assert.ok(emptyHint.hidden || emptyHint.text === '', 'empty category shows no move hint');
+  await tapCancel(page);
+
   console.log('destructive-confirm-test: delete Other names first remaining category');
   await page.evaluate(() => {
     const rows = [
@@ -217,6 +233,15 @@ async function run() {
   console.log('destructive-confirm-test: clear all two-step cancel');
   const keysBefore = await expenseLoggerKeys(page);
   await page.click('#clearAllBtn');
+  await waitScrim(page);
+  const step1Copy = await page.evaluate(() => ({
+    title: document.getElementById('destructiveConfirmTitle').textContent,
+    hint: document.getElementById('destructiveConfirmHint').textContent
+  }));
+  assert.strictEqual(step1Copy.title, 'Clear all data?');
+  assert.match(step1Copy.hint, /expenses, categories, budgets, recurring/i);
+  assert.match(step1Copy.hint, /bank sync/i);
+  assert.match(step1Copy.hint, /forecast settings are kept/i);
   await tapCancel(page);
   let keysAfter = await expenseLoggerKeys(page);
   assert.deepStrictEqual(keysAfter, keysBefore, 'cancel step 1 keeps keys');
@@ -224,15 +249,22 @@ async function run() {
   console.log('destructive-confirm-test: clear all double-tap step 2 guard');
   await page.click('#clearAllBtn');
   await waitScrim(page);
-  const confirmBtn = page.locator('#destructiveConfirmConfirmBtn');
-  await confirmBtn.click({ clickCount: 2, delay: 0 });
+  await page.waitForFunction(() => {
+    const btn = document.getElementById('destructiveConfirmConfirmBtn');
+    return btn && !btn.disabled;
+  });
+  await page.evaluate(() => {
+    const btn = document.getElementById('destructiveConfirmConfirmBtn');
+    btn.click();
+    btn.click();
+  });
   await page.waitForTimeout(50);
   const afterDouble = await page.evaluate(() => ({
     title: document.getElementById('destructiveConfirmTitle').textContent,
     showing: document.getElementById('destructiveConfirmScrim').classList.contains('show')
   }));
   assert.strictEqual(afterDouble.showing, true, 'step 2 scrim still open');
-  assert.strictEqual(afterDouble.title, 'Really sure?', 'step 2 title after double-tap');
+  assert.strictEqual(afterDouble.title, "This can't be undone", 'step 2 title after double-tap');
   keysAfter = await expenseLoggerKeys(page);
   assert.deepStrictEqual(keysAfter, keysBefore, 'double-tap does not wipe data');
   await tapCancel(page);
@@ -240,6 +272,8 @@ async function run() {
   await page.click('#clearAllBtn');
   await tapConfirm(page);
   await waitScrim(page);
+  const step2Title = await page.locator('#destructiveConfirmTitle').innerText();
+  assert.strictEqual(step2Title, "This can't be undone");
   await tapCancel(page);
   keysAfter = await expenseLoggerKeys(page);
   assert.deepStrictEqual(keysAfter, keysBefore, 'cancel step 2 keeps keys');
@@ -260,6 +294,7 @@ async function run() {
   assert.ok(afterClear.sync, 'bank sync pairing preserved');
 
   assert.deepStrictEqual(errors, [], 'no page errors');
+  assert.deepStrictEqual(nativeDialogs, [], 'no native confirm/alert/prompt dialogs');
   await browser.close();
   server.close();
   console.log('destructive-confirm-test: all checks passed');

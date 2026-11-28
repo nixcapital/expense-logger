@@ -5238,11 +5238,9 @@
     if (!fallback) return;
     var moveCount = 0;
     entries.forEach(function (e) { if (e.categoryId === id) moveCount++; });
-    var hint = moveCount + ' expense' + (moveCount === 1 ? '' : 's') + ' will move to ' + fallback.name;
     var fallbackId = fallback.id;
-    openDestructiveConfirm({
+    var confirmOpts = {
       title: 'Delete "' + cat.name + '"?',
-      hint: hint,
       confirmLabel: 'Delete',
       onConfirm: function () {
         hideDestructiveConfirm();
@@ -5257,7 +5255,11 @@
         renderCategoryList(); renderBudgetSettings(); renderRecurringList();
         toast('Category deleted');
       }
-    });
+    };
+    if (moveCount > 0) {
+      confirmOpts.hint = moveCount + ' expense' + (moveCount === 1 ? '' : 's') + ' will move to ' + fallback.name;
+    }
+    openDestructiveConfirm(confirmOpts);
   }
 
   function openCategoryModal(id) {
@@ -8743,11 +8745,12 @@
   // ---------- Clear all ----------
   $('clearAllBtn').addEventListener('click', function () {
     openDestructiveConfirm({
-      title: 'Delete ALL data?',
+      title: 'Clear all data?',
+      hint: 'This deletes expenses, categories, budgets, recurring items, and import rules and settings. Accounts and balances, bank sync, household pairing, and forecast settings are kept.',
       confirmLabel: 'Clear all data',
       onConfirm: function () {
         openDestructiveConfirm({
-          title: 'Really sure?',
+          title: "This can't be undone",
           confirmLabel: 'Clear data',
           onConfirm: function () {
             hideDestructiveConfirm();
